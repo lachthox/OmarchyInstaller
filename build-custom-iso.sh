@@ -140,7 +140,7 @@ if [[ "$ROOTFS_FORMAT" == "erofs" ]]; then
     fi
   done
 elif [[ "$ROOTFS_FORMAT" == "squashfs" ]]; then
-  for cmd in mksquashfs unsquashfs; do
+  for cmd in mksquashfs; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
       echo "Error: SquashFS rootfs detected but '$cmd' is not installed." >&2
       echo "  Install squashfs-tools: sudo apt-get install squashfs-tools" >&2
@@ -149,35 +149,19 @@ elif [[ "$ROOTFS_FORMAT" == "squashfs" ]]; then
   done
 fi
 
-# ── Extract rootfs image contents ────────────────────────────────────────────
+# ── Build the overlay staging directory ─────────────────────────────────────
+# Contains only our injected files — not the full rootfs.
 
-echo "[3/6] Unpacking rootfs image ($ROOTFS_FORMAT)..."
-mkdir -p "$ROOTFS_DIR"
+echo "[3/6] Preparing Omarchy payload..."
 
-if [[ "$ROOTFS_FORMAT" == "erofs" ]]; then
-  fsck.erofs --extract="$ROOTFS_DIR" "$ORIG_ROOTFS" 2>&1 || {
-    echo "Error: fsck.erofs extraction failed. Trying dump.erofs fallback..." >&2
-    if command -v dump.erofs >/dev/null 2>&1; then
-      dump.erofs --extract="$ROOTFS_DIR" "$ORIG_ROOTFS" 2>&1
-    else
-      echo "Error: Could not extract EROFS image." >&2
-      exit 1
-    fi
-  }
-elif [[ "$ROOTFS_FORMAT" == "squashfs" ]]; then
-  unsquashfs -f -d "$ROOTFS_DIR" "$ORIG_ROOTFS" >/dev/null
-fi
-
-# ── Inject Omarchy payload into the rootfs ──────────────────────────────────
-
-echo "[4/6] Injecting Omarchy payload into rootfs..."
-mkdir -p "$ROOTFS_DIR/opt/omarchy-setup"
-rsync -rlt --delete "$SETUP_DIR/" "$ROOTFS_DIR/opt/omarchy-setup/"
+STAGING_DIR="$WORK_DIR/staging"
+mkdir -p "$STAGING_DIR/opt/omarchy-setup"
+rsync -rlt --delete "$SETUP_DIR/" "$STAGING_DIR/opt/omarchy-setup/"
 
 # ── Create the live-shell autostart hook ────────────────────────────────────
 
-mkdir -p "$ROOTFS_DIR/usr/local/bin"
-cat > "$ROOTFS_DIR/usr/local/bin/omarchy-live-autostart" <<'AUTOSTART'
+mkdir -p "$STAGING_DIR/usr/local/bin"
+cat > "$STAGING_DIR/usr/local/bin/omarchy-live-autostart" <<'AUTOSTART'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
@@ -197,10 +181,10 @@ if [[ -z "${ans:-}" || "$ans" =~ [Yy] ]]; then
   exec ./setup.sh
 fi
 AUTOSTART
-chmod +x "$ROOTFS_DIR/usr/local/bin/omarchy-live-autostart"
+chmod +x "$STAGING_DIR/usr/local/bin/omarchy-live-autostart"
 
-mkdir -p "$ROOTFS_DIR/root"
-cat > "$ROOTFS_DIR/root/.bash_profile" <<'PROFILE'
+mkdir -p "$STAGING_DIR/root"
+cat > "$STAGING_DIR/root/.bash_profile" <<'PROFILE'
 # Arch Linux default
 [[ -f ~/.bashrc ]] && . ~/.bashrc
 
@@ -213,26 +197,60 @@ if [[ -z "${OMARCHY_AUTORUN_DONE:-}" && -x /usr/local/bin/omarchy-live-autostart
 fi
 PROFILE
 
-# ── Set correct permissions ─────────────────────────────────────────────────
+# ── Set correct permissions on staging files ────────────────────────────────
 
-chmod 0755 "$ROOTFS_DIR/usr/local/bin/omarchy-live-autostart"
-chmod 0755 "$ROOTFS_DIR/opt/omarchy-setup/setup.sh" 2>/dev/null || true
+chmod 0755 "$STAGING_DIR/usr/local/bin/omarchy-live-autostart"
+chmod 0755 "$STAGING_DIR/opt/omarchy-setup/setup.sh" 2>/dev/null || true
 
-# ── Repack the rootfs image in its original format ──────────────────────────
+# ── Repack the rootfs image ────────────────────────────────────────────────
+# SquashFS: Use fast append-only overlay (preserves original compression,
+#           adds only our files — keeps ISO under the 2 GB GitHub limit).
+# EROFS:    Full extract-modify-repack (EROFS has no append support).
 
 NEW_ROOTFS="$WORK_DIR/new_rootfs.img"
 
-echo "[5/6] Repacking rootfs image ($ROOTFS_FORMAT)..."
+echo "[4/6] Repacking rootfs image ($ROOTFS_FORMAT)..."
 
-if [[ "$ROOTFS_FORMAT" == "erofs" ]]; then
+if [[ "$ROOTFS_FORMAT" == "squashfs" ]]; then
+  # Append our overlay files onto a copy of the original squashfs.
+  # This is fast and preserves the original compression for existing files.
+  cp "$ORIG_ROOTFS" "$NEW_ROOTFS"
+
+  PSEUDO_FILE="$WORK_DIR/pseudo-defs.txt"
+  cat > "$PSEUDO_FILE" <<'PSEUDO'
+/usr/local/bin/omarchy-live-autostart m 0755
+/opt/omarchy-setup/setup.sh m 0755
+PSEUDO
+
+  mksquashfs "$STAGING_DIR" "$NEW_ROOTFS" -comp xz -b 1M -all-root -pf "$PSEUDO_FILE" >/dev/null
+
+elif [[ "$ROOTFS_FORMAT" == "erofs" ]]; then
+  # EROFS doesn't support appending — full extract, inject, repack.
+  echo "  Extracting EROFS rootfs (this may take a while)..."
+  mkdir -p "$ROOTFS_DIR"
+  fsck.erofs --extract="$ROOTFS_DIR" "$ORIG_ROOTFS" 2>&1 || {
+    echo "Error: fsck.erofs extraction failed. Trying dump.erofs fallback..." >&2
+    if command -v dump.erofs >/dev/null 2>&1; then
+      dump.erofs --extract="$ROOTFS_DIR" "$ORIG_ROOTFS" 2>&1
+    else
+      echo "Error: Could not extract EROFS image." >&2
+      exit 1
+    fi
+  }
+
+  # Overlay staged files into the extracted rootfs
+  rsync -rlt "$STAGING_DIR/" "$ROOTFS_DIR/"
+
+  echo "  Repacking EROFS rootfs..."
   mkfs.erofs -zlz4hc "$NEW_ROOTFS" "$ROOTFS_DIR" >/dev/null 2>&1
-elif [[ "$ROOTFS_FORMAT" == "squashfs" ]]; then
-  mksquashfs "$ROOTFS_DIR" "$NEW_ROOTFS" -comp xz -b 1M -all-root -noappend >/dev/null
 fi
+
+echo "  Original rootfs: $(du -sh "$ORIG_ROOTFS" | cut -f1)"
+echo "  New rootfs:      $(du -sh "$NEW_ROOTFS" | cut -f1)"
 
 # ── Rebuild the ISO ─────────────────────────────────────────────────────────
 
-echo "[6/6] Rebuilding customized ISO image..."
+echo "[5/6] Rebuilding customized ISO image..."
 rm -f "$OUT_ISO"
 xorriso -indev "$SRC_ISO" -outdev "$OUT_ISO" \
   -boot_image any replay \
@@ -240,4 +258,11 @@ xorriso -indev "$SRC_ISO" -outdev "$OUT_ISO" \
 
 echo ""
 echo "Customized ISO created: $OUT_ISO"
+ISO_SIZE=$(stat -c%s "$OUT_ISO" 2>/dev/null || stat -f%z "$OUT_ISO" 2>/dev/null || echo 0)
+echo "Size: $(du -sh "$OUT_ISO" | cut -f1) ($ISO_SIZE bytes)"
 echo "SHA256: $(sha256sum "$OUT_ISO" | cut -d' ' -f1)"
+
+# Warn if over GitHub's 2 GiB release asset limit
+if [[ "$ISO_SIZE" -gt 2147483648 ]]; then
+  echo "WARNING: ISO exceeds GitHub Release 2 GiB asset limit ($ISO_SIZE bytes)." >&2
+fi
