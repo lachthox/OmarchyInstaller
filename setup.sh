@@ -408,28 +408,61 @@ has_internet() {
 }
 
 collect_wifi_stations() {
-  iwctl station list 2>/dev/null | awk '
+  local out
+  out="$(iwctl device list 2>/dev/null | awk '
     NF == 0 { next }
-    $1 == "Station" { next }
+    $1 == "Devices" { next }
+    $1 == "Name" { next }
     $1 ~ /^-+$/ { next }
-    { print $1 }
-  '
+    $NF == "station" {
+      iface = $1
+      if (iface ~ /^(wl|wlan|wlp|wlo|ath|ra)[[:alnum:]_.:-]*$/) {
+        print iface
+      }
+    }
+  ' || true)"
+
+  if [[ -z "$out" ]]; then
+    out="$(iwctl station list 2>/dev/null | awk '
+      NF == 0 { next }
+      $1 == "Station" { next }
+      $1 == "Devices" { next }
+      $1 == "Name" { next }
+      $1 ~ /^-+$/ { next }
+      {
+        iface = $1
+        if (iface ~ /^(wl|wlan|wlp|wlo|ath|ra)[[:alnum:]_.:-]*$/) {
+          print iface
+        }
+      }
+    ' || true)"
+  fi
+
+  printf "%s\n" "$out" | awk 'NF' | awk '!seen[$0]++'
 }
 
 collect_wifi_network_ssids() {
   local station="$1"
   iwctl station "$station" get-networks 2>/dev/null | awk '
     NF == 0 { next }
+    $0 ~ /^[[:space:]]*Available[[:space:]]+networks/ { next }
     $0 ~ /^\s*Network\s+name/ { next }
     $0 ~ /^\s*-+\s*$/ { next }
     {
       line = $0
       sub(/^[[:space:]>*]+/, "", line)
       if (line == "") next
+
+      if (line ~ /^(Devices|Name|Station|Mode|Security|Signal)([[:space:]]|$)/) next
+
       split(line, parts, /[[:space:]][[:space:]]+/)
       ssid = parts[1]
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", ssid)
-      if (ssid != "") print ssid
+
+      if (ssid == "" || ssid == "--") next
+      if (ssid ~ /^(Devices|Name|Station|Mode|Security|Signal)$/) next
+
+      print ssid
     }
   ' | awk '!seen[$0]++'
 }
