@@ -140,7 +140,7 @@ if [[ "$ROOTFS_FORMAT" == "erofs" ]]; then
     fi
   done
 elif [[ "$ROOTFS_FORMAT" == "squashfs" ]]; then
-  for cmd in mksquashfs; do
+  for cmd in mksquashfs unsquashfs; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
       echo "Error: SquashFS rootfs detected but '$cmd' is not installed." >&2
       echo "  Install squashfs-tools: sudo apt-get install squashfs-tools" >&2
@@ -203,26 +203,23 @@ chmod 0755 "$STAGING_DIR/usr/local/bin/omarchy-live-autostart"
 chmod 0755 "$STAGING_DIR/opt/omarchy-setup/setup.sh" 2>/dev/null || true
 
 # ── Repack the rootfs image ────────────────────────────────────────────────
-# SquashFS: Use fast append-only overlay (preserves original compression,
-#           adds only our files — keeps ISO under the 2 GB GitHub limit).
-# EROFS:    Full extract-modify-repack (EROFS has no append support).
+# Both SquashFS and EROFS use full extract-modify-repack to avoid
+# mksquashfs append-mode issues with overlapping directory trees.
 
 NEW_ROOTFS="$WORK_DIR/new_rootfs.img"
 
 echo "[4/6] Repacking rootfs image ($ROOTFS_FORMAT)..."
 
 if [[ "$ROOTFS_FORMAT" == "squashfs" ]]; then
-  # Append our overlay files onto a copy of the original squashfs.
-  # This is fast and preserves the original compression for existing files.
-  cp "$ORIG_ROOTFS" "$NEW_ROOTFS"
+  echo "  Extracting SquashFS rootfs (this may take a while)..."
+  mkdir -p "$ROOTFS_DIR"
+  unsquashfs -d "$ROOTFS_DIR" -f "$ORIG_ROOTFS" >/dev/null
 
-  PSEUDO_FILE="$WORK_DIR/pseudo-defs.txt"
-  cat > "$PSEUDO_FILE" <<'PSEUDO'
-/usr/local/bin/omarchy-live-autostart m 0755 0 0
-/opt/omarchy-setup/setup.sh m 0755 0 0
-PSEUDO
+  # Overlay staged files into the extracted rootfs
+  rsync -rlt "$STAGING_DIR/" "$ROOTFS_DIR/"
 
-  mksquashfs "$STAGING_DIR" "$NEW_ROOTFS" -comp xz -b 1M -all-root -pf "$PSEUDO_FILE" >/dev/null
+  echo "  Repacking SquashFS rootfs..."
+  mksquashfs "$ROOTFS_DIR" "$NEW_ROOTFS" -comp xz -b 1M -all-root -noappend >/dev/null
 
 elif [[ "$ROOTFS_FORMAT" == "erofs" ]]; then
   # EROFS doesn't support appending — full extract, inject, repack.
