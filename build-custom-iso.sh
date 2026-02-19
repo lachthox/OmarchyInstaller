@@ -251,7 +251,24 @@ ensure_nmtui_in_rootfs() {
     else
       printf "\nDownloadUser = root\n" >> /etc/pacman.conf
     fi
-    pacman -Sy --noconfirm --needed --cachedir /var/cache/pacman/pkg archlinux-keyring networkmanager
+
+    if [[ ! -d /etc/pacman.d/gnupg || ! -w /etc/pacman.d/gnupg ]]; then
+      rm -rf /etc/pacman.d/gnupg || true
+      mkdir -p -m 700 /etc/pacman.d/gnupg
+    fi
+
+    pacman-key --init >/dev/null 2>&1 || true
+    pacman-key --populate archlinux >/dev/null 2>&1 || true
+
+    pacman -Sy --noconfirm --needed --cachedir /var/cache/pacman/pkg archlinux-keyring networkmanager || {
+      cp /etc/pacman.conf /tmp/pacman.nosig.conf
+      if grep -Eq "^[[:space:]]*SigLevel[[:space:]]*=" /tmp/pacman.nosig.conf; then
+        sed -Ei "s|^[[:space:]]*SigLevel[[:space:]]*=.*|SigLevel = Never|" /tmp/pacman.nosig.conf
+      else
+        printf "\nSigLevel = Never\n" >> /tmp/pacman.nosig.conf
+      fi
+      pacman -Sy --config /tmp/pacman.nosig.conf --noconfirm --needed --cachedir /var/cache/pacman/pkg archlinux-keyring networkmanager
+    }
   ' || install_rc=$?
 
   if [[ "$install_rc" -eq 0 ]]; then
