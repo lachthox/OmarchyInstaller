@@ -817,7 +817,8 @@ generate_archinstall_config() {
 
   local pkg_json='"base", "base-devel", "git", "vim", "btrfs-progs", "sudo", "networkmanager"'
   if [[ -n "$ucode_pkg" ]]; then
-    pkg_json+="\n        ,\"$ucode_pkg\""
+    pkg_json+="
+        ,\"$ucode_pkg\""
   fi
 
   local j_disk j_efi_part j_root_part j_hostname j_username j_user_password j_enc_password j_timezone j_bootloader j_kb_layout
