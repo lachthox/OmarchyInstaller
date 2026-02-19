@@ -265,9 +265,14 @@ ensure_nmtui_in_rootfs() {
     pacman-key --init >/dev/null 2>&1 || true
     pacman-key --populate archlinux >/dev/null 2>&1 || true
 
+    rm -f /usr/share/licenses/gcc-libs/RUNTIME.LIBRARY.EXCEPTION || true
+    find /usr/share/locale -type f -path "*/LC_MESSAGES/libstdc++.mo" -delete 2>/dev/null || true
+
     pacman -Sy --noconfirm --needed \
       --overwrite "/usr/lib/libgcc*" \
       --overwrite "/usr/lib/libstdc++*" \
+      --overwrite "/usr/share/licenses/gcc-libs/*" \
+      --overwrite "/usr/share/locale/*/LC_MESSAGES/libstdc++.mo" \
       --cachedir /var/cache/pacman/pkg \
       archlinux-keyring networkmanager || {
       cp /etc/pacman.conf /tmp/pacman.nosig.conf
@@ -284,6 +289,8 @@ ensure_nmtui_in_rootfs() {
       pacman -Sy --config /tmp/pacman.nosig.conf --noconfirm --needed \
         --overwrite "/usr/lib/libgcc*" \
         --overwrite "/usr/lib/libstdc++*" \
+        --overwrite "/usr/share/licenses/gcc-libs/*" \
+        --overwrite "/usr/share/locale/*/LC_MESSAGES/libstdc++.mo" \
         --cachedir /var/cache/pacman/pkg \
         archlinux-keyring networkmanager
     }
