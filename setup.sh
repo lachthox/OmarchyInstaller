@@ -767,14 +767,27 @@ bytes_to_gib() {
 
 free_bytes_on_disk() {
   local disk="$1"
-  local free_str
+  local sector_size first_free last_free free_sectors
 
-  free_str="$(sgdisk -p "$disk" 2>/dev/null | awk '/Total free space is/ {for(i=1;i<=NF;i++){if($i=="bytes") {print $(i-1); exit}}}')"
-  if [[ -z "$free_str" ]]; then
-    echo 0
-  else
-    echo "$free_str"
+  sector_size="$(blockdev --getss "$disk" 2>/dev/null)"
+  [[ "$sector_size" =~ ^[0-9]+$ ]] || sector_size=512
+
+  first_free="$(sgdisk -F "$disk" 2>/dev/null | tr -d '[:space:]')"
+  last_free="$(sgdisk -E "$disk" 2>/dev/null | tr -d '[:space:]')"
+
+  if [[ "$first_free" =~ ^[0-9]+$ && "$last_free" =~ ^[0-9]+$ ]] && (( last_free >= first_free )); then
+    free_sectors=$(( last_free - first_free + 1 ))
+    echo $(( free_sectors * sector_size ))
+    return
   fi
+
+  free_sectors="$(sgdisk -p "$disk" 2>/dev/null | awk '/Total free space is/ {for(i=1;i<=NF;i++){if($i=="sectors") {print $(i-1); exit}}}')"
+  if [[ "$free_sectors" =~ ^[0-9]+$ ]]; then
+    echo $(( free_sectors * sector_size ))
+    return
+  fi
+
+  echo 0
 }
 
 validate_username() {
@@ -897,6 +910,7 @@ main() {
   show_stage_progress 1 7 "Prerequisite checks" 40
   need_cmd lsblk
   need_cmd sgdisk
+  need_cmd blockdev
   need_cmd archinstall
   need_cmd ping
 
