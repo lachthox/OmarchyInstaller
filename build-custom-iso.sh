@@ -57,53 +57,79 @@ WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
 
 ROOTFS_DIR="$WORK_DIR/rootfs"
-STAGING_DIR="$WORK_DIR/staging"
+ORIG_ROOTFS="$WORK_DIR/original_rootfs.img"
 
-# ── Locate live rootfs image inside the ISO ─────────────────────────────────
+# ── Locate and extract live rootfs image from the ISO ───────────────────────
 # Modern Arch ISOs (2022+) use EROFS; older ones use SquashFS.
+# We try direct extraction from known paths rather than xorriso -find,
+# which has unreliable output behaviour across versions.
 
-echo "[1/7] Locating live rootfs in source ISO..."
+echo "[1/6] Locating and extracting live rootfs from source ISO..."
 
 ROOTFS_FORMAT=""
 ISO_ROOTFS_PATH=""
 
-# Try EROFS first (modern default)
-ISO_ROOTFS_PATH="$(xorriso -indev "$SRC_ISO" -find / -type f -name 'airootfs.erofs' -- 2>/dev/null \
-  | grep -E '/airootfs\.erofs$' | head -n1)" || true
+# Known Arch Linux rootfs paths in order of preference
+CANDIDATES=(
+  "/arch/x86_64/airootfs.erofs:erofs"
+  "/arch/x86_64/airootfs.sfs:squashfs"
+  "/arch/x86_64/airootfs.sqfs:squashfs"
+)
 
-if [[ -n "$ISO_ROOTFS_PATH" ]]; then
-  ROOTFS_FORMAT="erofs"
-fi
-
-# Fall back to SquashFS (.sfs)
-if [[ -z "$ISO_ROOTFS_PATH" ]]; then
-  ISO_ROOTFS_PATH="$(xorriso -indev "$SRC_ISO" -find / -type f -name 'airootfs.sfs' -- 2>/dev/null \
-    | grep -E '/airootfs\.sfs$' | head -n1)" || true
-  if [[ -n "$ISO_ROOTFS_PATH" ]]; then
-    ROOTFS_FORMAT="squashfs"
+for entry in "${CANDIDATES[@]}"; do
+  cpath="${entry%%:*}"
+  cfmt="${entry##*:}"
+  echo "  Trying $cpath ..."
+  if xorriso -osirrox on -indev "$SRC_ISO" -extract "$cpath" "$ORIG_ROOTFS" 2>/dev/null; then
+    if [[ -f "$ORIG_ROOTFS" && -s "$ORIG_ROOTFS" ]]; then
+      ISO_ROOTFS_PATH="$cpath"
+      ROOTFS_FORMAT="$cfmt"
+      echo "  Found: $ISO_ROOTFS_PATH (format: $ROOTFS_FORMAT)"
+      break
+    fi
+    rm -f "$ORIG_ROOTFS"
   fi
-fi
+done
 
-# Fall back to SquashFS (.sqfs)
+# If known paths failed, do a full listing and search
 if [[ -z "$ISO_ROOTFS_PATH" ]]; then
-  ISO_ROOTFS_PATH="$(xorriso -indev "$SRC_ISO" -find / -type f -name 'airootfs.sqfs' -- 2>/dev/null \
-    | grep -E '/airootfs\.sqfs$' | head -n1)" || true
-  if [[ -n "$ISO_ROOTFS_PATH" ]]; then
-    ROOTFS_FORMAT="squashfs"
-  fi
+  echo "  Known paths not found — scanning full ISO listing..."
+  FULL_LISTING="$(xorriso -indev "$SRC_ISO" -find / -type f 2>&1 || true)"
+  echo "  Files in ISO (filtered):"
+  echo "$FULL_LISTING" | grep -i 'airootfs\|rootfs\|\.erofs\|\.sfs\|\.sqfs' || echo "    (none matching)"
+
+  for pattern in 'airootfs\.erofs' 'airootfs\.sfs' 'airootfs\.sqfs'; do
+    MATCH="$(echo "$FULL_LISTING" | grep -E "/$pattern\$" | head -n1)" || true
+    if [[ -n "$MATCH" ]]; then
+      # Clean up any xorriso prefix noise (e.g. "'/path'" -> /path)
+      MATCH="$(echo "$MATCH" | sed "s/^[^/]*//" | tr -d "'")"
+      if xorriso -osirrox on -indev "$SRC_ISO" -extract "$MATCH" "$ORIG_ROOTFS" 2>/dev/null; then
+        if [[ -f "$ORIG_ROOTFS" && -s "$ORIG_ROOTFS" ]]; then
+          ISO_ROOTFS_PATH="$MATCH"
+          case "$pattern" in
+            *erofs*) ROOTFS_FORMAT="erofs" ;;
+            *)       ROOTFS_FORMAT="squashfs" ;;
+          esac
+          echo "  Found via scan: $ISO_ROOTFS_PATH (format: $ROOTFS_FORMAT)"
+          break
+        fi
+        rm -f "$ORIG_ROOTFS"
+      fi
+    fi
+  done
 fi
 
 if [[ -z "$ISO_ROOTFS_PATH" ]]; then
   echo "Error: Could not find live rootfs image in ISO." >&2
-  echo "  Searched for: airootfs.erofs, airootfs.sfs, airootfs.sqfs" >&2
+  echo "  Searched known paths and scanned ISO listing." >&2
+  echo "  Full ISO listing for debugging:" >&2
+  xorriso -indev "$SRC_ISO" -find / -type f 2>&1 | head -50 >&2 || true
   exit 1
 fi
 
-echo "  Found: $ISO_ROOTFS_PATH (format: $ROOTFS_FORMAT)"
-
 # ── Verify format-specific tools are available ──────────────────────────────
 
-echo "[2/7] Checking $ROOTFS_FORMAT toolchain..."
+echo "[2/6] Checking $ROOTFS_FORMAT toolchain..."
 
 if [[ "$ROOTFS_FORMAT" == "erofs" ]]; then
   for cmd in mkfs.erofs fsck.erofs; do
@@ -123,27 +149,28 @@ elif [[ "$ROOTFS_FORMAT" == "squashfs" ]]; then
   done
 fi
 
-# ── Extract the rootfs image from the ISO ───────────────────────────────────
+# ── Extract rootfs image contents ────────────────────────────────────────────
 
-ORIG_ROOTFS="$WORK_DIR/original_rootfs.img"
-
-echo "[3/7] Extracting compressed live rootfs..."
-xorriso -osirrox on -indev "$SRC_ISO" -extract "$ISO_ROOTFS_PATH" "$ORIG_ROOTFS" >/dev/null
-
-# ── Extract rootfs image contents ───────────────────────────────────────────
-
-echo "[4/7] Unpacking rootfs image ($ROOTFS_FORMAT)..."
+echo "[3/6] Unpacking rootfs image ($ROOTFS_FORMAT)..."
 mkdir -p "$ROOTFS_DIR"
 
 if [[ "$ROOTFS_FORMAT" == "erofs" ]]; then
-  fsck.erofs --extract="$ROOTFS_DIR" "$ORIG_ROOTFS" >/dev/null 2>&1
+  fsck.erofs --extract="$ROOTFS_DIR" "$ORIG_ROOTFS" 2>&1 || {
+    echo "Error: fsck.erofs extraction failed. Trying dump.erofs fallback..." >&2
+    if command -v dump.erofs >/dev/null 2>&1; then
+      dump.erofs --extract="$ROOTFS_DIR" "$ORIG_ROOTFS" 2>&1
+    else
+      echo "Error: Could not extract EROFS image." >&2
+      exit 1
+    fi
+  }
 elif [[ "$ROOTFS_FORMAT" == "squashfs" ]]; then
   unsquashfs -f -d "$ROOTFS_DIR" "$ORIG_ROOTFS" >/dev/null
 fi
 
 # ── Inject Omarchy payload into the rootfs ──────────────────────────────────
 
-echo "[5/7] Injecting Omarchy payload into rootfs..."
+echo "[4/6] Injecting Omarchy payload into rootfs..."
 mkdir -p "$ROOTFS_DIR/opt/omarchy-setup"
 rsync -rlt --delete "$SETUP_DIR/" "$ROOTFS_DIR/opt/omarchy-setup/"
 
@@ -195,7 +222,7 @@ chmod 0755 "$ROOTFS_DIR/opt/omarchy-setup/setup.sh" 2>/dev/null || true
 
 NEW_ROOTFS="$WORK_DIR/new_rootfs.img"
 
-echo "[6/7] Repacking rootfs image ($ROOTFS_FORMAT)..."
+echo "[5/6] Repacking rootfs image ($ROOTFS_FORMAT)..."
 
 if [[ "$ROOTFS_FORMAT" == "erofs" ]]; then
   mkfs.erofs -zlz4hc "$NEW_ROOTFS" "$ROOTFS_DIR" >/dev/null 2>&1
@@ -205,7 +232,7 @@ fi
 
 # ── Rebuild the ISO ─────────────────────────────────────────────────────────
 
-echo "[7/7] Rebuilding customized ISO image..."
+echo "[6/6] Rebuilding customized ISO image..."
 rm -f "$OUT_ISO"
 xorriso -indev "$SRC_ISO" -outdev "$OUT_ISO" \
   -boot_image any replay \
