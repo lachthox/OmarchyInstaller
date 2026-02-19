@@ -467,6 +467,37 @@ collect_wifi_network_ssids() {
   ' | awk '!seen[$0]++'
 }
 
+connect_wifi_with_nmtui() {
+  command -v nmtui >/dev/null 2>&1 || return 1
+
+  if command -v systemctl >/dev/null 2>&1; then
+    if ! systemctl is-active --quiet NetworkManager 2>/dev/null; then
+      run_with_eta 8 "Starting NetworkManager" systemctl start NetworkManager || true
+      sleep 1
+    fi
+  fi
+
+  if command -v nmcli >/dev/null 2>&1; then
+    nmcli radio wifi on >/dev/null 2>&1 || true
+  fi
+
+  show_message "Wi-Fi Setup" "A network setup screen will open.\n\nSelect your Wi-Fi network and enter password, then exit back to installer."
+
+  while true; do
+    nmtui connect || true
+    sleep 2
+
+    if has_internet; then
+      show_message "Network Ready" "Connected to the internet."
+      return 0
+    fi
+
+    if ! ask_yes_no "Still Offline" "No internet detected yet. Open Wi-Fi setup again?"; then
+      return 1
+    fi
+  done
+}
+
 connect_wifi_interactive() {
   command -v iwctl >/dev/null 2>&1 || {
     show_message "Wi-Fi Unavailable" "iwctl is not available in this live environment. Connect Ethernet if possible."
@@ -568,7 +599,7 @@ ensure_network_connection() {
     return 0
   fi
 
-  show_message "Network Required" "An internet connection is required for archinstall package download.\n\nIf Ethernet is plugged in, you can retry detection.\nIf using Wi-Fi, the installer can guide connection now."
+  show_message "Network Required" "An internet connection is required for archinstall package download.\n\nIf Ethernet is plugged in, you can retry detection.\nIf using Wi-Fi, the installer opens a guided network setup screen."
 
   while true; do
     local action
@@ -586,6 +617,11 @@ ensure_network_connection() {
         show_message "Still Offline" "No internet detected yet. Check cable/router and try again."
         ;;
       wifi)
+        if connect_wifi_with_nmtui; then
+          return 0
+        fi
+
+        show_message "Wi-Fi Fallback" "Switching to built-in fallback Wi-Fi flow."
         connect_wifi_interactive || true
         if has_internet; then
           return 0

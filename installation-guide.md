@@ -38,7 +38,7 @@ If you skip the PowerShell helper, do these manually:
 1. Boot from the Arch USB in UEFI mode.
 2. Start `setup.sh` first. If internet is not connected, it guides you through:
    - Ethernet retry, or
-   - Wi-Fi setup with scanned network selection (plus hidden SSID/manual fallback).
+   - Wi-Fi setup via `nmtui` (with scanned-network fallback flow if needed).
 3. If you prefer to connect manually first, use:
    ```bash
    iwctl

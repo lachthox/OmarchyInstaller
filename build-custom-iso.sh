@@ -212,6 +212,54 @@ PROFILE
 chmod 0755 "$STAGING_DIR/usr/local/bin/omarchy-live-autostart"
 chmod 0755 "$STAGING_DIR/opt/omarchy-setup/setup.sh" 2>/dev/null || true
 
+ensure_nmtui_in_rootfs() {
+  local rootfs="$1"
+
+  if [[ -x "$rootfs/usr/bin/nmtui" ]]; then
+    echo "  nmtui already present in live rootfs."
+    return 0
+  fi
+
+  if [[ ! -x "$rootfs/usr/bin/pacman" ]]; then
+    echo "Error: pacman not found in extracted rootfs; cannot install NetworkManager." >&2
+    return 1
+  fi
+
+  echo "  Installing NetworkManager (includes nmtui) into live rootfs..."
+
+  mkdir -p "$rootfs/proc" "$rootfs/sys" "$rootfs/dev" "$rootfs/run" "$rootfs/etc"
+  cp -fL /etc/resolv.conf "$rootfs/etc/resolv.conf" 2>/dev/null || true
+
+  mount --bind /dev "$rootfs/dev"
+  mount --bind /run "$rootfs/run"
+  mount -t proc proc "$rootfs/proc"
+  mount -t sysfs sys "$rootfs/sys"
+
+  local install_rc=0
+  chroot "$rootfs" /usr/bin/bash -lc 'pacman -Sy --noconfirm --needed archlinux-keyring networkmanager' || install_rc=$?
+
+  if [[ "$install_rc" -eq 0 ]]; then
+    chroot "$rootfs" /usr/bin/bash -lc 'systemctl enable NetworkManager.service >/dev/null 2>&1 || true' || true
+  fi
+
+  umount "$rootfs/sys" 2>/dev/null || true
+  umount "$rootfs/proc" 2>/dev/null || true
+  umount "$rootfs/run" 2>/dev/null || true
+  umount "$rootfs/dev" 2>/dev/null || true
+
+  if [[ "$install_rc" -ne 0 ]]; then
+    echo "Error: Failed to install NetworkManager in live rootfs." >&2
+    return 1
+  fi
+
+  if [[ ! -x "$rootfs/usr/bin/nmtui" ]]; then
+    echo "Error: NetworkManager installed but nmtui binary is still missing." >&2
+    return 1
+  fi
+
+  echo "  NetworkManager/nmtui installed successfully."
+}
+
 # ── Repack the rootfs image ────────────────────────────────────────────────
 # Both SquashFS and EROFS use full extract-modify-repack to avoid
 # mksquashfs append-mode issues with overlapping directory trees.
@@ -227,6 +275,8 @@ if [[ "$ROOTFS_FORMAT" == "squashfs" ]]; then
 
   # Overlay staged files into the extracted rootfs
   rsync -rlt "$STAGING_DIR/" "$ROOTFS_DIR/"
+
+  ensure_nmtui_in_rootfs "$ROOTFS_DIR"
 
   echo "  Repacking SquashFS rootfs..."
   mksquashfs "$ROOTFS_DIR" "$NEW_ROOTFS" -comp xz -b 1M -all-root -noappend >/dev/null
@@ -247,6 +297,8 @@ elif [[ "$ROOTFS_FORMAT" == "erofs" ]]; then
 
   # Overlay staged files into the extracted rootfs
   rsync -rlt "$STAGING_DIR/" "$ROOTFS_DIR/"
+
+  ensure_nmtui_in_rootfs "$ROOTFS_DIR"
 
   echo "  Repacking EROFS rootfs..."
   mkfs.erofs -zlz4hc "$NEW_ROOTFS" "$ROOTFS_DIR" >/dev/null 2>&1

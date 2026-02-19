@@ -25,7 +25,7 @@ This project provides two guided assistants:
 
 ### Arch live installer (`setup.sh`)
 
-- Verifies internet access before installation and guides Wi-Fi/Ethernet setup if offline.
+- Verifies internet access before installation and guides Wi-Fi/Ethernet setup if offline (`nmtui` first, built-in fallback).
 - Detects available disks and helps choose a target disk.
 - Detects an EFI partition automatically (with manual override).
 - Computes logic-based defaults per machine:
