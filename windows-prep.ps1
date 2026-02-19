@@ -1264,9 +1264,29 @@ function Get-GitHubReleaseIso {
   # Returns $null if no release is found, otherwise a PSCustomObject with
   # IsoUrl, ShaUrl, Tag, and IsoName.
   param(
-    [string]$Owner = 'lachlanyoga',
-    [string]$Repo  = 'OmarchyInstaller'
+    [string]$Owner = '',
+    [string]$Repo  = ''
   )
+
+  if ([string]::IsNullOrWhiteSpace($Owner) -or [string]::IsNullOrWhiteSpace($Repo)) {
+    try {
+      $remoteUrl = (& git remote get-url origin 2>$null | Select-Object -First 1)
+      if (-not [string]::IsNullOrWhiteSpace($remoteUrl)) {
+        $remoteUrl = $remoteUrl.Trim()
+        $m = [regex]::Match($remoteUrl, 'github\.com[:/](?<owner>[^/]+)/(?<repo>[^/.]+)(?:\.git)?$', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        if ($m.Success) {
+          if ([string]::IsNullOrWhiteSpace($Owner)) { $Owner = $m.Groups['owner'].Value }
+          if ([string]::IsNullOrWhiteSpace($Repo)) { $Repo = $m.Groups['repo'].Value }
+          Write-DebugLog -Category 'github.release.repo' -Message ("Resolved from git origin: owner='{0}' repo='{1}'" -f $Owner, $Repo)
+        }
+      }
+    } catch {
+      Write-DebugLog -Category 'github.release.repo.warn' -Message $_.Exception.Message
+    }
+  }
+
+  if ([string]::IsNullOrWhiteSpace($Owner)) { $Owner = 'lachthox' }
+  if ([string]::IsNullOrWhiteSpace($Repo)) { $Repo = 'OmarchyInstaller' }
 
   $apiUrl = "https://api.github.com/repos/$Owner/$Repo/releases/latest"
   Write-DebugLog -Category 'github.release' -Message ("Querying {0}" -f $apiUrl)
