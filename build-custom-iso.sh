@@ -221,8 +221,8 @@ ensure_nmtui_in_rootfs() {
   fi
 
   if [[ ! -x "$rootfs/usr/bin/pacman" ]]; then
-    echo "Error: pacman not found in extracted rootfs; cannot install NetworkManager." >&2
-    return 1
+    echo "Warning: pacman not found in extracted rootfs; cannot install NetworkManager. Continuing with iwctl fallback." >&2
+    return 0
   fi
 
   echo "  Installing NetworkManager (includes nmtui) into live rootfs..."
@@ -236,7 +236,8 @@ ensure_nmtui_in_rootfs() {
   mount -t sysfs sys "$rootfs/sys"
 
   local install_rc=0
-  chroot "$rootfs" /usr/bin/bash -lc 'pacman -Sy --noconfirm --needed archlinux-keyring networkmanager' || install_rc=$?
+  mkdir -p "$rootfs/tmp/pacman-cache"
+  chroot "$rootfs" /usr/bin/bash -lc 'mkdir -p /tmp/pacman-cache && pacman -Sy --noconfirm --needed --cachedir /tmp/pacman-cache archlinux-keyring networkmanager' || install_rc=$?
 
   if [[ "$install_rc" -eq 0 ]]; then
     chroot "$rootfs" /usr/bin/bash -lc 'systemctl enable NetworkManager.service >/dev/null 2>&1 || true' || true
@@ -248,13 +249,13 @@ ensure_nmtui_in_rootfs() {
   umount "$rootfs/dev" 2>/dev/null || true
 
   if [[ "$install_rc" -ne 0 ]]; then
-    echo "Error: Failed to install NetworkManager in live rootfs." >&2
-    return 1
+    echo "Warning: Failed to install NetworkManager in live rootfs. Continuing with iwctl fallback." >&2
+    return 0
   fi
 
   if [[ ! -x "$rootfs/usr/bin/nmtui" ]]; then
-    echo "Error: NetworkManager installed but nmtui binary is still missing." >&2
-    return 1
+    echo "Warning: NetworkManager install completed but nmtui binary is missing. Continuing with iwctl fallback." >&2
+    return 0
   fi
 
   echo "  NetworkManager/nmtui installed successfully."
