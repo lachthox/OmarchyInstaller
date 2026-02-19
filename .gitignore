@@ -1,0 +1,41 @@
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editors / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Serena
+.serena/
+
+# Logs
+*.log
+*.tmp
+
+# Environment secrets
+.env
+.env.*
+
+# Build / cache
+dist/
+build/
+.cache/
+
+# Archive artifacts
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+
+# Downloaded ISOs (large binary files — built by CI, downloaded at runtime)
+media/*.iso
+media/*.sha256
+
+# Screen recordings / media captures
+*.mp4
+*.mkv
+*.avi
