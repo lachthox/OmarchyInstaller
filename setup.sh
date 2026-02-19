@@ -403,6 +403,168 @@ require_root() {
   [[ "${EUID:-$(id -u)}" -eq 0 ]] || die "Run this script as root (from Arch live ISO)."
 }
 
+has_internet() {
+  ping -c 1 -W 2 archlinux.org >/dev/null 2>&1 || ping -c 1 -W 2 1.1.1.1 >/dev/null 2>&1
+}
+
+collect_wifi_stations() {
+  iwctl station list 2>/dev/null | awk '
+    NF == 0 { next }
+    $1 == "Station" { next }
+    $1 ~ /^-+$/ { next }
+    { print $1 }
+  '
+}
+
+collect_wifi_network_ssids() {
+  local station="$1"
+  iwctl station "$station" get-networks 2>/dev/null | awk '
+    NF == 0 { next }
+    $0 ~ /^\s*Network\s+name/ { next }
+    $0 ~ /^\s*-+\s*$/ { next }
+    {
+      line = $0
+      sub(/^[[:space:]>*]+/, "", line)
+      if (line == "") next
+      split(line, parts, /[[:space:]][[:space:]]+/)
+      ssid = parts[1]
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", ssid)
+      if (ssid != "") print ssid
+    }
+  ' | awk '!seen[$0]++'
+}
+
+connect_wifi_interactive() {
+  command -v iwctl >/dev/null 2>&1 || {
+    show_message "Wi-Fi Unavailable" "iwctl is not available in this live environment. Connect Ethernet if possible."
+    return 1
+  }
+
+  local station_lines=()
+  mapfile -t station_lines < <(collect_wifi_stations)
+  if [[ ${#station_lines[@]} -eq 0 ]]; then
+    show_message "Wi-Fi Unavailable" "No wireless adapter detected. Connect Ethernet and try again."
+    return 1
+  fi
+
+  local station_items=()
+  local st
+  for st in "${station_lines[@]}"; do
+    station_items+=("$st" "Wireless interface")
+  done
+
+  local station
+  if [[ ${#station_lines[@]} -eq 1 ]]; then
+    station="${station_lines[0]}"
+  else
+    station="$(show_menu "Wi-Fi Adapter" "Select wireless adapter:" "${station_items[@]}")"
+  fi
+  [[ -n "$station" ]] || return 1
+
+  while true; do
+    run_with_eta 8 "Scanning Wi-Fi networks on $station" iwctl station "$station" scan || true
+
+    local ssid_lines=()
+    mapfile -t ssid_lines < <(collect_wifi_network_ssids "$station")
+
+    local menu_items=()
+    local i key
+    for ((i=0; i<${#ssid_lines[@]}; i++)); do
+      key="net-$i"
+      menu_items+=("$key" "${ssid_lines[$i]}")
+    done
+    menu_items+=("rescan" "Scan again")
+    menu_items+=("hidden" "Enter hidden SSID manually")
+    menu_items+=("back" "Return to previous menu")
+
+    local choice ssid
+    choice="$(show_menu "Wi-Fi Networks" "Choose your Wi-Fi network:" "${menu_items[@]}")"
+
+    case "$choice" in
+      rescan)
+        continue
+        ;;
+      hidden)
+        ssid="$(ask_input "Wi-Fi" "SSID name:" "")"
+        [[ -n "$ssid" ]] || {
+          show_message "Wi-Fi" "SSID cannot be empty."
+          continue
+        }
+        ;;
+      back)
+        return 1
+        ;;
+      net-*)
+        i="${choice#net-}"
+        if [[ "$i" =~ ^[0-9]+$ ]] && (( i >= 0 && i < ${#ssid_lines[@]} )); then
+          ssid="${ssid_lines[$i]}"
+        else
+          show_message "Wi-Fi" "Invalid network selection."
+          continue
+        fi
+        ;;
+      *)
+        show_message "Wi-Fi" "Invalid network selection."
+        continue
+        ;;
+    esac
+
+    local pass
+    pass="$(ask_password "Wi-Fi" "Password for '$ssid' (leave empty for open network)")"
+
+    if [[ -n "$pass" ]]; then
+      run_with_eta 12 "Connecting to Wi-Fi '$ssid'" iwctl --passphrase "$pass" station "$station" connect "$ssid" || true
+    else
+      run_with_eta 12 "Connecting to Wi-Fi '$ssid'" iwctl station "$station" connect "$ssid" || true
+    fi
+
+    sleep 2
+    if has_internet; then
+      show_message "Network Ready" "Connected to the internet."
+      return 0
+    fi
+
+    if ! ask_yes_no "Connection Failed" "Could not confirm internet access. Try another Wi-Fi network?"; then
+      return 1
+    fi
+  done
+}
+
+ensure_network_connection() {
+  if has_internet; then
+    return 0
+  fi
+
+  show_message "Network Required" "An internet connection is required for archinstall package download.\n\nIf Ethernet is plugged in, you can retry detection.\nIf using Wi-Fi, the installer can guide connection now."
+
+  while true; do
+    local action
+    action="$(show_menu "Network Setup" "No internet detected. Choose an option:" \
+      "ethernet" "I connected Ethernet, test again" \
+      "wifi" "Connect to Wi-Fi now" \
+      "cancel" "Cancel installation")"
+
+    case "$action" in
+      ethernet)
+        if has_internet; then
+          show_message "Network Ready" "Internet connection detected."
+          return 0
+        fi
+        show_message "Still Offline" "No internet detected yet. Check cable/router and try again."
+        ;;
+      wifi)
+        connect_wifi_interactive || true
+        if has_internet; then
+          return 0
+        fi
+        ;;
+      cancel)
+        die "Cancelled before network setup"
+        ;;
+    esac
+  done
+}
+
 normalize_hostname() {
   local raw="$1"
   raw="$(tr '[:upper:]' '[:lower:]' <<<"$raw")"
@@ -663,13 +825,16 @@ EOF
 }
 
 main() {
-  show_stage_progress 1 6 "Prerequisite checks" 40
+  show_stage_progress 1 7 "Prerequisite checks" 40
   need_cmd lsblk
   need_cmd sgdisk
   need_cmd archinstall
+  need_cmd ping
 
   require_root
-  show_stage_progress 2 6 "Disk discovery and system defaults" 30
+  show_stage_progress 2 7 "Network connectivity" 45
+  ensure_network_connection
+  show_stage_progress 3 7 "Disk discovery and system defaults" 30
 
   show_message "Omarchy Installer" "Omarchy Portable Setup v${SCRIPT_VERSION}\n\nThis assistant will:\n- Detect your disk/EFI automatically\n- Create and encrypt a new Linux partition\n- Generate an archinstall config\n- Start installation after your confirmation\n\nProceed only if you have backups."
 
@@ -762,7 +927,7 @@ main() {
 
   local ucode_pkg
   ucode_pkg="$(cpu_ucode_pkg)"
-  show_stage_progress 3 6 "Configuration input completed" 25
+  show_stage_progress 4 7 "Configuration input completed" 25
 
   show_message "Partition Plan" "Target disk: $selected_disk\nEFI partition: $efi_part\nUnallocated space: ${free_gib} GiB\n\nThe installer will create ONE new Linux partition using available free space and will not reformat EFI."
 
@@ -772,7 +937,7 @@ main() {
 
   local before_parts after_parts root_part
   before_parts="$(lsblk -nrpo NAME "$selected_disk" | wc -l)"
-  show_stage_progress 4 6 "Creating Linux partition" 30
+  show_stage_progress 5 7 "Creating Linux partition" 30
   run_with_eta 30 "Partition creation on $selected_disk" create_root_partition "$selected_disk"
 
   after_parts="$(lsblk -nrpo NAME "$selected_disk" | wc -l)"
@@ -808,13 +973,13 @@ main() {
   summary+="\n\nConfig written: $CONFIG_PATH"
 
   show_message "Install Summary" "$summary"
-  show_stage_progress 5 6 "Installer config generated" 20
+  show_stage_progress 6 7 "Installer config generated" 20
 
   if ! ask_yes_no "Start Install" "Run archinstall now with this generated config?"; then
     die "Cancelled before archinstall"
   fi
 
-  show_stage_progress 6 6 "Running archinstall" 1800
+  show_stage_progress 7 7 "Running archinstall" 1800
   run_with_eta 1800 "archinstall base installation" archinstall --config "$CONFIG_PATH"
 
   show_message "Complete" "Base installation completed.\n\nNext steps after reboot:\n1. Log in as $username\n2. Run: curl -fsSL https://omarchy.org/install | bash\n\nIf Windows entry is missing, run: sudo limine-update"

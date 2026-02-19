@@ -197,6 +197,16 @@ if [[ -z "${OMARCHY_AUTORUN_DONE:-}" && -x /usr/local/bin/omarchy-live-autostart
 fi
 PROFILE
 
+cat > "$STAGING_DIR/root/.zprofile" <<'PROFILE'
+# OMARCHY_AUTORUN_HOOK
+if [[ -z "${OMARCHY_AUTORUN_DONE:-}" && -x /usr/local/bin/omarchy-live-autostart ]]; then
+  if [[ -t 0 && "$(tty 2>/dev/null || true)" == "/dev/tty1" ]]; then
+    export OMARCHY_AUTORUN_DONE=1
+    /usr/local/bin/omarchy-live-autostart
+  fi
+fi
+PROFILE
+
 # ── Set correct permissions on staging files ────────────────────────────────
 
 chmod 0755 "$STAGING_DIR/usr/local/bin/omarchy-live-autostart"

@@ -25,6 +25,7 @@ This project provides two guided assistants:
 
 ### Arch live installer (`setup.sh`)
 
+- Verifies internet access before installation and guides Wi-Fi/Ethernet setup if offline.
 - Detects available disks and helps choose a target disk.
 - Detects an EFI partition automatically (with manual override).
 - Computes logic-based defaults per machine:
@@ -72,6 +73,14 @@ Set-ExecutionPolicy -Scope Process Bypass -Force
 ```bash
 chmod +x setup.sh
 sudo ./setup.sh
+```
+
+If using the customized ISO and the live-shell auto-prompt does not appear, run:
+
+```bash
+cd /opt/omarchy-setup
+chmod +x setup.sh
+./setup.sh
 ```
 
 ## Safety model

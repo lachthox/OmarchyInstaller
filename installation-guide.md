@@ -36,7 +36,10 @@ If you skip the PowerShell helper, do these manually:
 ## 3. Boot Arch Live ISO
 
 1. Boot from the Arch USB in UEFI mode.
-2. Connect to network:
+2. Start `setup.sh` first. If internet is not connected, it guides you through:
+   - Ethernet retry, or
+   - Wi-Fi setup with scanned network selection (plus hidden SSID/manual fallback).
+3. If you prefer to connect manually first, use:
    ```bash
    iwctl
    device list
@@ -45,12 +48,20 @@ If you skip the PowerShell helper, do these manually:
    station <wifi-device> connect <SSID>
    quit
    ```
-3. Verify internet:
+4. Verify internet (optional):
    ```bash
    ping -c 3 archlinux.org
    ```
 
 If you chose the pre-built customized ISO during Windows prep, the live shell on first boot will automatically prompt to launch `setup.sh`.
+
+If the prompt does not appear, run it manually:
+
+```bash
+cd /opt/omarchy-setup
+chmod +x setup.sh
+./setup.sh
+```
 
 ## 4. Run the Arch Installer Assistant
 
@@ -106,3 +117,5 @@ sudo limine-update
   - Re-run `windows-prep.ps1` and choose resize, or shrink manually in Disk Management.
 - Install cancelled:
   - Re-run `sudo ./setup.sh`; it is interactive and confirmation-based.
+- Auto-prompt did not appear on live boot:
+  - Run `cd /opt/omarchy-setup && chmod +x setup.sh && ./setup.sh` manually.
