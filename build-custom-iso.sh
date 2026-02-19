@@ -245,6 +245,7 @@ ensure_nmtui_in_rootfs() {
   fi
 
   chroot "$rootfs" /usr/bin/bash -lc '
+    set -f
     mkdir -p /var/cache/pacman/pkg
     if grep -Eq "^[#[:space:]]*DownloadUser[[:space:]]*=" /etc/pacman.conf; then
       sed -Ei "s|^[#[:space:]]*DownloadUser[[:space:]]*=.*|DownloadUser = root|" /etc/pacman.conf
@@ -264,7 +265,11 @@ ensure_nmtui_in_rootfs() {
     pacman-key --init >/dev/null 2>&1 || true
     pacman-key --populate archlinux >/dev/null 2>&1 || true
 
-    pacman -Sy --noconfirm --needed --cachedir /var/cache/pacman/pkg archlinux-keyring networkmanager || {
+    pacman -Sy --noconfirm --needed \
+      --overwrite "/usr/lib/libgcc*" \
+      --overwrite "/usr/lib/libstdc++*" \
+      --cachedir /var/cache/pacman/pkg \
+      archlinux-keyring networkmanager || {
       cp /etc/pacman.conf /tmp/pacman.nosig.conf
       if grep -Eq "^[[:space:]]*SigLevel[[:space:]]*=" /tmp/pacman.nosig.conf; then
         sed -Ei "s|^[[:space:]]*SigLevel[[:space:]]*=.*|SigLevel = Never|" /tmp/pacman.nosig.conf
@@ -276,7 +281,11 @@ ensure_nmtui_in_rootfs() {
         sed -Ei "s|^[[:space:]]*CheckSpace|# CheckSpace|" /tmp/pacman.nosig.conf
       fi
 
-      pacman -Sy --config /tmp/pacman.nosig.conf --noconfirm --needed --overwrite '*' --cachedir /var/cache/pacman/pkg archlinux-keyring networkmanager
+      pacman -Sy --config /tmp/pacman.nosig.conf --noconfirm --needed \
+        --overwrite "/usr/lib/libgcc*" \
+        --overwrite "/usr/lib/libstdc++*" \
+        --cachedir /var/cache/pacman/pkg \
+        archlinux-keyring networkmanager
     }
   ' || install_rc=$?
 
