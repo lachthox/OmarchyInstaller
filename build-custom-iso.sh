@@ -252,6 +252,10 @@ ensure_nmtui_in_rootfs() {
       printf "\nDownloadUser = root\n" >> /etc/pacman.conf
     fi
 
+    if grep -Eq "^[[:space:]]*CheckSpace" /etc/pacman.conf; then
+      sed -Ei "s|^[[:space:]]*CheckSpace|# CheckSpace|" /etc/pacman.conf
+    fi
+
     if [[ ! -d /etc/pacman.d/gnupg || ! -w /etc/pacman.d/gnupg ]]; then
       rm -rf /etc/pacman.d/gnupg || true
       mkdir -p -m 700 /etc/pacman.d/gnupg
@@ -260,14 +264,19 @@ ensure_nmtui_in_rootfs() {
     pacman-key --init >/dev/null 2>&1 || true
     pacman-key --populate archlinux >/dev/null 2>&1 || true
 
-    pacman -Syu --noconfirm --needed --cachedir /var/cache/pacman/pkg archlinux-keyring networkmanager || {
+    pacman -Sy --noconfirm --needed --cachedir /var/cache/pacman/pkg archlinux-keyring networkmanager || {
       cp /etc/pacman.conf /tmp/pacman.nosig.conf
       if grep -Eq "^[[:space:]]*SigLevel[[:space:]]*=" /tmp/pacman.nosig.conf; then
         sed -Ei "s|^[[:space:]]*SigLevel[[:space:]]*=.*|SigLevel = Never|" /tmp/pacman.nosig.conf
       else
         printf "\nSigLevel = Never\n" >> /tmp/pacman.nosig.conf
       fi
-      pacman -Syu --config /tmp/pacman.nosig.conf --noconfirm --needed --cachedir /var/cache/pacman/pkg archlinux-keyring networkmanager
+
+      if grep -Eq "^[[:space:]]*CheckSpace" /tmp/pacman.nosig.conf; then
+        sed -Ei "s|^[[:space:]]*CheckSpace|# CheckSpace|" /tmp/pacman.nosig.conf
+      fi
+
+      pacman -Sy --config /tmp/pacman.nosig.conf --noconfirm --needed --overwrite '*' --cachedir /var/cache/pacman/pkg archlinux-keyring networkmanager
     }
   ' || install_rc=$?
 
