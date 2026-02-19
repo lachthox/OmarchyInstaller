@@ -236,8 +236,14 @@ ensure_nmtui_in_rootfs() {
   mount -t sysfs sys "$rootfs/sys"
 
   local install_rc=0
-  mkdir -p "$rootfs/tmp/pacman-cache"
-  chroot "$rootfs" /usr/bin/bash -lc 'mkdir -p /tmp/pacman-cache && pacman -Sy --noconfirm --needed --cachedir /tmp/pacman-cache archlinux-keyring networkmanager' || install_rc=$?
+  mkdir -p "$rootfs/var/cache/pacman/pkg"
+  chroot "$rootfs" /usr/bin/bash -lc '
+    mkdir -p /var/cache/pacman/pkg
+    if grep -Eq "^[[:space:]]*DownloadUser[[:space:]]*=" /etc/pacman.conf; then
+      sed -Ei "s/^[[:space:]]*DownloadUser[[:space:]]*=/# DownloadUser =/" /etc/pacman.conf
+    fi
+    pacman -Sy --noconfirm --needed --cachedir /var/cache/pacman/pkg archlinux-keyring networkmanager
+  ' || install_rc=$?
 
   if [[ "$install_rc" -eq 0 ]]; then
     chroot "$rootfs" /usr/bin/bash -lc 'systemctl enable NetworkManager.service >/dev/null 2>&1 || true' || true
