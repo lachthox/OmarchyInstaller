@@ -98,8 +98,12 @@ jobs:
         run: |
           ISO_NAME="${{ steps.detect.outputs.iso_name }}"
           OUT_NAME="${ISO_NAME%.iso}-omarchy-auto.iso"
+          PAYLOAD_DIR="$RUNNER_TEMP/omarchy-setup-payload"
+          rm -rf "$PAYLOAD_DIR"
+          mkdir -p "$PAYLOAD_DIR"
+          cp setup.sh "$PAYLOAD_DIR/"
           chmod +x build-custom-iso.sh
-          sudo ./build-custom-iso.sh "$ISO_NAME" "." "$OUT_NAME"
+          sudo ./build-custom-iso.sh "$ISO_NAME" "$PAYLOAD_DIR" "$OUT_NAME"
           echo "OUT_NAME=$OUT_NAME" >> "$GITHUB_ENV"
 
       - name: Generate release checksums
