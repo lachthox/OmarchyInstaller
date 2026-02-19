@@ -218,8 +218,8 @@ if [[ "$ROOTFS_FORMAT" == "squashfs" ]]; then
 
   PSEUDO_FILE="$WORK_DIR/pseudo-defs.txt"
   cat > "$PSEUDO_FILE" <<'PSEUDO'
-/usr/local/bin/omarchy-live-autostart m 0755
-/opt/omarchy-setup/setup.sh m 0755
+/usr/local/bin/omarchy-live-autostart m 0755 0 0
+/opt/omarchy-setup/setup.sh m 0755 0 0
 PSEUDO
 
   mksquashfs "$STAGING_DIR" "$NEW_ROOTFS" -comp xz -b 1M -all-root -pf "$PSEUDO_FILE" >/dev/null
