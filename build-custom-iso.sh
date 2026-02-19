@@ -260,14 +260,14 @@ ensure_nmtui_in_rootfs() {
     pacman-key --init >/dev/null 2>&1 || true
     pacman-key --populate archlinux >/dev/null 2>&1 || true
 
-    pacman -Sy --noconfirm --needed --cachedir /var/cache/pacman/pkg archlinux-keyring networkmanager || {
+    pacman -Syu --noconfirm --needed --cachedir /var/cache/pacman/pkg archlinux-keyring networkmanager || {
       cp /etc/pacman.conf /tmp/pacman.nosig.conf
       if grep -Eq "^[[:space:]]*SigLevel[[:space:]]*=" /tmp/pacman.nosig.conf; then
         sed -Ei "s|^[[:space:]]*SigLevel[[:space:]]*=.*|SigLevel = Never|" /tmp/pacman.nosig.conf
       else
         printf "\nSigLevel = Never\n" >> /tmp/pacman.nosig.conf
       fi
-      pacman -Sy --config /tmp/pacman.nosig.conf --noconfirm --needed --cachedir /var/cache/pacman/pkg archlinux-keyring networkmanager
+      pacman -Syu --config /tmp/pacman.nosig.conf --noconfirm --needed --cachedir /var/cache/pacman/pkg archlinux-keyring networkmanager
     }
   ' || install_rc=$?
 
@@ -276,12 +276,12 @@ ensure_nmtui_in_rootfs() {
   fi
 
   if [[ "$cache_mounted" -eq 1 ]]; then
-    umount "$rootfs/var/cache/pacman/pkg" 2>/dev/null || true
+    umount -R "$rootfs/var/cache/pacman/pkg" 2>/dev/null || umount -l "$rootfs/var/cache/pacman/pkg" 2>/dev/null || true
   fi
-  umount "$rootfs/sys" 2>/dev/null || true
-  umount "$rootfs/proc" 2>/dev/null || true
-  umount "$rootfs/run" 2>/dev/null || true
-  umount "$rootfs/dev" 2>/dev/null || true
+  umount -R "$rootfs/sys" 2>/dev/null || umount -l "$rootfs/sys" 2>/dev/null || true
+  umount -R "$rootfs/proc" 2>/dev/null || umount -l "$rootfs/proc" 2>/dev/null || true
+  umount -R "$rootfs/run" 2>/dev/null || umount -l "$rootfs/run" 2>/dev/null || true
+  umount -R "$rootfs/dev" 2>/dev/null || umount -l "$rootfs/dev" 2>/dev/null || true
 
   if [[ "$install_rc" -ne 0 ]]; then
     echo "Warning: Failed to install NetworkManager in live rootfs. Continuing with iwctl fallback." >&2
