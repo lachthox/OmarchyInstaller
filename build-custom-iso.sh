@@ -236,11 +236,20 @@ ensure_nmtui_in_rootfs() {
   mount -t sysfs sys "$rootfs/sys"
 
   local install_rc=0
+  local cache_mounted=0
   mkdir -p "$rootfs/var/cache/pacman/pkg"
+  if mount -t tmpfs -o size=512m tmpfs "$rootfs/var/cache/pacman/pkg"; then
+    cache_mounted=1
+  else
+    echo "Warning: could not mount tmpfs for pacman cache; continuing with directory cache." >&2
+  fi
+
   chroot "$rootfs" /usr/bin/bash -lc '
     mkdir -p /var/cache/pacman/pkg
-    if grep -Eq "^[[:space:]]*DownloadUser[[:space:]]*=" /etc/pacman.conf; then
-      sed -Ei "s/^[[:space:]]*DownloadUser[[:space:]]*=/# DownloadUser =/" /etc/pacman.conf
+    if grep -Eq "^[#[:space:]]*DownloadUser[[:space:]]*=" /etc/pacman.conf; then
+      sed -Ei "s|^[#[:space:]]*DownloadUser[[:space:]]*=.*|DownloadUser = root|" /etc/pacman.conf
+    else
+      printf "\nDownloadUser = root\n" >> /etc/pacman.conf
     fi
     pacman -Sy --noconfirm --needed --cachedir /var/cache/pacman/pkg archlinux-keyring networkmanager
   ' || install_rc=$?
@@ -249,6 +258,9 @@ ensure_nmtui_in_rootfs() {
     chroot "$rootfs" /usr/bin/bash -lc 'systemctl enable NetworkManager.service >/dev/null 2>&1 || true' || true
   fi
 
+  if [[ "$cache_mounted" -eq 1 ]]; then
+    umount "$rootfs/var/cache/pacman/pkg" 2>/dev/null || true
+  fi
   umount "$rootfs/sys" 2>/dev/null || true
   umount "$rootfs/proc" 2>/dev/null || true
   umount "$rootfs/run" 2>/dev/null || true
