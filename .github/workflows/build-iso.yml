@@ -1,0 +1,132 @@
+name: Build Customized Arch ISO
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "setup.sh"
+      - "build-custom-iso.sh"
+      - "installation-guide.md"
+      - ".github/workflows/build-iso.yml"
+  schedule:
+    # 1st of every month at 06:00 UTC — shortly after Arch monthly ISO release
+    - cron: "0 6 1 * *"
+  workflow_dispatch:
+    inputs:
+      force_rebuild:
+        description: "Force rebuild even if ISO version unchanged"
+        required: false
+        default: "false"
+
+permissions:
+  contents: write
+
+env:
+  ARCH_MIRROR: https://geo.mirror.pkgbuild.com/iso/latest
+  ARTIFACT_PREFIX: omarchy-arch
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install ISO toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xorriso squashfs-tools rsync
+
+      - name: Detect latest Arch ISO version
+        id: detect
+        run: |
+          PAGE="$(curl -fsSL "$ARCH_MIRROR/")"
+          ISO_NAME="$(echo "$PAGE" | grep -oP 'archlinux-\d{4}\.\d{2}\.\d{2}-x86_64\.iso' | sort -ru | head -n1)"
+          if [[ -z "$ISO_NAME" ]]; then
+            echo "::error::Could not detect latest Arch ISO filename from mirror."
+            exit 1
+          fi
+          ISO_DATE="$(echo "$ISO_NAME" | grep -oP '\d{4}\.\d{2}\.\d{2}')"
+          TAG="v${ISO_DATE}"
+          echo "iso_name=$ISO_NAME"   >> "$GITHUB_OUTPUT"
+          echo "iso_date=$ISO_DATE"   >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG"             >> "$GITHUB_OUTPUT"
+          echo "Detected: $ISO_NAME (tag=$TAG)"
+
+      - name: Check if release already exists
+        id: check
+        run: |
+          TAG="${{ steps.detect.outputs.tag }}"
+          FORCE="${{ github.event.inputs.force_rebuild || 'false' }}"
+          if [[ "$FORCE" == "true" ]]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "Force rebuild requested."
+          elif gh release view "$TAG" --json tagName >/dev/null 2>&1; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Release $TAG already exists — skipping."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download stock Arch ISO
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          ISO_NAME="${{ steps.detect.outputs.iso_name }}"
+          echo "Downloading $ISO_NAME..."
+          curl -fSL --retry 3 -o "$ISO_NAME" "$ARCH_MIRROR/$ISO_NAME"
+          echo "Downloading sha256sums.txt..."
+          curl -fSL --retry 3 -o sha256sums.txt "$ARCH_MIRROR/sha256sums.txt"
+
+      - name: Verify ISO checksum
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          ISO_NAME="${{ steps.detect.outputs.iso_name }}"
+          EXPECTED="$(grep "$ISO_NAME" sha256sums.txt | awk '{print $1}')"
+          ACTUAL="$(sha256sum "$ISO_NAME" | awk '{print $1}')"
+          if [[ "$EXPECTED" != "$ACTUAL" ]]; then
+            echo "::error::SHA256 mismatch! expected=$EXPECTED actual=$ACTUAL"
+            exit 1
+          fi
+          echo "Checksum verified: $ACTUAL"
+
+      - name: Build customized ISO
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          ISO_NAME="${{ steps.detect.outputs.iso_name }}"
+          OUT_NAME="${ISO_NAME%.iso}-omarchy-auto.iso"
+          chmod +x build-custom-iso.sh
+          ./build-custom-iso.sh "$ISO_NAME" "." "$OUT_NAME"
+          echo "out_name=$OUT_NAME" >> "$GITHUB_ENV"
+
+      - name: Generate release checksums
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          sha256sum "$out_name" > "${out_name}.sha256"
+          cat "${out_name}.sha256"
+
+      - name: Create GitHub Release
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          TAG="${{ steps.detect.outputs.tag }}"
+          ISO_DATE="${{ steps.detect.outputs.iso_date }}"
+
+          # Delete existing release if force-rebuilding
+          gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
+
+          gh release create "$TAG" \
+            --title "Omarchy Arch ISO $ISO_DATE" \
+            --notes "Customized Arch Linux live ISO ($ISO_DATE) with omarchy-setup baked in.
+
+          On first boot, the live shell auto-prompts to run \`setup.sh\`.
+
+          **Download the \`.iso\` file below and write it to USB with Ventoy, Rufus, or \`dd\`.**
+
+          Built from stock \`${{ steps.detect.outputs.iso_name }}\` — verify with the \`.sha256\` file." \
+            "$out_name" \
+            "${out_name}.sha256"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
