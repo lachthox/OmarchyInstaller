@@ -158,6 +158,10 @@ STAGING_DIR="$WORK_DIR/staging"
 mkdir -p "$STAGING_DIR/opt/omarchy-setup"
 rsync -rlt --delete "$SETUP_DIR/" "$STAGING_DIR/opt/omarchy-setup/"
 
+# Strip Windows CRLF line endings from all shell scripts to avoid
+# invisible \r bytes leaking into generated config files at runtime.
+find "$STAGING_DIR/opt/omarchy-setup" -type f -name '*.sh' -exec sed -i 's/\r$//' {} +
+
 # ── Create the live-shell autostart hook ────────────────────────────────────
 
 mkdir -p "$STAGING_DIR/usr/local/bin"

@@ -815,11 +815,17 @@ generate_archinstall_config() {
   local kb_layout="${10}"
   local ucode_pkg="${11}"
 
-  local pkg_json='"base", "base-devel", "git", "vim", "btrfs-progs", "sudo", "networkmanager"'
+  local -a pkg_list=("base" "base-devel" "git" "vim" "btrfs-progs" "sudo" "networkmanager")
   if [[ -n "$ucode_pkg" ]]; then
-    pkg_json+="
-        ,\"$ucode_pkg\""
+    pkg_list+=("$ucode_pkg")
   fi
+
+  local pkg_json=""
+  local _i
+  for ((_i=0; _i<${#pkg_list[@]}; _i++)); do
+    (( _i > 0 )) && pkg_json+=","
+    pkg_json+=$'\n'"        \"${pkg_list[$_i]}\""
+  done
 
   local j_disk j_efi_part j_root_part j_hostname j_username j_user_password j_enc_password j_timezone j_bootloader j_kb_layout
   j_disk="$(json_escape "$disk")"
@@ -887,8 +893,7 @@ generate_archinstall_config() {
     "type": "nm"
   },
   "ntp": true,
-  "packages": [
-    $pkg_json
+  "packages": [$pkg_json
   ],
   "profile_config": {
     "profile": {
@@ -1061,6 +1066,20 @@ main() {
 
   if ! ask_yes_no "Start Install" "Run archinstall now with this generated config?"; then
     die "Cancelled before archinstall"
+  fi
+
+  # Strip any stray carriage-return bytes (Windows CRLF) from generated JSON
+  if command -v sed >/dev/null 2>&1; then
+    sed -i 's/\r$//' "$CONFIG_PATH" 2>/dev/null || true
+  fi
+
+  # Validate JSON before running archinstall
+  if command -v python3 >/dev/null 2>&1; then
+    if ! python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$CONFIG_PATH" 2>/dev/null; then
+      echo "Warning: Generated config may have JSON errors. Dumping for debug:" >&2
+      cat "$CONFIG_PATH" >&2
+      die "Invalid JSON in $CONFIG_PATH — please report this bug."
+    fi
   fi
 
   show_stage_progress 7 7 "Running archinstall" 1800
