@@ -60,9 +60,10 @@ jobs:
         run: |
           TAG="${{ steps.detect.outputs.tag }}"
           FORCE="${{ github.event.inputs.force_rebuild || 'false' }}"
-          if [[ "$FORCE" == "true" ]]; then
+          EVENT="${{ github.event_name }}"
+          if [[ "$FORCE" == "true" || "$EVENT" == "push" ]]; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
-            echo "Force rebuild requested."
+            echo "Rebuild requested (force=$FORCE, event=$EVENT)."
           elif gh release view "$TAG" --json tagName >/dev/null 2>&1; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "Release $TAG already exists — skipping."
