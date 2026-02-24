@@ -815,7 +815,7 @@ generate_archinstall_config() {
   local kb_layout="${10}"
   local ucode_pkg="${11}"
 
-  local -a pkg_list=("base" "base-devel" "git" "vim" "btrfs-progs" "sudo" "networkmanager")
+  local -a pkg_list=("base" "base-devel" "linux-firmware" "git" "vim" "btrfs-progs" "sudo" "networkmanager" "wpa_supplicant")
   if [[ -n "$ucode_pkg" ]]; then
     pkg_list+=("$ucode_pkg")
   fi
