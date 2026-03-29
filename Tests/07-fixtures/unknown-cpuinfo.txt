@@ -1,0 +1,5 @@
+processor	: 0
+vendor_id	: UnknownArch
+cpu family	: 99
+model		: 0
+model name	: Unknown Processor

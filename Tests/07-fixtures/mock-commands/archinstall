@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# archinstall stub
+#
+# Environment variables:
+#   MOCK_ARCHINSTALL_OUTPUT   stdout (default "archinstall: simulated run")
+#   MOCK_EXIT_CODE            exit code (default 0)
+
+printf '%s\n' "${MOCK_ARCHINSTALL_OUTPUT:-archinstall: simulated run}"
+exit "${MOCK_EXIT_CODE:-0}"

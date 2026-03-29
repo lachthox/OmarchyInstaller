@@ -1,0 +1,9 @@
+processor	: 0
+vendor_id	: GenuineIntel
+cpu family	: 6
+model		: 158
+model name	: Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz
+stepping	: 10
+microcode	: 0xea
+cpu MHz		: 2600.000
+cache size	: 12288 KB

@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# whiptail stub — silently succeeds by default so USE_TUI detection works
+# without attempting any terminal interaction.
+#
+# Environment variables:
+#   MOCK_WHIPTAIL_OUTPUT   stdout (default empty)
+#   MOCK_EXIT_CODE         exit code (default 0)
+
+printf '%s\n' "${MOCK_WHIPTAIL_OUTPUT:-}"
+exit "${MOCK_EXIT_CODE:-0}"

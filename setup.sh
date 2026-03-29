@@ -6,7 +6,7 @@
 set -Eeuo pipefail
 
 SCRIPT_VERSION="2.0.0"
-CONFIG_PATH="/tmp/omarchy_config.json"
+CONFIG_PATH=""
 USE_TUI=0
 
 if command -v whiptail >/dev/null 2>&1; then
@@ -96,7 +96,49 @@ json_escape() {
   s="${s//$'\n'/\\n}"
   s="${s//$'\r'/\\r}"
   s="${s//$'\t'/\\t}"
-  echo "$s"
+  printf '%s\n' "$s"
+}
+
+prepare_config_path() {
+  if [[ -z "$CONFIG_PATH" ]]; then
+    CONFIG_PATH="$(mktemp "${TMPDIR:-/tmp}/omarchy_config.XXXXXX")"
+  fi
+}
+
+cleanup_config_path() {
+  if [[ -n "${CONFIG_PATH:-}" && -f "$CONFIG_PATH" ]]; then
+    rm -f "$CONFIG_PATH"
+  fi
+}
+
+validate_generated_json() {
+  local config_path="$1"
+  local validator=""
+
+  if command -v python3 >/dev/null 2>&1; then
+    validator="python3"
+  elif command -v python >/dev/null 2>&1; then
+    validator="python"
+  elif command -v jq >/dev/null 2>&1; then
+    validator="jq"
+  fi
+
+  if [[ -z "$validator" ]]; then
+    die "JSON validation requires python3, python, or jq; none are available."
+  fi
+
+  case "$validator" in
+    python3|python)
+      if ! "$validator" -c 'import json, pathlib, sys; json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))' "$config_path" >/dev/null 2>&1; then
+        die "Invalid JSON in $config_path — please report this bug."
+      fi
+      ;;
+    jq)
+      if ! jq empty "$config_path" >/dev/null 2>&1; then
+        die "Invalid JSON in $config_path — please report this bug."
+      fi
+      ;;
+  esac
 }
 
 ask_input() {
@@ -112,7 +154,8 @@ ask_input() {
 
 Default: $default_value
 " "Type your value and press Enter."
-    read -r -p "$prompt [$default_value]: " value || die "Cancelled by user"
+    printf '%s [%s]: ' "$prompt" "$default_value"
+    read -r value || die "Cancelled by user"
     value="${value:-$default_value}"
   fi
 
@@ -131,11 +174,12 @@ ask_password() {
 
 Input is hidden.
 " "Type password | Enter Submit | Ctrl+C Cancel"
-    read -r -s -p "$prompt: " value || die "Cancelled by user"
-    echo
+    printf '%s: ' "$prompt"
+    read -r -s value || die "Cancelled by user"
+    printf '\n'
   fi
 
-  echo "$value"
+  printf '%s\n' "$value"
 }
 
 ask_yes_no() {
@@ -202,7 +246,7 @@ show_message() {
     whiptail --title "$title" --msgbox "$text" 18 78
   else
     draw_cli_screen "$title" "$text" "Enter Continue | Ctrl+C Cancel"
-    read -r -p "" _
+    read -r _ || true
   fi
 }
 
@@ -322,17 +366,23 @@ run_with_eta() {
   local eta_sec="$1"
   local label="$2"
   shift 2
+  local log_file
+  local cmd_pid
+  local start_ts
+  local now_ts
+  local elapsed
+  local remaining
+  local percent
+  local bar
+  local cmd_rc
+
+  log_file="$(mktemp "${TMPDIR:-/tmp}/omarchy-run-with-eta.XXXXXX.log")" || die "Unable to create temporary log file"
+
+  "$@" >"$log_file" 2>&1 &
+  cmd_pid=$!
+  start_ts="$(date +%s)"
 
   if [[ "$USE_TUI" -eq 1 ]]; then
-    "$@" &
-    local cmd_pid=$!
-    local start_ts
-    local now_ts
-    local elapsed
-    local remaining
-    local percent
-
-    start_ts="$(date +%s)"
     {
       while kill -0 "$cmd_pid" 2>/dev/null; do
         sleep 1
@@ -359,43 +409,39 @@ run_with_eta() {
       printf "%s\nETA ~0s\n" "$label"
       echo "XXX"
     } | whiptail --title "Omarchy Installer" --gauge "$label" 10 70 0
+  else
+    while kill -0 "$cmd_pid" 2>/dev/null; do
+      sleep 1
+      now_ts="$(date +%s)"
+      elapsed=$((now_ts - start_ts))
+      percent=0
+      remaining=0
 
-    wait "$cmd_pid"
-    return $?
+      if (( eta_sec > 0 )); then
+        percent=$((elapsed * 100 / eta_sec))
+        (( percent > 95 )) && percent=95
+        remaining=$((eta_sec - elapsed))
+        (( remaining < 0 )) && remaining=0
+      fi
+
+      bar="$(render_bar "$percent")"
+      printf "\r[Progress] [%s] %3d%% | %s | ETA ~%s   " "$bar" "$percent" "$label" "$(format_eta "$remaining")"
+    done
   fi
 
-  "$@" &
-  local cmd_pid=$!
-  local start_ts
-  local now_ts
-  local elapsed
-  local remaining
-  local percent
-  local bar
-
-  start_ts="$(date +%s)"
-  while kill -0 "$cmd_pid" 2>/dev/null; do
-    sleep 1
-    now_ts="$(date +%s)"
-    elapsed=$((now_ts - start_ts))
-    percent=0
-    remaining=0
-
-    if (( eta_sec > 0 )); then
-      percent=$((elapsed * 100 / eta_sec))
-      (( percent > 95 )) && percent=95
-      remaining=$((eta_sec - elapsed))
-      (( remaining < 0 )) && remaining=0
+  if wait "$cmd_pid"; then
+    if [[ "$USE_TUI" -ne 1 ]]; then
+      bar="$(render_bar 100)"
+      printf "\r[Progress] [%s] 100%% | %s | ETA ~0s   \n" "$bar" "$label"
     fi
+    rm -f "$log_file"
+    return 0
+  fi
 
-    bar="$(render_bar "$percent")"
-    printf "\r[Progress] [%s] %3d%% | %s | ETA ~%s   " "$bar" "$percent" "$label" "$(format_eta "$remaining")"
-  done
-
-  wait "$cmd_pid"
-  local cmd_rc=$?
-  bar="$(render_bar 100)"
-  printf "\r[Progress] [%s] 100%% | %s | ETA ~0s   \n" "$bar" "$label"
+  cmd_rc=$?
+  printf "\n[Error] %s failed with exit code %d\n" "$label" "$cmd_rc" >&2
+  tail -n 20 "$log_file" >&2 || true
+  rm -f "$log_file"
   return "$cmd_rc"
 }
 
@@ -739,7 +785,7 @@ collect_disks() {
 
 pick_default_disk() {
   local candidate
-  candidate="$(lsblk -dpno NAME,SIZE | sort -k2 -h | tail -n1 | awk '{print $1}')"
+  candidate="$(collect_disks | awk -F'|' '{print "/dev/" $1, $2}' | sort -k2 -h | tail -n1 | awk '{print $1}')"
   [[ -n "$candidate" ]] && echo "$candidate"
 }
 
@@ -751,10 +797,6 @@ find_efi_partition() {
 
   if [[ -z "$efi" ]]; then
     efi="$(lsblk -prno NAME,FSTYPE,MOUNTPOINT "$disk" | awk 'tolower($2)=="vfat" && ($3=="/boot" || $3=="/boot/efi") {print $1; exit}')"
-  fi
-
-  if [[ -z "$efi" ]]; then
-    efi="$(lsblk -prno NAME,FSTYPE "$disk" | awk 'tolower($2)=="vfat" {print $1; exit}')"
   fi
 
   echo "$efi"
@@ -799,7 +841,7 @@ create_root_partition() {
   local disk="$1"
   sgdisk -n 0:0:0 -t 0:8300 -c 0:"OmarchyRoot" "$disk"
   partprobe "$disk"
-  sleep 2
+  command -v udevadm >/dev/null 2>&1 && udevadm settle 2>/dev/null || sleep 2
 }
 
 generate_archinstall_config() {
@@ -828,6 +870,7 @@ generate_archinstall_config() {
   done
 
   local j_disk j_efi_part j_root_part j_hostname j_username j_user_password j_enc_password j_timezone j_bootloader j_kb_layout
+  prepare_config_path
   j_disk="$(json_escape "$disk")"
   j_efi_part="$(json_escape "$efi_part")"
   j_root_part="$(json_escape "$root_part")"
@@ -912,11 +955,14 @@ generate_archinstall_config() {
 EOF
 }
 
+trap cleanup_config_path EXIT
+
 main() {
   show_stage_progress 1 7 "Prerequisite checks" 40
   need_cmd lsblk
   need_cmd sgdisk
   need_cmd blockdev
+  need_cmd partprobe
   need_cmd archinstall
   need_cmd ping
 
@@ -969,7 +1015,8 @@ main() {
   free_bytes="$(free_bytes_on_disk "$selected_disk")"
   free_gib="$(bytes_to_gib "$free_bytes")"
 
-  if (( free_gib < 40 )); then
+  local min_free_bytes=$((40 * 1024 * 1024 * 1024))
+  if (( free_bytes < min_free_bytes )); then
     die "Only ${free_gib} GiB free on $selected_disk. At least 40 GiB unallocated space is required."
   fi
 
@@ -1024,19 +1071,21 @@ main() {
     die "Cancelled before partitioning"
   fi
 
-  local before_parts after_parts root_part
-  before_parts="$(lsblk -nrpo NAME "$selected_disk" | wc -l)"
+  local before_parts after_parts root_candidates root_part
+  mapfile -t before_parts < <(lsblk -nrpo NAME "$selected_disk")
+  local before_parts_count="${#before_parts[@]}"
   show_stage_progress 5 7 "Creating Linux partition" 30
   run_with_eta 30 "Partition creation on $selected_disk" create_root_partition "$selected_disk"
 
   after_parts="$(lsblk -nrpo NAME "$selected_disk" | wc -l)"
-  if (( after_parts <= before_parts )); then
+  if (( after_parts <= before_parts_count )); then
     die "Partition creation appears to have failed"
   fi
 
-  root_part="$(lsblk -nrpo NAME,PARTLABEL "$selected_disk" | awk '$2=="OmarchyRoot" {print $1; exit}')"
+  mapfile -t root_candidates < <(lsblk -nrpo NAME,PARTLABEL "$selected_disk" | awk '$2=="OmarchyRoot" {print $1}')
+  root_part="$(comm -13 <(printf '%s\n' "${before_parts[@]}" | sort) <(printf '%s\n' "${root_candidates[@]}" | sort) | head -n1)"
   if [[ -z "$root_part" ]]; then
-    root_part="$(lsblk -nrpo NAME "$selected_disk" | tail -n1)"
+    root_part=""
   fi
 
   [[ -b "$root_part" ]] || die "Could not determine newly created root partition"
@@ -1074,13 +1123,7 @@ main() {
   fi
 
   # Validate JSON before running archinstall
-  if command -v python3 >/dev/null 2>&1; then
-    if ! python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$CONFIG_PATH" 2>/dev/null; then
-      echo "Warning: Generated config may have JSON errors. Dumping for debug:" >&2
-      cat "$CONFIG_PATH" >&2
-      die "Invalid JSON in $CONFIG_PATH — please report this bug."
-    fi
-  fi
+  validate_generated_json "$CONFIG_PATH"
 
   show_stage_progress 7 7 "Running archinstall" 1800
   run_with_eta 1800 "archinstall base installation" archinstall --config "$CONFIG_PATH"

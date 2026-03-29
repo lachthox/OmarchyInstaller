@@ -4,3 +4,7 @@
 *.md text eol=lf
 *.yml text eol=lf
 *.yaml text eol=lf
+*.bats text eol=lf
+*.bash text eol=lf
+*.txt text eol=lf
+Tests/07-fixtures/mock-commands/* text eol=lf

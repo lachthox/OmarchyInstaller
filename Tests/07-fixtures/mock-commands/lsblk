@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# lsblk stub — dispatches output based on which columns were requested.
+#
+# Environment variables (set in tests):
+#   MOCK_LSBLK_OUTPUT          returned for generic / -P invocations
+#   MOCK_LSBLK_PARTTYPE_OUTPUT returned when args contain "PARTTYPE"
+#   MOCK_LSBLK_FSTYPE_OUTPUT   returned when args contain "MOUNTPOINT"
+#   MOCK_EXIT_CODE             exit code (default 0)
+
+case "$*" in
+  *PARTTYPE*)
+    printf '%s\n' "${MOCK_LSBLK_PARTTYPE_OUTPUT:-}"
+    ;;
+  *MOUNTPOINT*)
+    printf '%s\n' "${MOCK_LSBLK_FSTYPE_OUTPUT:-}"
+    ;;
+  *)
+    printf '%s\n' "${MOCK_LSBLK_OUTPUT:-}"
+    ;;
+esac
+
+exit "${MOCK_EXIT_CODE:-0}"
