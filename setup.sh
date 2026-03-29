@@ -5,7 +5,7 @@
 
 set -Eeuo pipefail
 
-SCRIPT_VERSION="2.0.0"
+SCRIPT_VERSION="2.0.1"
 CONFIG_PATH=""
 USE_TUI=0
 
@@ -663,13 +663,12 @@ ensure_network_connection() {
         show_message "Still Offline" "No internet detected yet. Check cable/router and try again."
         ;;
       wifi)
-        if connect_wifi_with_nmtui; then
+        if connect_wifi_interactive; then
           return 0
         fi
 
-        show_message "Wi-Fi Fallback" "Switching to built-in fallback Wi-Fi flow."
-        connect_wifi_interactive || true
-        if has_internet; then
+        show_message "Wi-Fi Fallback" "Could not complete guided Wi-Fi setup. Opening NetworkManager UI fallback."
+        if connect_wifi_with_nmtui; then
           return 0
         fi
         ;;
@@ -839,7 +838,15 @@ validate_username() {
 
 create_root_partition() {
   local disk="$1"
-  sgdisk -n 0:0:0 -t 0:8300 -c 0:"OmarchyRoot" "$disk"
+  local first_free last_free
+  first_free="$(sgdisk -F "$disk" 2>/dev/null | tr -d '[:space:]')"
+  last_free="$(sgdisk -E "$disk" 2>/dev/null | tr -d '[:space:]')"
+
+  [[ "$first_free" =~ ^[0-9]+$ ]] || die "Could not determine first free sector on $disk"
+  [[ "$last_free" =~ ^[0-9]+$ ]] || die "Could not determine last free sector on $disk"
+  (( last_free >= first_free )) || die "Invalid free-space bounds on $disk (${first_free}-${last_free})"
+
+  sgdisk -n "0:${first_free}:${last_free}" -t 0:8300 -c 0:"OmarchyRoot" "$disk"
   partprobe "$disk"
   command -v udevadm >/dev/null 2>&1 && udevadm settle 2>/dev/null || sleep 2
 }
@@ -1071,21 +1078,23 @@ main() {
     die "Cancelled before partitioning"
   fi
 
-  local before_parts after_parts root_candidates root_part
+  local -a before_parts after_parts root_candidates
+  local root_part
   mapfile -t before_parts < <(lsblk -nrpo NAME "$selected_disk")
   local before_parts_count="${#before_parts[@]}"
   show_stage_progress 5 7 "Creating Linux partition" 30
   run_with_eta 30 "Partition creation on $selected_disk" create_root_partition "$selected_disk"
 
-  after_parts="$(lsblk -nrpo NAME "$selected_disk" | wc -l)"
-  if (( after_parts <= before_parts_count )); then
+  mapfile -t after_parts < <(lsblk -nrpo NAME "$selected_disk")
+  local after_parts_count="${#after_parts[@]}"
+  if (( after_parts_count <= before_parts_count )); then
     die "Partition creation appears to have failed"
   fi
 
-  mapfile -t root_candidates < <(lsblk -nrpo NAME,PARTLABEL "$selected_disk" | awk '$2=="OmarchyRoot" {print $1}')
-  root_part="$(comm -13 <(printf '%s\n' "${before_parts[@]}" | sort) <(printf '%s\n' "${root_candidates[@]}" | sort) | head -n1)"
+  root_part="$(comm -13 <(printf '%s\n' "${before_parts[@]}" | sort) <(printf '%s\n' "${after_parts[@]}" | sort) | head -n1)"
   if [[ -z "$root_part" ]]; then
-    root_part=""
+    mapfile -t root_candidates < <(lsblk -nrpo NAME,PARTLABEL "$selected_disk" | awk '$2=="OmarchyRoot" {print $1}')
+    root_part="$(comm -13 <(printf '%s\n' "${before_parts[@]}" | sort) <(printf '%s\n' "${root_candidates[@]}" | sort) | tail -n1)"
   fi
 
   [[ -b "$root_part" ]] || die "Could not determine newly created root partition"
