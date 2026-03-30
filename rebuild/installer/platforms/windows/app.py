@@ -161,7 +161,7 @@ class WindowsPrepApp(App[int]):
     def _mode(self) -> str:
         return "APPLY" if self._flow.apply_changes else "DRY-RUN"
 
-    def _ready(self) -> tuple[bool, list[str]]:
+    def _flow_readiness(self) -> tuple[bool, list[str]]:
         blockers: list[str] = []
         if not self._can_continue:
             blockers.append("Resolve FAIL checks in compatibility.")
@@ -185,7 +185,7 @@ class WindowsPrepApp(App[int]):
                 return "optional"
             return "ok" if self._ventoy_validated else "pending"
         if stage in {"summary", "confirm"}:
-            return "ok" if self._ready()[0] else "blocked"
+            return "ok" if self._flow_readiness()[0] else "blocked"
         if stage == "error_handling":
             return "warn" if self._last_error or any(c["status"] == "fail" for c in self._checks) else "ok"
         return "ok"
@@ -213,7 +213,7 @@ class WindowsPrepApp(App[int]):
         backup = self._backup_result.summary if self._backup_result else "Backup step not executed yet."
         partition = self._partition_result.summary if self._partition_result else "Partition prep step not executed yet."
         recent = " | ".join(self._notes[-3:]) if self._notes else "No actions yet."
-        ready, blockers = self._ready()
+        ready, blockers = self._flow_readiness()
         if stage == "welcome":
             return f"Welcome\n{mode_line}\n\nPath: compatibility -> backup -> partition -> summary -> confirm\nRecent: {recent}"
         if stage == "compatibility":
@@ -331,7 +331,7 @@ class WindowsPrepApp(App[int]):
             self.action_run_partition()
         if self._config.ventoy_disk_number is not None and not self._ventoy_validated:
             self.action_validate_ventoy()
-        ready, blockers = self._ready()
+        ready, blockers = self._flow_readiness()
         if not ready:
             self._last_error = blockers[0]
             self._set_stage(9)
