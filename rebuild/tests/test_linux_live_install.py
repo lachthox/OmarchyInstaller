@@ -221,3 +221,46 @@ def test_execute_install_plan_standalone_mode_runs_successfully(tmp_path: Path) 
     assert any(command[:3] == ["mkfs.fat", "-F", "32"] for command in runner.calls)
     assert any(command[0] == "archinstall" for command in runner.calls)
     assert Path(result.stage_root).exists()
+
+
+def test_build_archinstall_config_mounts_esp_to_boot_efi() -> None:
+    config = install_module._build_archinstall_config(
+        target_disk_path="/dev/sda",
+        efi_partition_path="/dev/sda1",
+        target_partition_path="/dev/sda2",
+        hostname="omarchy",
+        username="tester",
+        user_password="secret",
+        encryption_passphrase="secret",
+        timezone="UTC",
+        locale="en_US",
+        keyboard_layout="us",
+        bootloader="limine",
+        wipe_efi=False,
+    )
+    efi_partition = config["disk_config"]["device_modifications"][0]["partitions"][0]
+    assert efi_partition["mountpoint"] == "/boot/efi"
+
+
+def test_invalid_bootloader_is_rejected(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    plan = _plan_payload()
+    user_choices = dict(plan["user_choices"])
+    user_choices["bootloader"] = "grub"
+    plan["user_choices"] = user_choices
+
+    monkeypatch.setattr(
+        install_module,
+        "match_machine_identity",
+        lambda _plan: SimpleNamespace(
+            disk=SimpleNamespace(path="/dev/sda"),
+            efi_partition=SimpleNamespace(path="/dev/sda1"),
+        ),
+    )
+
+    with pytest.raises(install_module.LiveInstallError, match="Unsupported bootloader"):
+        install_module.execute_install_plan(
+            plan_payload=plan,
+            stage_root=tmp_path,
+            dry_run=True,
+            cleanup_after_success=False,
+        )

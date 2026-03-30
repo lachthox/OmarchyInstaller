@@ -146,6 +146,8 @@ class WindowsPrepApp(App[int]):
         Binding("r", "refresh_runtime", "Refresh"),
         Binding("d", "toggle_details", "Details"),
         Binding("t", "toggle_yolo_mode", "Toggle YOLO"),
+        Binding("y", "compat_fix_yes", "Auto-Fix Yes"),
+        Binding("n", "compat_fix_no", "Auto-Fix No"),
         Binding("c", "do_next_step", "Next Step"),
         Binding("q", "quit_flow", "Quit"),
     ]
@@ -193,7 +195,7 @@ class WindowsPrepApp(App[int]):
             yield Static("", id="content")
             yield Static("", id="status")
             yield Static(
-                "Keys: [Enter] next  [R] refresh  [D] details  [Q] quit",
+                "Keys: [Enter] next  [Y]/[N] auto-fix prompt  [R] refresh  [D] details  [Q] quit",
                 id="hints",
             )
         if self._show_details:
@@ -225,7 +227,35 @@ class WindowsPrepApp(App[int]):
             blockers.append("Configured Ventoy USB has not been validated.")
         if self._config.ventoy_disk_number is not None and not (self._config.source_iso_path or "").strip():
             blockers.append("Source ISO path is required to write Ventoy handoff payload.")
+        secure_boot_blocker = self._secure_boot_limine_blocker()
+        if secure_boot_blocker:
+            blockers.append(secure_boot_blocker)
         return len(blockers) == 0, blockers
+
+    def _secure_boot_limine_blocker(self) -> str | None:
+        secure_boot = self._check_map().get("secure_boot", {})
+        secure_boot_enabled = secure_boot.get("value", "").strip().lower() == "true"
+        if not secure_boot_enabled:
+            return None
+        return "Secure Boot is enabled and current Limine-only boot path is blocked. Disable Secure Boot before continuing."
+
+    def _compat_prompt_body(self) -> str:
+        if not self._compat_prompt_failures:
+            return "Compatibility prompt unavailable."
+        idx = min(self._compat_prompt_index, len(self._compat_prompt_failures) - 1)
+        failure = self._compat_prompt_failures[idx]
+        label = CHECK_LABELS.get(failure.get("name", ""), failure.get("name", "unknown"))
+        return "\n".join(
+            [
+                "Compatibility",
+                f"Failing check {idx + 1}/{len(self._compat_prompt_failures)}",
+                "",
+                f"{label}",
+                failure.get("message", ""),
+                "",
+                (self._compat_prompt_message or "Attempt auto-fix for this check? [Y/N]"),
+            ]
+        )
 
     def _build_handoff_plan_contract(self) -> PlanContract:
         snapshot = collect_disk_probe_snapshot()
@@ -400,20 +430,7 @@ class WindowsPrepApp(App[int]):
         if step == "compatibility":
             failures = self._unapproved_failures()
             if self._compat_prompt_active and self._compat_prompt_failures:
-                idx = min(self._compat_prompt_index, len(self._compat_prompt_failures) - 1)
-                failure = self._compat_prompt_failures[idx]
-                label = CHECK_LABELS.get(failure.get("name", ""), failure.get("name", "unknown"))
-                return "\n".join(
-                    [
-                        "Compatibility",
-                        f"Failing check {idx + 1}/{len(self._compat_prompt_failures)}",
-                        "",
-                        f"{label}",
-                        failure.get("message", ""),
-                        "",
-                        (self._compat_prompt_message or "Attempt auto-fix for this check? [Y/N]"),
-                    ]
-                )
+                return self._compat_prompt_body()
             if not failures:
                 state = "Ready"
                 details = "All required compatibility checks are passing."
@@ -581,6 +598,11 @@ class WindowsPrepApp(App[int]):
         return f"Error Handling\nLast Error: {self._last_error or 'none'}\nFailures:\n{'\n'.join(fails) if fails else '- none'}\nWarnings:\n{'\n'.join(warns) if warns else '- none'}"
 
     def _content(self) -> str:
+        if self._compat_prompt_active and self._compat_prompt_failures:
+            simple_stage = WINDOWS_STAGES[self._simple_step_idx] if not self._show_details else ""
+            detailed_stage = WINDOWS_STAGES[self._stage_idx] if self._show_details else ""
+            if "compatibility" in {simple_stage, detailed_stage}:
+                return self._compat_prompt_body()
         if self._show_details:
             return self._detailed_content()
         return self._simple_content()
@@ -707,16 +729,21 @@ class WindowsPrepApp(App[int]):
             return
 
         if self._compat_prompt_index >= len(remaining):
-            self._compat_prompt_active = False
             self._compat_prompt_index = 0
-            self._compat_prompt_message = "Compatibility review pass complete."
-            self._set_status("Some failures still remain. Press [Enter] to review again.")
-            self._render()
-            return
 
         self._compat_prompt_message = "Attempt auto-fix for this check? [Y/N]"
         self._set_status("Choose [Y] or [N] for each failing check.")
         self._render()
+
+    def action_compat_fix_yes(self) -> None:
+        if not self._compat_prompt_active:
+            return
+        self._handle_compat_prompt_response(True)
+
+    def action_compat_fix_no(self) -> None:
+        if not self._compat_prompt_active:
+            return
+        self._handle_compat_prompt_response(False)
 
     def action_toggle_apply_mode(self) -> None:
         self._flow.apply_changes = not self._flow.apply_changes

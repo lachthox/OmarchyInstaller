@@ -73,14 +73,14 @@ _py_check() {
   assert_success
 }
 
-@test "generate_archinstall_config: EFI mountpoint is /boot" {
+@test "generate_archinstall_config: EFI mountpoint is /boot/efi" {
   _call_generate
   _py_check <<'PYEOF'
 import json, sys
 d = json.load(open(sys.argv[1]))
 parts = d['disk_config']['device_modifications'][0]['partitions']
 efi = next(p for p in parts if p['dev_name'] == '/dev/sda1')
-assert efi['mountpoint'] == '/boot', f"EFI mountpoint: expected /boot, got {efi['mountpoint']}"
+assert efi['mountpoint'] == '/boot/efi', f"EFI mountpoint: expected /boot/efi, got {efi['mountpoint']}"
 PYEOF
 }
 

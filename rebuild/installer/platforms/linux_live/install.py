@@ -23,6 +23,7 @@ DEFAULT_CRYPT_MAPPER_NAME = "omarchy-cryptroot"
 DEFAULT_MOUNT_ROOT = "/mnt"
 DEFAULT_STANDALONE_EFI_SIZE_MIB = 1024
 DEFAULT_BOOTLOADER = "limine"
+ALLOWED_BOOTLOADERS = {"limine"}
 
 
 class LiveInstallError(RuntimeError):
@@ -274,7 +275,7 @@ def _build_archinstall_config(
                     "partitions": [
                         {
                             "dev_name": efi_partition_path,
-                            "mountpoint": "/boot",
+                            "mountpoint": "/boot/efi",
                             "fs_type": "vfat",
                             "wipe": wipe_efi,
                         },
@@ -326,6 +327,16 @@ def _build_archinstall_config(
             }
         ],
     }
+
+
+def _normalize_bootloader_choice(value: str) -> str:
+    selected = value.strip().lower()
+    if not selected:
+        selected = DEFAULT_BOOTLOADER
+    if selected not in ALLOWED_BOOTLOADERS:
+        allowed = ", ".join(sorted(ALLOWED_BOOTLOADERS))
+        raise LiveInstallError(f"Unsupported bootloader '{selected}'. Allowed bootloaders: {allowed}")
+    return selected
 
 
 def _build_plan_partition_command_plan(
@@ -572,6 +583,7 @@ def _stage_installed_system_runtime(
     target_disk_path: str,
     target_partition_path: str,
     efi_partition_path: str,
+    username: str,
     plan_contract: PlanContract | None,
     archinstall_config_path: Path | None,
     runner: CommandRunner,
@@ -657,6 +669,7 @@ def _stage_installed_system_runtime(
         "schema_version": "1.0.0",
         "completed_at_utc": _utc_now(),
         "install_mode": install_mode,
+        "username": username,
         "target_disk_path": target_disk_path,
         "disk_identities": disk_identities,
     }
@@ -740,6 +753,7 @@ def execute_install_plan(
     commands: list[str] = []
     plan_contract: PlanContract | None = None
     archinstall_config_path_final: Path | None = None
+    selected_username = ""
 
     if plan_payload is not None:
         plan_contract = plan_payload if isinstance(plan_payload, PlanContract) else validate_plan_contract(plan_payload)
@@ -771,12 +785,15 @@ def execute_install_plan(
             resolved_timezone = str(plan_contract.user_choices.get("timezone", "")).strip() or timezone.strip() or "UTC"
             resolved_locale = str(plan_contract.user_choices.get("locale", "")).strip() or locale.strip() or "en_US"
             resolved_keyboard = str(plan_contract.user_choices.get("kb_layout", "")).strip() or keyboard_layout.strip() or "us"
-            resolved_bootloader = str(plan_contract.user_choices.get("bootloader", "")).strip() or bootloader.strip() or DEFAULT_BOOTLOADER
+            resolved_bootloader = _normalize_bootloader_choice(
+                str(plan_contract.user_choices.get("bootloader", "")).strip() or bootloader.strip() or DEFAULT_BOOTLOADER
+            )
 
             if not resolved_hostname:
                 raise LiveInstallError("hostname is required for config-mode install.")
             if not resolved_username:
                 raise LiveInstallError("username is required for config-mode install.")
+            selected_username = resolved_username
             if not dry_run and not user_password:
                 raise LiveInstallError("user_password is required for config-mode install.")
             if not dry_run and not encryption_passphrase:
@@ -873,6 +890,7 @@ def execute_install_plan(
                     raise LiveInstallError("hostname is required for standalone install.")
                 if not username.strip():
                     raise LiveInstallError("username is required for standalone install.")
+                selected_username = username.strip()
                 if not user_password:
                     raise LiveInstallError("user_password is required for standalone install.")
                 if not encryption_passphrase:
@@ -904,7 +922,7 @@ def execute_install_plan(
                         timezone=timezone.strip() or "UTC",
                         locale=locale.strip() or "en_US",
                         keyboard_layout=keyboard_layout.strip() or "us",
-                        bootloader=bootloader.strip() or DEFAULT_BOOTLOADER,
+                        bootloader=_normalize_bootloader_choice(bootloader.strip() or DEFAULT_BOOTLOADER),
                         wipe_efi=False,
                     )
                     archinstall_config_path = stage_live_runtime_artifact(
@@ -925,6 +943,11 @@ def execute_install_plan(
 
         if not dry_run:
             install_mode = "ventoy-plan" if plan_contract is not None else "standalone"
+            mount_root_path = Path(mount_root)
+            mount_root_text = str(mount_root).strip()
+            is_absolute_mount = mount_root_path.is_absolute() or mount_root_text.startswith("/")
+            if not is_absolute_mount or mount_root_text in {"/", ""}:
+                raise LiveInstallError(f"Unsafe mount_root for post-install staging: {mount_root}")
             try:
                 postinstall_actions = _stage_installed_system_runtime(
                     mount_root=mount_root,
@@ -932,6 +955,7 @@ def execute_install_plan(
                     target_disk_path=target_disk_path,
                     target_partition_path=target_partition_path,
                     efi_partition_path=efi_partition_path,
+                    username=selected_username,
                     plan_contract=plan_contract,
                     archinstall_config_path=archinstall_config_path_final,
                     runner=active_runner,

@@ -15,6 +15,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+VALID_LAUNCHER_POLICIES = {"python-only", "python-then-legacy", "legacy-only"}
+
 
 @dataclass(slots=True)
 class VersionStamp:
@@ -125,6 +127,14 @@ def write_manifest(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
+def normalize_launcher_policy(value: str) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in VALID_LAUNCHER_POLICIES:
+        allowed = ", ".join(sorted(VALID_LAUNCHER_POLICIES))
+        raise ValueError(f"Unsupported --launcher-default-policy '{value}'. Allowed values: {allowed}")
+    return normalized
+
+
 def run_pipeline(args: argparse.Namespace) -> int:
     workspace = args.workspace.resolve()
     output_dir = args.output_dir.resolve()
@@ -137,6 +147,7 @@ def run_pipeline(args: argparse.Namespace) -> int:
     commit_sha = detect_git_commit(workspace)
     tag_value = detect_git_tag(workspace)
     stamp = normalize_version(tag_value)
+    launcher_default_policy = normalize_launcher_policy(args.launcher_default_policy)
 
     payload_dir = work_dir / "payload"
     build_dir = work_dir / "build"
@@ -145,6 +156,10 @@ def run_pipeline(args: argparse.Namespace) -> int:
         shutil.rmtree(payload_dir)
     payload_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy2(windows_prep, payload_dir / "windows-prep.ps1")
+    (payload_dir / "launcher-defaults.json").write_text(
+        json.dumps({"default_policy": launcher_default_policy}, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
     version_file = work_dir / "version_info.txt"
     write_version_file(version_file, stamp)
@@ -175,6 +190,8 @@ def run_pipeline(args: argparse.Namespace) -> int:
                 str(version_file),
                 "--add-data",
                 f"{payload_dir / 'windows-prep.ps1'};.",
+                "--add-data",
+                f"{payload_dir / 'launcher-defaults.json'};.",
                 str(launcher),
             ],
             cwd=workspace,
@@ -203,6 +220,8 @@ def run_pipeline(args: argparse.Namespace) -> int:
         "packaging_inputs": {
             "launcher": str(launcher),
             "windows_prep_script": str(windows_prep),
+            "launcher_defaults": str(payload_dir / "launcher-defaults.json"),
+            "launcher_default_policy": launcher_default_policy,
             "version_file": str(version_file),
         },
         "output": {
@@ -240,6 +259,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help="Generate manifests and placeholder outputs without invoking PyInstaller.",
+    )
+    parser.add_argument(
+        "--launcher-default-policy",
+        default="python-then-legacy",
+        help="Default launcher policy embedded into the EXE.",
     )
     return parser
 

@@ -10,6 +10,14 @@ import sys
 from pathlib import Path
 
 LEGACY_HANDOFF_EXIT_CODE = 10
+POLICY_PYTHON_ONLY = "python-only"
+POLICY_PYTHON_THEN_LEGACY = "python-then-legacy"
+POLICY_LEGACY_ONLY = "legacy-only"
+VALID_POLICIES = {
+    POLICY_PYTHON_ONLY,
+    POLICY_PYTHON_THEN_LEGACY,
+    POLICY_LEGACY_ONLY,
+}
 
 
 def bundled_root() -> Path:
@@ -30,6 +38,54 @@ def ensure_rebuild_on_syspath() -> None:
 
 def powershell_script() -> Path:
     return bundled_root() / "windows-prep.ps1"
+
+
+def _normalize_policy(value: str | None) -> str:
+    normalized = str(value or "").strip().lower()
+    if not normalized:
+        return ""
+    if normalized not in VALID_POLICIES:
+        allowed = ", ".join(sorted(VALID_POLICIES))
+        raise ValueError(f"Unsupported launcher policy '{normalized}'. Allowed values: {allowed}")
+    return normalized
+
+
+def _embedded_default_policy() -> str:
+    config_path = bundled_root() / "launcher-defaults.json"
+    if not config_path.exists() or not config_path.is_file():
+        return ""
+    try:
+        payload = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    return _normalize_policy(str(payload.get("default_policy", "")))
+
+
+def resolve_default_policy() -> str:
+    env_policy = _normalize_policy(os.environ.get("OMARCHY_LAUNCHER_DEFAULT_POLICY", ""))
+    if env_policy:
+        return env_policy
+    embedded_policy = _embedded_default_policy()
+    if embedded_policy:
+        return embedded_policy
+    # Production/release executables should default to deterministic handoff mode.
+    if getattr(sys, "frozen", False) or os.environ.get("OMARCHY_RELEASE_BUILD", "") == "1":
+        return POLICY_PYTHON_THEN_LEGACY
+    return POLICY_PYTHON_ONLY
+
+
+def resolve_effective_policy(args: argparse.Namespace) -> str:
+    if args.legacy_powershell:
+        return POLICY_LEGACY_ONLY
+    if args.python_preflight_only:
+        return POLICY_PYTHON_ONLY
+    if args.python_legacy_handoff:
+        return POLICY_PYTHON_THEN_LEGACY
+    if args.launcher_policy:
+        return _normalize_policy(args.launcher_policy)
+    return resolve_default_policy()
 
 
 def build_command(script_path: Path, passthrough_args: list[str]) -> list[str]:
@@ -106,6 +162,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--python-yolo",
         action="store_true",
         help="Allow bypassing preflight FAIL checks after per-failure confirmation.",
+    )
+    parser.add_argument(
+        "--launcher-policy",
+        choices=sorted(VALID_POLICIES),
+        default="",
+        help="Explicit launcher policy: python-only, python-then-legacy, or legacy-only.",
     )
     return parser
 
@@ -198,10 +260,17 @@ def main() -> int:
     parser = build_parser()
     args, passthrough_args = parser.parse_known_args(sys.argv[1:])
 
+    try:
+        effective_policy = resolve_effective_policy(args)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    print(f"[launcher] policy={effective_policy}")
+
     if args.python_preflight_json:
         return run_python_preflight_json()
 
-    if args.legacy_powershell:
+    if effective_policy == POLICY_LEGACY_ONLY:
         return run_legacy_powershell(passthrough_args)
 
     yolo_approved_failures: tuple[str, ...] = ()
@@ -214,7 +283,7 @@ def main() -> int:
 
     try:
         tui_result = run_python_tui(
-            launch_legacy_on_continue=args.python_legacy_handoff,
+            launch_legacy_on_continue=effective_policy == POLICY_PYTHON_THEN_LEGACY,
             preflight_only=args.python_preflight_only,
             apply_changes=args.python_apply,
             target_free_gib=max(40, int(args.python_target_free_gib)),
@@ -230,6 +299,8 @@ def main() -> int:
         return run_legacy_powershell(passthrough_args)
 
     if tui_result == LEGACY_HANDOFF_EXIT_CODE:
+        return run_legacy_powershell(passthrough_args)
+    if effective_policy == POLICY_PYTHON_THEN_LEGACY and tui_result == 0:
         return run_legacy_powershell(passthrough_args)
     return int(tui_result)
 

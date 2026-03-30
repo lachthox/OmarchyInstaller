@@ -1101,7 +1101,7 @@ generate_archinstall_config() {
         "partitions": [
           {
             "dev_name": "$j_efi_part",
-            "mountpoint": "/boot",
+            "mountpoint": "/boot/efi",
             "fs_type": "vfat",
             "wipe": false
           },

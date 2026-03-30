@@ -178,3 +178,56 @@ def test_action_continue_flow_success_exits_after_payload(monkeypatch: pytest.Mo
 
     assert exit_calls == [EXIT_QUIT]
     assert app._ventoy_payload_result == payload
+
+
+def test_compat_fix_actions_forward_yes_no(monkeypatch: pytest.MonkeyPatch) -> None:
+    app = WindowsPrepApp(WindowsTuiConfig())
+    app._compat_prompt_active = True
+
+    calls: list[bool] = []
+    monkeypatch.setattr(app, "_handle_compat_prompt_response", lambda do_fix: calls.append(do_fix))
+
+    app.action_compat_fix_yes()
+    app.action_compat_fix_no()
+
+    assert calls == [True, False]
+
+
+def test_compat_prompt_visible_in_detailed_mode() -> None:
+    app = WindowsPrepApp(WindowsTuiConfig())
+    app._show_details = True
+    app._stage_idx = WINDOWS_STAGES.index("compatibility")
+    app._compat_prompt_active = True
+    app._compat_prompt_index = 0
+    app._compat_prompt_message = "Attempt auto-fix for this check? [Y/N]"
+    app._compat_prompt_failures = [
+        {
+            "name": "fast_startup",
+            "status": "fail",
+            "value": "true",
+            "message": "Fast Startup must be disabled before proceeding.",
+        }
+    ]
+
+    content = app._content()
+    assert "Failing check 1/1" in content
+    assert "Attempt auto-fix for this check? [Y/N]" in content
+
+
+def test_flow_readiness_blocks_when_secure_boot_enabled() -> None:
+    app = WindowsPrepApp(WindowsTuiConfig())
+    app._can_continue = True
+    app._checks = [
+        {
+            "name": "secure_boot",
+            "status": "fail",
+            "value": "true",
+            "message": "Secure Boot is enabled; current Limine boot path requires Secure Boot to be disabled.",
+        }
+    ]
+    app._backup_result = _ok_step("backup")
+    app._partition_result = _ok_step("partition_prep")
+
+    ready, blockers = app._flow_readiness()
+    assert ready is False
+    assert any("Secure Boot is enabled" in blocker for blocker in blockers)

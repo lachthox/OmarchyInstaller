@@ -216,3 +216,53 @@ def test_postinstall_staging_failures_abort_install(
             encryption_passphrase="disk-secret",
             runner=runner,
         )
+
+
+def test_postinstall_staging_rejects_root_mount_target(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    lsblk_payload = {
+        "blockdevices": [
+            {
+                "type": "disk",
+                "children": [
+                    {
+                        "type": "part",
+                        "pkname": "sda",
+                        "start": "4096",
+                        "size": "2097152",
+                        "path": "/dev/sda3",
+                    }
+                ],
+            }
+        ]
+    }
+    responses = {
+        "lsblk -b -J -o PATH,TYPE,START,SIZE,PKNAME": _ok(
+            ["lsblk", "-b", "-J", "-o", "PATH,TYPE,START,SIZE,PKNAME"],
+            stdout=json.dumps(lsblk_payload),
+        ),
+    }
+    runner = _Runner(responses)
+
+    monkeypatch.setattr(
+        install_module,
+        "match_machine_identity",
+        lambda _plan: SimpleNamespace(
+            disk=SimpleNamespace(path="/dev/sda"),
+            efi_partition=SimpleNamespace(path="/dev/sda1"),
+        ),
+    )
+
+    with pytest.raises(install_module.LiveInstallError, match="Unsafe mount_root"):
+        install_module.execute_install_plan(
+            plan_payload=_plan_payload(),
+            stage_root=tmp_path / "stage",
+            mount_root="/",
+            dry_run=False,
+            cleanup_after_success=False,
+            user_password="user-secret",
+            encryption_passphrase="disk-secret",
+            runner=runner,
+        )

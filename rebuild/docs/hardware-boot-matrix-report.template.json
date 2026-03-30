@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0.0",
+  "executed_at_utc": "2026-03-30T00:00:00Z",
+  "operator": "",
+  "release_tag": "",
+  "cases": {
+    "uefi_nvme_desktop": {
+      "status": "pending",
+      "host": "",
+      "notes": ""
+    },
+    "uefi_laptop_secure_boot_disabled": {
+      "status": "pending",
+      "host": "",
+      "notes": ""
+    },
+    "uefi_dual_disk_nonzero_target": {
+      "status": "pending",
+      "host": "",
+      "notes": ""
+    }
+  }
+}

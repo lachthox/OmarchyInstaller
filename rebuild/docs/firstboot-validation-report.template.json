@@ -1,0 +1,21 @@
+{
+  "schema_version": "1.0.0",
+  "validated_at_utc": "2026-03-30T00:00:00Z",
+  "operator": "",
+  "release_tag": "",
+  "target_host": "",
+  "checks": {
+    "firstboot_service_ran_once": {
+      "status": "pending",
+      "evidence": ""
+    },
+    "boot_guardian_service_healthy": {
+      "status": "pending",
+      "evidence": ""
+    },
+    "completion_marker_written": {
+      "status": "pending",
+      "evidence": ""
+    }
+  }
+}

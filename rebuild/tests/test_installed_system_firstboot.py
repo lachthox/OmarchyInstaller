@@ -144,9 +144,33 @@ def test_firstboot_blocks_without_login() -> None:
     assert "no logged-in non-root user session detected" in result.blockers
 
 
+def test_firstboot_root_marker_user_does_not_bypass_login_blocker(tmp_path: Path) -> None:
+    context = FirstBootRuntimeContext(
+        platform="linux",
+        is_linux=True,
+        os_release_id="arch",
+        is_wsl=False,
+        is_live_iso=False,
+        pid1_comm="systemd",
+        login_users=tuple(),
+        install_marker_exists=True,
+        completion_marker_exists=False,
+    )
+    install_marker = tmp_path / "install-success.json"
+    install_marker.write_text('{"username":"root"}\n', encoding="utf-8")
+
+    result = run_firstboot_handoff(
+        context=context,
+        install_marker_path=install_marker,
+        runner=InstalledSystemRunner(),
+    )
+    assert result.status == "blocked"
+    assert "no logged-in non-root user session detected" in result.blockers
+
+
 def test_firstboot_writes_completion_marker_on_success(tmp_path: Path) -> None:
     install_marker = tmp_path / "install-success.json"
-    install_marker.write_text("{\"status\":\"ok\"}\n", encoding="utf-8")
+    install_marker.write_text("{\"status\":\"ok\",\"username\":\"alice\"}\n", encoding="utf-8")
     completion_marker = tmp_path / "completed.json"
     attempt_log = tmp_path / "attempt.log.jsonl"
 
@@ -171,10 +195,51 @@ def test_firstboot_writes_completion_marker_on_success(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert completion_marker.exists()
     assert attempt_log.exists()
-    assert ["bash", "-lc", "echo test"] in runner.commands
+    assert ["su", "-l", "alice", "-c", "echo test"] in runner.commands
     assert result.bootstrap_health.can_proceed
     assert result.post_install_normalization is not None
     assert result.post_install_normalization.can_proceed
+
+
+def test_firstboot_falls_back_to_install_marker_user_when_no_login(tmp_path: Path) -> None:
+    install_marker = tmp_path / "install-success.json"
+    install_marker.write_text("{\"status\":\"ok\",\"username\":\"omarchy\"}\n", encoding="utf-8")
+    completion_marker = tmp_path / "completed.json"
+    attempt_log = tmp_path / "attempt.log.jsonl"
+
+    bootstrap_root = tmp_path / "opt" / "omarchy-setup"
+    _write_bootstrap_fixture(bootstrap_root)
+    efi_mount = tmp_path / "boot" / "efi"
+    _write_efi_fixture(efi_mount)
+
+    context = FirstBootRuntimeContext(
+        platform="linux",
+        is_linux=True,
+        os_release_id="arch",
+        is_wsl=False,
+        is_live_iso=False,
+        pid1_comm="systemd",
+        login_users=tuple(),
+        install_marker_exists=True,
+        completion_marker_exists=False,
+    )
+
+    runner = InstalledSystemRunner(command_returncode=0, boot_order=("0002", "0001"))
+    result = run_firstboot_handoff(
+        context=context,
+        bootstrap_root=bootstrap_root,
+        install_marker_path=install_marker,
+        completion_marker_path=completion_marker,
+        attempt_log_path=attempt_log,
+        command="echo test",
+        efi_mount=efi_mount,
+        runner=runner,
+    )
+
+    assert result.status == "completed"
+    assert result.exit_code == 0
+    assert "no logged-in session detected; falling back to install marker username 'omarchy'" in result.warnings
+    assert ["su", "-l", "omarchy", "-c", "echo test"] in runner.commands
 
 
 def test_bootstrap_health_blocks_when_contract_files_missing(tmp_path: Path) -> None:

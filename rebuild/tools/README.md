@@ -15,3 +15,4 @@ Current scaffolded tools:
 - `build_iso_pipeline.py`: rebuild-owned Arch ISO pipeline runner that detects source ISO, verifies checksums, stages Python runtime payload files, invokes `build-custom-iso.sh`, and emits ISO build metadata.
 - `build_windows_exe.py`: rebuild-owned Windows EXE pipeline runner that packages `OmarchyInstaller.exe` with PyInstaller, stamps version metadata, and emits executable build metadata.
 - `publish_release.py`: rebuild-owned release publisher that creates `release_manifest.json`, `compatibility_manifest.json`, consolidated checksums, and optional GitHub Release asset uploads.
+- `release_readiness_check.py`: release readiness auditor that validates launcher policy artifacts plus completed hardware matrix and firstboot validation reports.

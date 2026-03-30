@@ -33,6 +33,12 @@ Each release should produce a consistent set of artifacts, including:
 - release manifest
 - compatibility metadata
 
+Operational readiness evidence (required before production publish):
+
+- completed hardware boot matrix report (`rebuild/docs/hardware-boot-matrix-report.template.json`)
+- completed firstboot validation report (`rebuild/docs/firstboot-validation-report.template.json`)
+- passing release readiness audit output from `rebuild/tools/release_readiness_check.py`
+
 ## Trigger policy
 
 Rebuilds must be triggered when changes affect:
@@ -85,6 +91,25 @@ Supporting docs:
 - `.github/workflows/rebuild-iso.yml` invokes `rebuild/tools/build_iso_pipeline.py` to build the customized Arch ISO artifact and emit build manifest metadata.
 - `.github/workflows/rebuild-windows-exe.yml` invokes `rebuild/tools/build_windows_exe.py` to package `OmarchyInstaller.exe` with PyInstaller and emit executable build manifest metadata.
 - `.github/workflows/rebuild-release.yml` invokes `rebuild/tools/publish_release.py` to produce `release_manifest.json`, `compatibility_manifest.json`, consolidated checksums, and optional GitHub Release publication.
+
+## Readiness audit
+
+Before production publication, run release readiness audit with all gates enforced:
+
+```
+python rebuild/tools/release_readiness_check.py \
+	--artifact-dir <release-artifact-dir> \
+	--hardware-report rebuild/docs/hardware-boot-matrix-report.json \
+	--firstboot-report rebuild/docs/firstboot-validation-report.json \
+	--require-all \
+	--output rebuild/dist/release/release-readiness-audit.json
+```
+
+This gate enforces:
+
+- release EXE default launcher policy is `python-then-legacy`
+- required hardware matrix cases are marked `pass`
+- required firstboot/boot-guardian validation checks are marked `pass`
 
 ## Coordination note
 

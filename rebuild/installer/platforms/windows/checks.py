@@ -266,9 +266,14 @@ def _check_partition_style(probe: WindowsProbe) -> CheckResult:
 def _check_secure_boot(probe: WindowsProbe) -> CheckResult:
     enabled = probe.secure_boot_enabled()
     if enabled is True:
-        return CheckResult("secure_boot", CheckStatus.PASS, "Secure Boot is enabled.", "true")
+        return CheckResult(
+            "secure_boot",
+            CheckStatus.FAIL,
+            "Secure Boot is enabled; current Limine boot path requires Secure Boot to be disabled.",
+            "true",
+        )
     if enabled is False:
-        return CheckResult("secure_boot", CheckStatus.WARN, "Secure Boot is disabled; policy review required.", "false")
+        return CheckResult("secure_boot", CheckStatus.PASS, "Secure Boot is disabled.", "false")
     return CheckResult("secure_boot", CheckStatus.WARN, "Secure Boot state could not be determined.", "unknown")
 
 

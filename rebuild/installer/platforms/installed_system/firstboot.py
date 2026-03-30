@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 import subprocess
 import sys
-from typing import Mapping, Protocol
+from typing import Any, Mapping, Protocol
 
 from .post_install import (
     BootstrapHealthResult,
@@ -109,6 +109,22 @@ def _read_text(path: Path) -> str:
         return path.read_text(encoding="utf-8").strip()
     except OSError:
         return ""
+
+
+def _read_json_dict(path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _marker_username(install_marker_path: Path) -> str:
+    payload = _read_json_dict(install_marker_path)
+    username = str(payload.get("username", "")).strip()
+    if username and username.lower() != "root":
+        return username
+    return ""
 
 
 def _read_os_release_id(path: Path) -> str:
@@ -282,13 +298,29 @@ def run_firstboot_handoff(
         install_marker_path=install_marker,
         completion_marker_path=completion_marker,
     )
+    marker_username = _marker_username(install_marker)
     can_proceed, blockers, warnings = evaluate_firstboot_timing_policy(runtime_context)
+    blockers_list = list(blockers)
+    warnings_list = list(warnings)
+    no_login_blocker = "no logged-in non-root user session detected"
+    if marker_username and no_login_blocker in blockers_list:
+        blockers_list = [blocker for blocker in blockers_list if blocker != no_login_blocker]
+        warnings_list.append(
+            f"no logged-in session detected; falling back to install marker username '{marker_username}'"
+        )
+    blockers = tuple(blockers_list)
+    warnings = tuple(warnings_list)
+    can_proceed = len(blockers) == 0
     bootstrap_health = evaluate_bootstrap_health(bootstrap_contract)
     can_proceed = can_proceed and bootstrap_health.can_proceed
     blockers = tuple([*blockers, *bootstrap_health.blockers])
     warnings = tuple([*warnings, *bootstrap_health.warnings])
 
-    command_list = ("bash", "-lc", command)
+    execution_user = runtime_context.login_users[0] if runtime_context.login_users else marker_username
+    if execution_user:
+        command_list = ("su", "-l", execution_user, "-c", command)
+    else:
+        command_list = ("bash", "-lc", command)
     if runtime_context.completion_marker_exists:
         return FirstBootExecutionResult(
             status="already-completed",
@@ -342,6 +374,7 @@ def run_firstboot_handoff(
             "event": "firstboot_start",
             "timestamp_utc": started_at,
             "command": command,
+            "execution_user": execution_user,
             "login_users": list(runtime_context.login_users),
             "install_marker_path": str(install_marker),
             "bootstrap_health": bootstrap_health.to_dict(),
@@ -421,6 +454,7 @@ def run_firstboot_handoff(
         "completed_at_utc": _utc_now(),
         "omarchy_timing_contract": "post-install-only",
         "command": command,
+        "execution_user": execution_user,
         "login_users": list(runtime_context.login_users),
         "install_marker_path": str(install_marker),
         "bootstrap_contract": bootstrap_contract.to_dict(),

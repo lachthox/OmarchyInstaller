@@ -103,6 +103,11 @@ def ensure_workspace_layout(workspace: Path) -> None:
         workspace / "rebuild" / "requirements.txt",
         workspace / "rebuild" / "assets" / "scripts" / "live-autostart.sh",
         workspace / "rebuild" / "assets" / "scripts" / "firstboot-wrapper.sh",
+        workspace / "rebuild" / "assets" / "scripts" / "boot-guardian.sh",
+        workspace / "rebuild" / "assets" / "scripts" / "omarchy-boot-check.sh",
+        workspace / "rebuild" / "assets" / "scripts" / "omarchy-boot-repair.sh",
+        workspace / "rebuild" / "assets" / "services" / "omarchy-firstboot.service",
+        workspace / "rebuild" / "assets" / "services" / "boot-guardian.service",
     ]
     missing = [str(path) for path in required_paths if not path.exists()]
     if missing:
@@ -154,6 +159,12 @@ def prepare_payload(
         ("rebuild/requirements-dev.txt", "requirements-dev.txt"),
         ("rebuild/assets/scripts/live-autostart.sh", "hooks/live-autostart.sh"),
         ("rebuild/assets/scripts/firstboot-wrapper.sh", "hooks/firstboot-wrapper.sh"),
+        ("rebuild/assets/scripts/firstboot-wrapper.sh", "assets/scripts/firstboot-wrapper.sh"),
+        ("rebuild/assets/scripts/boot-guardian.sh", "assets/scripts/boot-guardian.sh"),
+        ("rebuild/assets/scripts/omarchy-boot-check.sh", "assets/scripts/omarchy-boot-check.sh"),
+        ("rebuild/assets/scripts/omarchy-boot-repair.sh", "assets/scripts/omarchy-boot-repair.sh"),
+        ("rebuild/assets/services/omarchy-firstboot.service", "assets/services/omarchy-firstboot.service"),
+        ("rebuild/assets/services/boot-guardian.service", "assets/services/boot-guardian.service"),
     ]:
         src = workspace / src_rel
         dst = payload_dir / dst_rel
