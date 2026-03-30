@@ -61,6 +61,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run Python preflight TUI and exit without launching legacy flow.",
     )
     parser.add_argument(
+        "--python-legacy-handoff",
+        action="store_true",
+        help="After Python flow completes, hand off to legacy PowerShell workflow.",
+    )
+    parser.add_argument(
         "--python-preflight-json",
         action="store_true",
         help="Run Python preflight checks non-interactively and print JSON.",
@@ -86,6 +91,17 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help="Fallback backup destination path for Python backup step.",
     )
+    parser.add_argument(
+        "--python-ventoy-disk-number",
+        type=int,
+        default=None,
+        help="Optional Ventoy USB disk number to validate in Python TUI.",
+    )
+    parser.add_argument(
+        "--python-source-iso",
+        default="",
+        help="Optional source ISO path used when validating Ventoy capacity.",
+    )
     return parser
 
 
@@ -104,21 +120,26 @@ def run_legacy_powershell(passthrough_args: list[str]) -> int:
 
 def run_python_tui(
     *,
+    launch_legacy_on_continue: bool,
     preflight_only: bool,
     apply_changes: bool,
     target_free_gib: int,
     backup_destination: str,
     backup_fallback_destination: str,
+    ventoy_disk_number: int | None,
+    source_iso_path: str,
 ) -> int:
     ensure_rebuild_on_syspath()
     from installer.platforms.windows import EXIT_LAUNCH_LEGACY, run_windows_preflight_tui
 
     result = run_windows_preflight_tui(
-        launch_legacy_on_continue=not preflight_only,
+        launch_legacy_on_continue=launch_legacy_on_continue and not preflight_only,
         apply_changes=apply_changes,
         target_free_gib=target_free_gib,
         backup_destination=backup_destination or None,
         backup_fallback_destination=backup_fallback_destination or None,
+        ventoy_disk_number=ventoy_disk_number,
+        source_iso_path=source_iso_path or None,
     )
     if result == EXIT_LAUNCH_LEGACY:
         return LEGACY_HANDOFF_EXIT_CODE
@@ -146,11 +167,14 @@ def main() -> int:
 
     try:
         tui_result = run_python_tui(
+            launch_legacy_on_continue=args.python_legacy_handoff,
             preflight_only=args.python_preflight_only,
             apply_changes=args.python_apply,
             target_free_gib=max(40, int(args.python_target_free_gib)),
             backup_destination=args.python_backup_destination,
             backup_fallback_destination=args.python_backup_fallback_destination,
+            ventoy_disk_number=args.python_ventoy_disk_number,
+            source_iso_path=args.python_source_iso,
         )
     except Exception as exc:  # pragma: no cover - runtime fallback
         print(f"Python TUI startup failed, falling back to PowerShell: {exc}", file=sys.stderr)

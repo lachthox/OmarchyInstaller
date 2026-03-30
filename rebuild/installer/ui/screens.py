@@ -23,19 +23,6 @@ from ..platforms.linux_live.install import LiveInstallError, LiveInstallExecutio
 from ..platforms.linux_live.network import NetworkResolutionResult, resolve_network_connectivity
 
 
-WINDOWS_PREP_SCREEN_CONTRACT: tuple[str, ...] = (
-    "welcome",
-    "compatibility",
-    "backup",
-    "partition_prep",
-    "ventoy_usb",
-    "secure_boot",
-    "network",
-    "summary",
-    "confirm",
-    "error_handling",
-)
-
 LIVE_BOOTSTRAP_SCREEN_CONTRACT: tuple[str, ...] = (
     "preflight",
     "network",
@@ -77,9 +64,11 @@ def bootstrap_screen_ids() -> list[str]:
 
 def windows_prep_screen_ids() -> list[str]:
     """Return the ordered Windows prep screen identifiers."""
-    if len(set(WINDOWS_PREP_SCREEN_CONTRACT)) != len(WINDOWS_PREP_SCREEN_CONTRACT):
+    from ..platforms.windows.app import WINDOWS_STAGES
+
+    if len(set(WINDOWS_STAGES)) != len(WINDOWS_STAGES):
         raise ValueError("Windows prep screen contract contains duplicate identifiers.")
-    return list(WINDOWS_PREP_SCREEN_CONTRACT)
+    return list(WINDOWS_STAGES)
 
 
 def validate_live_dependencies() -> tuple[bool, tuple[str, ...]]:
