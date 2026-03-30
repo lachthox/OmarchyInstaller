@@ -47,10 +47,10 @@ jobs:
       WORK_DIR: ${{ github.workspace }}/rebuild/dist/release-iso-work
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -78,7 +78,7 @@ jobs:
             "${EXTRA_ARGS[@]}"
 
       - name: Upload ISO outputs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-iso-output
           path: ${{ env.OUTPUT_DIR }}
@@ -92,10 +92,10 @@ jobs:
       WORK_DIR: ${{ github.workspace }}\rebuild\dist\release-windows-exe-work
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -118,7 +118,7 @@ jobs:
             @extraArgs
 
       - name: Upload Windows EXE outputs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-windows-exe-output
           path: ${{ env.OUTPUT_DIR }}
@@ -135,21 +135,21 @@ jobs:
       OUTPUT_DIR: ${{ github.workspace }}/rebuild/dist/release-output
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
       - name: Download ISO artifact bundle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-iso-output
           path: ${{ env.INPUT_DIR }}/iso
 
       - name: Download Windows EXE artifact bundle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-windows-exe-output
           path: ${{ env.INPUT_DIR }}/windows
@@ -177,7 +177,7 @@ jobs:
             "${EXTRA_ARGS[@]}"
 
       - name: Upload release metadata bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rebuild-release-output
           path: ${{ env.OUTPUT_DIR }}
