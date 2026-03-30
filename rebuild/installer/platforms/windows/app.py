@@ -77,6 +77,8 @@ class WindowsTuiConfig:
     backup_fallback_destination: str | None = None
     ventoy_disk_number: int | None = None
     source_iso_path: str | None = None
+    yolo_mode: bool = False
+    yolo_approved_failures: tuple[str, ...] = ()
 
 
 class WindowsPrepApp(App[int]):
@@ -111,6 +113,12 @@ class WindowsPrepApp(App[int]):
         self._last_error = ""
         self._status_message = "Ready."
         self._show_details = False
+        self._yolo_mode = bool(self._config.yolo_mode)
+        self._yolo_approved_failures = {
+            str(name).strip().lower()
+            for name in self._config.yolo_approved_failures
+            if str(name).strip()
+        }
         self._backup_result: FlowStepResult | None = None
         self._partition_result: FlowStepResult | None = None
         self._ventoy_cli_path = ""
@@ -153,7 +161,7 @@ class WindowsPrepApp(App[int]):
 
     def _flow_readiness(self) -> tuple[bool, list[str]]:
         blockers: list[str] = []
-        if not self._can_continue:
+        if not self._compatibility_allows_progress():
             blockers.append("Resolve FAIL checks in compatibility.")
         if not self._backup_result or not self._backup_result.ok:
             blockers.append("Backup step has not completed successfully.")
@@ -162,6 +170,21 @@ class WindowsPrepApp(App[int]):
         if self._config.ventoy_disk_number is not None and not self._ventoy_validated:
             blockers.append("Configured Ventoy USB has not been validated.")
         return len(blockers) == 0, blockers
+
+    def _unapproved_failures(self) -> list[dict[str, str]]:
+        failures = [check for check in self._checks if check.get("status") == "fail"]
+        if not self._yolo_mode:
+            return failures
+        return [
+            check
+            for check in failures
+            if check.get("name", "").strip().lower() not in self._yolo_approved_failures
+        ]
+
+    def _compatibility_allows_progress(self) -> bool:
+        if self._can_continue:
+            return True
+        return self._yolo_mode and len(self._unapproved_failures()) == 0
 
     def _stage_health(self, stage: str) -> str:
         if stage == "compatibility":
@@ -201,7 +224,7 @@ class WindowsPrepApp(App[int]):
     def _simple_content(self) -> str:
         checks = self._check_map()
         ready, blockers = self._flow_readiness()
-        check_state = "Ready" if self._can_continue else "Needs attention"
+        check_state = "Ready" if self._compatibility_allows_progress() else "Needs attention"
         backup_state = "Done" if self._backup_result and self._backup_result.ok else "Pending"
         partition_state = "Done" if self._partition_result and self._partition_result.ok else "Pending"
         ventoy_required = self._config.ventoy_disk_number is not None
@@ -213,8 +236,7 @@ class WindowsPrepApp(App[int]):
 
         failure_lines = [
             f"- {CHECK_LABELS.get(c['name'], c['name'])}: {c['message']}"
-            for c in self._checks
-            if c["status"] == "fail"
+            for c in self._unapproved_failures()
         ]
         blocker_lines = "\n".join(f"- {item}" for item in blockers) if blockers else "- none"
 
@@ -229,6 +251,11 @@ class WindowsPrepApp(App[int]):
                 f"5. Ready to continue: {'Yes' if ready else 'No'}",
                 "",
                 f"Current mode: {self._mode()}",
+                (
+                    "YOLO mode: enabled (approved fails can be bypassed)."
+                    if self._yolo_mode
+                    else "YOLO mode: disabled."
+                ),
                 "Next action: Press [Enter] to do the next required step automatically.",
                 "",
                 "Why blocked:",
@@ -247,7 +274,9 @@ class WindowsPrepApp(App[int]):
         if stage == "welcome":
             return f"Welcome\n{mode_line}\n\nPath: compatibility -> backup -> partition -> summary -> confirm\nRecent: {recent}"
         if stage == "compatibility":
-            return f"Compatibility Checks\n{mode_line}\n{self._snapshot_summary}\n\n{self._checks_table()}\n\nState: {'READY' if self._can_continue else 'BLOCKED'}"
+            compat_state = "READY" if self._compatibility_allows_progress() else "BLOCKED"
+            yolo_suffix = " (YOLO override active)" if self._yolo_mode and not self._can_continue else ""
+            return f"Compatibility Checks\n{mode_line}\n{self._snapshot_summary}\n\n{self._checks_table()}\n\nState: {compat_state}{yolo_suffix}"
         if stage == "backup":
             return f"Backup Stage\n{mode_line}\nPrimary: {self._flow._resolve_backup_destination()}\nFallback: {self._config.backup_fallback_destination or 'none'}\n\nResult: {backup}\n\nPress B to run."
         if stage == "partition_prep":
@@ -323,7 +352,7 @@ class WindowsPrepApp(App[int]):
         self._render()
 
     def action_run_backup(self) -> None:
-        if not self._can_continue:
+        if not self._compatibility_allows_progress():
             message = "Blocked: resolve FAIL checks in compatibility first."
             self._set_status(message)
             self.notify(message, severity="error")
@@ -335,7 +364,7 @@ class WindowsPrepApp(App[int]):
         self._render()
 
     def action_run_partition(self) -> None:
-        if not self._can_continue:
+        if not self._compatibility_allows_progress():
             message = "Blocked: resolve FAIL checks in compatibility first."
             self._set_status(message)
             self.notify(message, severity="error")
@@ -399,7 +428,7 @@ class WindowsPrepApp(App[int]):
         self.exit(EXIT_QUIT)
 
     def action_do_next_step(self) -> None:
-        if not self._can_continue:
+        if not self._compatibility_allows_progress():
             self._set_stage(1)
             self._set_status("Compatibility checks are blocking progress. Fix the listed items, then press [R].")
             self._render()
@@ -417,7 +446,11 @@ class WindowsPrepApp(App[int]):
 
     def action_toggle_details(self) -> None:
         self._show_details = not self._show_details
-        self._set_status("Detailed view enabled." if self._show_details else "Simple view enabled.")
+        if self._show_details and not self._checks:
+            self.action_refresh_runtime()
+            self._set_status("Detailed view enabled. Checks refreshed.")
+        else:
+            self._set_status("Detailed view enabled." if self._show_details else "Simple view enabled.")
         if not self._show_details:
             self._stage_idx = 0
         self._render()
@@ -447,6 +480,8 @@ def run_windows_preflight_tui(
     backup_fallback_destination: str | None = None,
     ventoy_disk_number: int | None = None,
     source_iso_path: str | None = None,
+    yolo_mode: bool = False,
+    yolo_approved_failures: tuple[str, ...] = (),
 ) -> int:
     app = WindowsPrepApp(
         WindowsTuiConfig(
@@ -457,6 +492,8 @@ def run_windows_preflight_tui(
             backup_fallback_destination=backup_fallback_destination,
             ventoy_disk_number=ventoy_disk_number,
             source_iso_path=source_iso_path,
+            yolo_mode=yolo_mode,
+            yolo_approved_failures=yolo_approved_failures,
         )
     )
     result = app.run()

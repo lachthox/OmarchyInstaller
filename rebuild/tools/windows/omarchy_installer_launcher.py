@@ -102,6 +102,11 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help="Optional source ISO path used when validating Ventoy capacity.",
     )
+    parser.add_argument(
+        "--python-yolo",
+        action="store_true",
+        help="Allow bypassing preflight FAIL checks after per-failure confirmation.",
+    )
     return parser
 
 
@@ -128,6 +133,8 @@ def run_python_tui(
     backup_fallback_destination: str,
     ventoy_disk_number: int | None,
     source_iso_path: str,
+    yolo_mode: bool,
+    yolo_approved_failures: tuple[str, ...],
 ) -> int:
     ensure_rebuild_on_syspath()
     from installer.platforms.windows import EXIT_LAUNCH_LEGACY, run_windows_preflight_tui
@@ -140,6 +147,8 @@ def run_python_tui(
         backup_fallback_destination=backup_fallback_destination or None,
         ventoy_disk_number=ventoy_disk_number,
         source_iso_path=source_iso_path or None,
+        yolo_mode=yolo_mode,
+        yolo_approved_failures=yolo_approved_failures,
     )
     if result == EXIT_LAUNCH_LEGACY:
         return LEGACY_HANDOFF_EXIT_CODE
@@ -155,6 +164,36 @@ def run_python_preflight_json() -> int:
     return 0 if bool(report.get("can_proceed", False)) else 3
 
 
+def prompt_yolo_failover() -> tuple[str, ...]:
+    ensure_rebuild_on_syspath()
+    from installer.platforms.windows import run_windows_preflight
+
+    report = run_windows_preflight()
+    raw_failures = report.get("failures", [])
+    failures = [item for item in raw_failures if isinstance(item, dict)]
+    if not failures:
+        print("[YOLO] No FAIL checks detected.")
+        return ()
+
+    approved: list[str] = []
+    print("[YOLO] Preflight FAIL checks detected. You must choose skip or exit for each one.")
+    for index, failure in enumerate(failures, start=1):
+        name = str(failure.get("name", "unknown"))
+        message = str(failure.get("message", ""))
+        while True:
+            response = input(
+                f"[YOLO] {index}/{len(failures)} {name}: {message}\n"
+                "Choose [s]kip to continue anyway, or [e]xit: "
+            ).strip().lower()
+            if response in {"s", "skip", "y", "yes"}:
+                approved.append(name)
+                break
+            if response in {"e", "exit", "n", "no", "q", "quit", ""}:
+                raise RuntimeError(f"YOLO aborted by user at failure: {name}")
+            print("Enter 's' to skip or 'e' to exit.")
+    return tuple(approved)
+
+
 def main() -> int:
     parser = build_parser()
     args, passthrough_args = parser.parse_known_args(sys.argv[1:])
@@ -164,6 +203,14 @@ def main() -> int:
 
     if args.legacy_powershell:
         return run_legacy_powershell(passthrough_args)
+
+    yolo_approved_failures: tuple[str, ...] = ()
+    if args.python_yolo:
+        try:
+            yolo_approved_failures = prompt_yolo_failover()
+        except Exception as exc:
+            print(str(exc), file=sys.stderr)
+            return 4
 
     try:
         tui_result = run_python_tui(
@@ -175,6 +222,8 @@ def main() -> int:
             backup_fallback_destination=args.python_backup_fallback_destination,
             ventoy_disk_number=args.python_ventoy_disk_number,
             source_iso_path=args.python_source_iso,
+            yolo_mode=args.python_yolo,
+            yolo_approved_failures=yolo_approved_failures,
         )
     except Exception as exc:  # pragma: no cover - runtime fallback
         print(f"Python TUI startup failed, falling back to PowerShell: {exc}", file=sys.stderr)
