@@ -224,6 +224,8 @@ def collect_live_runtime_snapshot(
             )
             handoff_mode = "ventoy-plan"
             handoff_note = "Validated handoff plan found."
+            if handoff_result.wifi_warning:
+                handoff_note = f"{handoff_note} {handoff_result.wifi_warning}"
         except (HandoffDiscoveryError, ValueError) as exc:
             handoff_note = str(exc)
     else:
@@ -233,6 +235,7 @@ def collect_live_runtime_snapshot(
     network_error = ""
     try:
         network_result = resolve_network_connectivity(
+            wifi_handoff_profile=handoff_result.wifi_profile if handoff_result is not None else None,
             retry_attempts=0,
             allow_nmtui=False,
         )

@@ -37,10 +37,24 @@ class HandoffDiscoveryResult:
     discovered_relative_path: str
     plan_mtime_utc: str
     plan: PlanContract
+    wifi_path: str | None = None
+    wifi_profile: dict[str, Any] | None = None
+    wifi_warning: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
         payload["plan"] = self.plan.model_dump()
+        if self.wifi_profile is not None:
+            sanitized_profile = {
+                "ssid": str(self.wifi_profile.get("ssid", "")).strip(),
+                "wifi_security": str(self.wifi_profile.get("wifi_security", "")).strip(),
+                "interface_name": str(self.wifi_profile.get("interface_name", "")).strip(),
+                "hidden": bool(self.wifi_profile.get("hidden", False)),
+                "has_credentials": bool(
+                    str(self.wifi_profile.get("passphrase", "") or self.wifi_profile.get("password", "")).strip()
+                ),
+            }
+            payload["wifi_profile"] = sanitized_profile
         return payload
 
 
@@ -92,6 +106,31 @@ def _load_json(path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise HandoffDiscoveryError(f"Handoff plan payload must be an object: {path}")
     return payload
+
+
+def _load_optional_wifi_profile(
+    source_root: Path,
+    handoff_relative_path: str,
+) -> tuple[str | None, dict[str, Any] | None, str]:
+    wifi_relative = str(Path(handoff_relative_path).parent / "wifi.json")
+    wifi_path = source_root / wifi_relative
+    if not wifi_path.exists() or not wifi_path.is_file():
+        return None, None, ""
+    try:
+        payload = json.loads(wifi_path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        return str(wifi_path.resolve()), None, f"Wi-Fi handoff ignored: cannot read wifi.json ({exc})"
+    except json.JSONDecodeError as exc:
+        return str(wifi_path.resolve()), None, f"Wi-Fi handoff ignored: invalid JSON in wifi.json ({exc})"
+
+    if not isinstance(payload, dict):
+        return str(wifi_path.resolve()), None, "Wi-Fi handoff ignored: wifi.json payload must be an object."
+
+    ssid = str(payload.get("ssid", "")).strip()
+    if not ssid:
+        return str(wifi_path.resolve()), None, "Wi-Fi handoff ignored: wifi.json is missing ssid."
+
+    return str(wifi_path.resolve()), payload, ""
 
 
 def _mtime_utc(path: Path) -> str:
@@ -235,12 +274,16 @@ def discover_and_validate_handoff_plan(
                 source_root=source_root,
                 plan_path=plan_path,
             )
+            wifi_path, wifi_profile, wifi_warning = _load_optional_wifi_profile(source_root, handoff_relative_path)
             return HandoffDiscoveryResult(
                 source_root=str(source_root.resolve()),
                 plan_path=str(plan_path.resolve()),
                 discovered_relative_path=handoff_relative_path,
                 plan_mtime_utc=_mtime_utc(plan_path),
                 plan=plan,
+                wifi_path=wifi_path,
+                wifi_profile=wifi_profile,
+                wifi_warning=wifi_warning,
             )
         except (HandoffDiscoveryError, ValueError) as exc:
             errors.append(f"{plan_path}: {exc}")

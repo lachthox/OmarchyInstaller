@@ -158,6 +158,26 @@ def _step(steps: list[NetworkStepResult], step: str, status: str, detail: str) -
     steps.append(NetworkStepResult(step=step, status=status, detail=detail))
 
 
+def _wifi_profile_summary(profile: dict[str, Any]) -> str:
+    ssid = str(profile.get("ssid", "")).strip() or "<missing-ssid>"
+    security = str(profile.get("wifi_security", "")).strip() or "unknown"
+    interface_name = str(profile.get("interface_name", "")).strip() or "auto"
+    hidden = bool(profile.get("hidden", False))
+    return f"ssid={ssid}, security={security}, interface={interface_name}, hidden={hidden}"
+
+
+def _sanitize_wifi_detail(detail: str, profile: dict[str, Any]) -> str:
+    text = detail
+    secrets = [
+        str(profile.get("passphrase", "") or "").strip(),
+        str(profile.get("password", "") or "").strip(),
+    ]
+    for secret in secrets:
+        if secret:
+            text = text.replace(secret, "***")
+    return text
+
+
 def _connected_result(mode: str, client: NetworkManagerClient, steps: list[NetworkStepResult]) -> NetworkResolutionResult:
     return NetworkResolutionResult(
         connected=True,
@@ -203,11 +223,13 @@ def resolve_network_connectivity(
 
     # 2) Auto Wi-Fi handoff profile
     if wifi_handoff_profile:
+        handoff_summary = _wifi_profile_summary(wifi_handoff_profile)
         ok, detail = active_client.connect_wifi(wifi_handoff_profile)
+        safe_detail = _sanitize_wifi_detail(detail, wifi_handoff_profile)
         if ok and active_client.wifi_connected():
-            _step(steps, "wifi-handoff", "pass", detail)
+            _step(steps, "wifi-handoff", "pass", f"{safe_detail} ({handoff_summary})")
             return _connected_result("wifi", active_client, steps)
-        _step(steps, "wifi-handoff", "warn", detail)
+        _step(steps, "wifi-handoff", "warn", f"{safe_detail} ({handoff_summary})")
     else:
         _step(steps, "wifi-handoff", "warn", "No auto Wi-Fi handoff profile was provided.")
 
@@ -219,21 +241,25 @@ def resolve_network_connectivity(
             _step(steps, "wifi-retry-rescan", "warn", f"Attempt {attempt}: wifi rescan failed.")
             continue
         if wifi_handoff_profile:
+            handoff_summary = _wifi_profile_summary(wifi_handoff_profile)
             ok, detail = active_client.connect_wifi(wifi_handoff_profile)
+            safe_detail = _sanitize_wifi_detail(detail, wifi_handoff_profile)
             if ok and active_client.wifi_connected():
-                _step(steps, "wifi-retry-rescan", "pass", f"Attempt {attempt}: {detail}")
+                _step(steps, "wifi-retry-rescan", "pass", f"Attempt {attempt}: {safe_detail} ({handoff_summary})")
                 return _connected_result("wifi", active_client, steps)
-            _step(steps, "wifi-retry-rescan", "warn", f"Attempt {attempt}: {detail}")
+            _step(steps, "wifi-retry-rescan", "warn", f"Attempt {attempt}: {safe_detail} ({handoff_summary})")
         else:
             _step(steps, "wifi-retry-rescan", "warn", f"Attempt {attempt}: rescan complete, no profile to retry.")
 
     # 4) Manual profile
     if manual_wifi_profile:
+        manual_summary = _wifi_profile_summary(manual_wifi_profile)
         ok, detail = active_client.connect_wifi(manual_wifi_profile)
+        safe_detail = _sanitize_wifi_detail(detail, manual_wifi_profile)
         if ok and active_client.wifi_connected():
-            _step(steps, "manual-ui-profile", "pass", detail)
+            _step(steps, "manual-ui-profile", "pass", f"{safe_detail} ({manual_summary})")
             return _connected_result("wifi", active_client, steps)
-        _step(steps, "manual-ui-profile", "warn", detail)
+        _step(steps, "manual-ui-profile", "warn", f"{safe_detail} ({manual_summary})")
     else:
         _step(steps, "manual-ui-profile", "warn", "No manual Wi-Fi profile was provided.")
 

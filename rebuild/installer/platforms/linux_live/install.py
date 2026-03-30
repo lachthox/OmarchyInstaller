@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -11,6 +13,7 @@ from tempfile import gettempdir
 from typing import Any, Protocol
 from uuid import uuid4
 
+from ..installed_system.boot_guardian_state import BootGuardianExpectedState
 from ...shared import PlanContract, validate_plan_contract
 from .identity import MachineIdentityError, match_machine_identity
 
@@ -469,6 +472,246 @@ def _find_partition_by_label(runner: CommandRunner, *, disk_path: str, label: st
     raise LiveInstallError(f"Could not resolve partition labeled {label} on {disk_path}.")
 
 
+def _utc_now() -> str:
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
+def _copy_file(source: Path, destination: Path, *, executable: bool = False) -> None:
+    if not source.exists() or not source.is_file():
+        raise LiveInstallError(f"Required source file is missing: {source}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, destination)
+    if executable:
+        destination.chmod(0o755)
+
+
+def _resolve_stage_source_root() -> Path:
+    module_root = Path(__file__).resolve().parents[3]
+    if (module_root / "installer").is_dir():
+        return module_root
+    raise LiveInstallError(f"Unable to resolve stage source root from {module_root}")
+
+
+def _resolve_hook_source(source_root: Path, hook_name: str) -> Path:
+    candidates = (
+        source_root / "hooks" / hook_name,
+        source_root / "assets" / "scripts" / hook_name,
+    )
+    for candidate in candidates:
+        if candidate.exists() and candidate.is_file():
+            return candidate
+    raise LiveInstallError(f"Missing required hook source: {hook_name}")
+
+
+def _resolve_asset_script_source(source_root: Path, script_name: str) -> Path:
+    candidate = source_root / "assets" / "scripts" / script_name
+    if candidate.exists() and candidate.is_file():
+        return candidate
+    raise LiveInstallError(f"Missing required script source: {script_name}")
+
+
+def _resolve_service_source(source_root: Path, unit_name: str) -> Path:
+    candidate = source_root / "assets" / "services" / unit_name
+    if candidate.exists() and candidate.is_file():
+        return candidate
+    raise LiveInstallError(f"Missing required service source: {unit_name}")
+
+
+def _write_runtime_setup_wrapper(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -Eeuo pipefail\n\n"
+        "mkdir -p /opt/omarchy-installer\n"
+        "ln -sfn /opt/omarchy-setup/main.py /opt/omarchy-installer/main.py\n"
+        "cd /opt/omarchy-setup\n"
+        "exec python3 /opt/omarchy-installer/main.py \"$@\"\n",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+
+
+def _write_runtime_entrypoint(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "from installer.main import main\n\n\n"
+        "if __name__ == '__main__':\n"
+        "    raise SystemExit(main())\n",
+        encoding="utf-8",
+    )
+
+
+def _runtime_packages_text() -> str:
+    return (
+        "python\n"
+        "networkmanager\n"
+        "archinstall\n"
+        "gptfdisk\n"
+        "git\n"
+        "curl\n"
+    )
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _stage_installed_system_runtime(
+    *,
+    mount_root: str,
+    install_mode: str,
+    target_disk_path: str,
+    target_partition_path: str,
+    efi_partition_path: str,
+    plan_contract: PlanContract | None,
+    archinstall_config_path: Path | None,
+    runner: CommandRunner,
+) -> tuple[str, ...]:
+    source_root = _resolve_stage_source_root()
+    mount_path = Path(mount_root)
+    target_runtime_root = mount_path / "opt" / "omarchy-setup"
+    target_runtime_root.mkdir(parents=True, exist_ok=True)
+
+    actions: list[str] = []
+
+    installer_source = source_root / "installer"
+    installer_target = target_runtime_root / "installer"
+    if installer_target.exists():
+        shutil.rmtree(installer_target)
+    shutil.copytree(
+        installer_source,
+        installer_target,
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+    )
+    actions.append(f"staged installer package: {installer_target}")
+
+    _write_runtime_setup_wrapper(target_runtime_root / "setup.sh")
+    _write_runtime_entrypoint(target_runtime_root / "main.py")
+    actions.append(f"wrote runtime wrappers under {target_runtime_root}")
+
+    requirements_source = source_root / "requirements.txt"
+    _copy_file(requirements_source, target_runtime_root / "requirements.txt")
+    actions.append("staged requirements.txt")
+
+    runtime_packages_source = source_root / "runtime-packages.txt"
+    runtime_packages_target = target_runtime_root / "runtime-packages.txt"
+    if runtime_packages_source.exists() and runtime_packages_source.is_file():
+        _copy_file(runtime_packages_source, runtime_packages_target)
+    else:
+        runtime_packages_target.write_text(_runtime_packages_text(), encoding="utf-8")
+    actions.append("staged runtime-packages.txt")
+
+    hooks_target = target_runtime_root / "hooks"
+    hooks_target.mkdir(parents=True, exist_ok=True)
+    _copy_file(_resolve_hook_source(source_root, "live-autostart.sh"), hooks_target / "live-autostart.sh", executable=True)
+    _copy_file(_resolve_hook_source(source_root, "firstboot-wrapper.sh"), hooks_target / "firstboot-wrapper.sh", executable=True)
+    actions.append("staged runtime hooks")
+
+    metadata_source = source_root / "build-metadata.json"
+    metadata_target = target_runtime_root / "build-metadata.json"
+    if metadata_source.exists() and metadata_source.is_file():
+        _copy_file(metadata_source, metadata_target)
+    else:
+        metadata = {
+            "schema_version": "1.0.0",
+            "generated_at_utc": _utc_now(),
+            "runtime": {
+                "entrypoint": "python3 /opt/omarchy-installer/main.py",
+                "setup_wrapper": "/opt/omarchy-setup/setup.sh",
+                "entrypoint_compat_alias": "python3 /opt/omarchy-setup/main.py",
+                "installer_package_root": "/opt/omarchy-setup/installer",
+                "python_requirements_file": "/opt/omarchy-setup/requirements.txt",
+                "required_system_packages_file": "/opt/omarchy-setup/runtime-packages.txt",
+            },
+            "startup_hooks": {
+                "live_tty_hook": "/usr/local/bin/omarchy-live-autostart",
+                "payload_hook_reference": "/opt/omarchy-setup/hooks/live-autostart.sh",
+            },
+        }
+        _write_json(metadata_target, metadata)
+    actions.append("staged build-metadata.json")
+
+    install_marker = mount_path / "var" / "lib" / "omarchy" / "install" / "install-success.json"
+    disk_identities = {
+        "disk_guid": plan_contract.disk_identity.gpt_disk_guid if plan_contract is not None else target_disk_path,
+        "disk_serial": plan_contract.disk_identity.disk_serial if plan_contract is not None else "",
+        "efi_partition_guid": plan_contract.efi_identity.partition_guid if plan_contract is not None else efi_partition_path,
+        "windows_partition_guid": (
+            plan_contract.windows_partition_identity.partition_guid
+            if plan_contract is not None
+            else ""
+        ),
+        "target_partition_path": target_partition_path,
+        "efi_partition_path": efi_partition_path,
+    }
+    marker_payload: dict[str, Any] = {
+        "schema_version": "1.0.0",
+        "completed_at_utc": _utc_now(),
+        "install_mode": install_mode,
+        "target_disk_path": target_disk_path,
+        "disk_identities": disk_identities,
+    }
+    if archinstall_config_path is not None and archinstall_config_path.exists():
+        marker_payload["archinstall_config_path"] = str(archinstall_config_path)
+        marker_payload["archinstall_config_sha256"] = _sha256_file(archinstall_config_path)
+    _write_json(install_marker, marker_payload)
+    actions.append(f"wrote install marker: {install_marker}")
+
+    expected_state = BootGuardianExpectedState().to_dict()
+    expected_state_path = mount_path / "var" / "lib" / "omarchy" / "boot" / "expected-state.json"
+    _write_json(expected_state_path, expected_state)
+    actions.append(f"seeded boot guardian expected-state: {expected_state_path}")
+
+    service_target_root = mount_path / "etc" / "systemd" / "system"
+    _copy_file(
+        _resolve_service_source(source_root, "omarchy-firstboot.service"),
+        service_target_root / "omarchy-firstboot.service",
+    )
+    _copy_file(
+        _resolve_service_source(source_root, "boot-guardian.service"),
+        service_target_root / "boot-guardian.service",
+    )
+    actions.append("staged systemd units")
+
+    bin_root = mount_path / "usr" / "local" / "bin"
+    _copy_file(
+        _resolve_asset_script_source(source_root, "firstboot-wrapper.sh"),
+        bin_root / "omarchy-firstboot-wrapper.sh",
+        executable=True,
+    )
+    _copy_file(
+        _resolve_asset_script_source(source_root, "omarchy-boot-check.sh"),
+        bin_root / "omarchy-boot-check",
+        executable=True,
+    )
+    _copy_file(
+        _resolve_asset_script_source(source_root, "omarchy-boot-repair.sh"),
+        bin_root / "omarchy-boot-repair",
+        executable=True,
+    )
+    _copy_file(
+        _resolve_asset_script_source(source_root, "boot-guardian.sh"),
+        bin_root / "omarchy-boot-guardian",
+        executable=True,
+    )
+    actions.append("staged firstboot and boot guardian wrappers")
+
+    _run_checked(runner, ["arch-chroot", mount_root, "systemctl", "enable", "omarchy-firstboot.service"])
+    _run_checked(runner, ["arch-chroot", mount_root, "systemctl", "enable", "boot-guardian.service"])
+    actions.append("enabled omarchy-firstboot.service and boot-guardian.service")
+
+    return tuple(actions)
+
+
 def execute_install_plan(
     plan_payload: PlanContract | dict | None = None,
     *,
@@ -496,6 +739,7 @@ def execute_install_plan(
     staged_files: list[str] = []
     commands: list[str] = []
     plan_contract: PlanContract | None = None
+    archinstall_config_path_final: Path | None = None
 
     if plan_payload is not None:
         plan_contract = plan_payload if isinstance(plan_payload, PlanContract) else validate_plan_contract(plan_payload)
@@ -602,6 +846,7 @@ def execute_install_plan(
                         wipe_efi=False,
                     )
                     stage_live_runtime_artifact(root, "runtime/archinstall-config.json", archinstall_config)
+                    archinstall_config_path_final = archinstall_config_path
                     _run_checked(active_runner, ["archinstall", "--config", str(archinstall_config_path)])
                     install_log_lines.append(f"EXECUTED: archinstall --config {archinstall_config_path}")
                 except Exception as exc:
@@ -667,6 +912,7 @@ def execute_install_plan(
                         "runtime/archinstall-config.json",
                         archinstall_config,
                     )
+                    archinstall_config_path_final = archinstall_config_path
                     staged_files.append(str(archinstall_config_path))
                     _run_checked(active_runner, ["archinstall", "--config", str(archinstall_config_path)])
                     install_log_lines.append(f"EXECUTED: archinstall --config {archinstall_config_path}")
@@ -677,6 +923,24 @@ def execute_install_plan(
                     install_log_lines.append(f"ERROR: {exc}")
                     raise
 
+        if not dry_run:
+            install_mode = "ventoy-plan" if plan_contract is not None else "standalone"
+            try:
+                postinstall_actions = _stage_installed_system_runtime(
+                    mount_root=mount_root,
+                    install_mode=install_mode,
+                    target_disk_path=target_disk_path,
+                    target_partition_path=target_partition_path,
+                    efi_partition_path=efi_partition_path,
+                    plan_contract=plan_contract,
+                    archinstall_config_path=archinstall_config_path_final,
+                    runner=active_runner,
+                )
+            except (LiveInstallError, OSError, ValueError) as exc:
+                raise LiveInstallError(f"Post-install staging failed: {exc}") from exc
+            for action in postinstall_actions:
+                install_log_lines.append(f"POST-INSTALL: {action}")
+
     except Exception:
         failed = True
         status = "failed"
@@ -686,12 +950,22 @@ def execute_install_plan(
         install_log_path = str(install_log)
         if install_log_path not in staged_files:
             staged_files.append(install_log_path)
-        if not failed and cleanup_after_success:
-            removed_paths = cleanup_live_stage(root, residual_paths=("runtime/install.log",))
-            status = "completed"
-        elif not failed:
-            removed_paths = tuple()
-            status = "staged"
+        if not failed:
+            if cleanup_after_success:
+                removed_paths = cleanup_live_stage(root, residual_paths=("runtime/install.log",))
+            else:
+                removed_paths = tuple()
+
+            if dry_run:
+                if plan_contract is not None:
+                    status = "dry-run-completed" if cleanup_after_success else "dry-run-staged"
+                else:
+                    status = "whole-disk-dry-run-completed" if cleanup_after_success else "whole-disk-dry-run-staged"
+            else:
+                if plan_contract is not None:
+                    status = "completed" if cleanup_after_success else "installed"
+                else:
+                    status = "whole-disk-completed" if cleanup_after_success else "whole-disk-installed"
 
     return LiveInstallExecutionResult(
         status=status,

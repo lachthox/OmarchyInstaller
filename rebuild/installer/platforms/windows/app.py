@@ -15,17 +15,19 @@ from textual.binding import Binding
 from textual.containers import Vertical
 from textual.widgets import Footer, Header, Static
 
-from ...shared import PLAN_SCHEMA_VERSION, validate_plan_contract
+from ...shared import PLAN_SCHEMA_VERSION, PlanContract, validate_plan_contract
 from .backup import DEFAULT_MIN_FREE_BYTES
 from .checks import run_windows_preflight
 from .disk_probe import DiskProbeError, collect_disk_probe_snapshot
 from .flow import FlowStepResult, WindowsMigrationFlow
 from .handoff import (
     VentoyError,
+    VentoyPayloadResult,
     find_ventoy_cli_path,
     stage_ventoy_handoff_bundle,
     validate_ventoy_usb,
 )
+from .partition_prep import apply_partition_metadata_to_plan
 
 
 EXIT_QUIT = 0
@@ -121,6 +123,7 @@ class WindowsTuiConfig:
     backup_fallback_destination: str | None = None
     ventoy_disk_number: int | None = None
     source_iso_path: str | None = None
+    wifi_handoff_profile: dict[str, Any] | None = None
     yolo_mode: bool = False
     yolo_approved_failures: tuple[str, ...] = ()
 
@@ -174,6 +177,7 @@ class WindowsPrepApp(App[int]):
         self._ventoy_cli_path = ""
         self._ventoy_summary = "Ventoy USB not validated yet."
         self._ventoy_validated = False
+        self._ventoy_payload_result: VentoyPayloadResult | None = None
         self._flow = WindowsMigrationFlow(
             apply_changes=self._config.apply_changes,
             target_free_gib=max(40, int(self._config.target_free_gib)),
@@ -219,7 +223,73 @@ class WindowsPrepApp(App[int]):
             blockers.append("Partition prep has not completed successfully.")
         if self._config.ventoy_disk_number is not None and not self._ventoy_validated:
             blockers.append("Configured Ventoy USB has not been validated.")
+        if self._config.ventoy_disk_number is not None and not (self._config.source_iso_path or "").strip():
+            blockers.append("Source ISO path is required to write Ventoy handoff payload.")
         return len(blockers) == 0, blockers
+
+    def _build_handoff_plan_contract(self) -> PlanContract:
+        snapshot = collect_disk_probe_snapshot()
+        user_choices = {
+            "hostname": (os.environ.get("COMPUTERNAME", "") or "").strip().lower(),
+            "username": (os.environ.get("USERNAME", "") or "").strip().lower(),
+            "timezone": "UTC",
+            "locale": "en_US",
+            "kb_layout": "us",
+            "bootloader": "limine",
+        }
+        plan_payload = {
+            "meta": {
+                "schema_version": PLAN_SCHEMA_VERSION,
+                "producer_version": WINDOWS_PREP_VERSION,
+                "generated_at_utc": _now_utc(),
+                "build_commit": _git_capture("rev-parse", "HEAD"),
+                "release_tag": _git_capture("describe", "--tags", "--exact-match"),
+            },
+            "disk_identity": snapshot.disk_identity.model_dump(),
+            "efi_identity": snapshot.efi_identity.model_dump(),
+            "windows_partition_identity": snapshot.windows_partition_identity.model_dump(),
+            "prepared_free_space_range": snapshot.prepared_free_space_range.model_dump(),
+            "user_choices": user_choices,
+            "network": None,
+            "omarchy_assumptions": {
+                "install_mode": "ventoy-plan",
+                "windows_flow_mode": "python-tui",
+            },
+            "compatibility": {
+                "schema_version": PLAN_SCHEMA_VERSION,
+                "minimum_windows_prep_version": WINDOWS_PREP_VERSION,
+                "minimum_live_runtime_version": LIVE_RUNTIME_MIN_VERSION,
+                "required_plan_schema_version": PLAN_SCHEMA_VERSION,
+                "bootstrap_expectation": "post-install-only",
+                "ventoy_handoff_path": "omarchy/plan.json",
+            },
+        }
+        plan = validate_plan_contract(plan_payload)
+        return apply_partition_metadata_to_plan(plan, snapshot)
+
+    def _stage_handoff_payload(self) -> VentoyPayloadResult:
+        if self._config.ventoy_disk_number is None:
+            raise ValueError("Ventoy disk number is required for handoff payload staging.")
+        source_iso = (self._config.source_iso_path or "").strip()
+        if not source_iso:
+            raise ValueError("Source ISO path is required for handoff payload staging.")
+        source_iso_path = Path(source_iso)
+        if not source_iso_path.exists() or not source_iso_path.is_file():
+            raise ValueError(f"Source ISO does not exist or is not a file: {source_iso}")
+
+        validation = validate_ventoy_usb(self._config.ventoy_disk_number, payload_paths=[source_iso])
+        plan_contract = self._build_handoff_plan_contract()
+        backup_info = self._backup_result.payload if self._backup_result and self._backup_result.payload else None
+        wifi_profile = self._config.wifi_handoff_profile if self._config.wifi_handoff_profile else None
+
+        return stage_ventoy_handoff_bundle(
+            validation.data_root,
+            source_iso,
+            plan_contract,
+            wifi_profile=wifi_profile,
+            backup_info=backup_info,
+            verify_readability=True,
+        )
 
     def _unapproved_failures(self) -> list[dict[str, str]]:
         failures = [check for check in self._checks if check.get("status") == "fail"]
@@ -411,11 +481,17 @@ class WindowsPrepApp(App[int]):
 
         if step == "summary":
             blocker_lines = "\n".join(f"- {item}" for item in blockers) if blockers else "- none"
+            handoff_line = (
+                f"Handoff payload files: {len(self._ventoy_payload_result.written_files)}"
+                if self._ventoy_payload_result
+                else "Handoff payload files: not staged"
+            )
             return "\n".join(
                 [
                     "Summary",
                     mode_line,
                     f"Ready to continue: {'Yes' if ready else 'No'}",
+                    handoff_line,
                     "",
                     "Blockers:",
                     blocker_lines,
@@ -491,7 +567,12 @@ class WindowsPrepApp(App[int]):
             return "Network Handoff\nWindows-side Wi-Fi handoff is optional in this flow.\nNo blocking action in this stage."
         if stage == "summary":
             bl = "\n".join(f"- {b}" for b in blockers) if blockers else "- none"
-            return f"Summary\n{mode_line}\nCompatibility: {'READY' if self._can_continue else 'BLOCKED'}\nBackup: {backup}\nPartition: {partition}\nVentoy: {self._ventoy_summary}\n\nReady: {ready}\nBlockers:\n{bl}"
+            payload_line = (
+                "Handoff payload: " + ", ".join(self._ventoy_payload_result.written_files)
+                if self._ventoy_payload_result
+                else "Handoff payload: not staged"
+            )
+            return f"Summary\n{mode_line}\nCompatibility: {'READY' if self._can_continue else 'BLOCKED'}\nBackup: {backup}\nPartition: {partition}\nVentoy: {self._ventoy_summary}\n{payload_line}\n\nReady: {ready}\nBlockers:\n{bl}"
         if stage == "confirm":
             target = "legacy PowerShell flow" if self._config.launch_legacy_on_continue else "Python-only completion"
             return f"Confirm\nContinue target: {target}\nReady: {ready}\n\nPress C to continue."
@@ -737,7 +818,24 @@ class WindowsPrepApp(App[int]):
         if not ready:
             self._last_error = blockers[0]
             self._set_status(self._last_error)
-            self._set_stage(9)
+            self._set_stage(WINDOWS_STAGES.index("error_handling"))
+            return
+
+        if self._config.ventoy_disk_number is not None:
+            try:
+                self._ventoy_payload_result = self._stage_handoff_payload()
+            except (DiskProbeError, OSError, ValueError, VentoyError) as exc:
+                self._last_error = f"Failed to write Ventoy handoff payload: {exc}"
+                self._append_note(self._last_error)
+                self._set_status(self._last_error)
+                self._set_stage(WINDOWS_STAGES.index("error_handling"))
+                return
+            self._append_note(f"Ventoy handoff bundle written: {len(self._ventoy_payload_result.written_files)} files.")
+
+        if self._config.ventoy_disk_number is not None and self._ventoy_payload_result is None:
+            self._last_error = "Ventoy handoff payload missing after staging step."
+            self._set_status(self._last_error)
+            self._set_stage(WINDOWS_STAGES.index("error_handling"))
             return
         if self._config.launch_legacy_on_continue:
             self._set_status("Continuing to legacy PowerShell flow.")
