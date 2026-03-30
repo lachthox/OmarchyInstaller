@@ -58,6 +58,8 @@ def detect_git_tag(workspace: Path) -> str:
 
 def normalize_version(raw: str) -> VersionStamp:
     digits = [int(part) for part in re.findall(r"\d+", raw)]
+    # Windows VERSIONINFO fields are 16-bit components.
+    digits = [max(0, min(part, 65535)) for part in digits]
     while len(digits) < 4:
         digits.append(0)
     digits = digits[:4]
@@ -252,4 +254,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
