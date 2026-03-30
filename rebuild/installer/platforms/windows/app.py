@@ -88,6 +88,7 @@ class WindowsPrepApp(App[int]):
     #title { margin-bottom: 1; text-style: bold; color: #f8fafc; }
     #stages { margin-bottom: 1; color: #cbd5e1; }
     #content { height: 1fr; border: round #334155; padding: 1 2; background: #111827; }
+    #status { color: #93c5fd; margin-top: 1; }
     #hints { color: #94a3b8; margin-top: 1; }
     """
 
@@ -123,6 +124,7 @@ class WindowsPrepApp(App[int]):
         self._snapshot_summary = "Disk snapshot not collected yet."
         self._notes: list[str] = []
         self._last_error = ""
+        self._status_message = "Ready."
         self._backup_result: FlowStepResult | None = None
         self._partition_result: FlowStepResult | None = None
         self._ventoy_cli_path = ""
@@ -141,6 +143,7 @@ class WindowsPrepApp(App[int]):
             yield Static("Omarchy Windows Prep (Python TUI)", id="title")
             yield Static("", id="stages")
             yield Static("", id="content")
+            yield Static("", id="status")
             yield Static(
                 "Keys: [1-0] stage [N/P] nav [R] refresh [A] mode [B] backup [S] partition [V] ventoy [C] continue [L] legacy [Q] quit",
                 id="hints",
@@ -250,9 +253,14 @@ class WindowsPrepApp(App[int]):
     def _render(self) -> None:
         self.query_one("#stages", Static).update(self._render_stage_bar())
         self.query_one("#content", Static).update(self._content())
+        self.query_one("#status", Static).update(f"Status: {self._status_message}")
+
+    def _set_status(self, message: str) -> None:
+        self._status_message = message
 
     def _set_stage(self, idx: int) -> None:
         self._stage_idx = max(0, min(idx, len(WINDOWS_STAGES) - 1))
+        self._set_status(f"Stage: {WINDOWS_STAGES[self._stage_idx]}.")
         self._render()
 
     def action_refresh_runtime(self) -> None:
@@ -273,37 +281,49 @@ class WindowsPrepApp(App[int]):
             self._snapshot_summary = "Resolve FAIL checks before proceeding."
         self._last_error = ""
         self._append_note(f"Preflight refresh: {'ready' if self._can_continue else 'blocked'}")
+        self._set_status("Preflight refreshed.")
         self._render()
 
     def action_toggle_apply_mode(self) -> None:
         self._flow.apply_changes = not self._flow.apply_changes
         self._append_note(f"Mode switched to {self._mode()}")
+        self._set_status(f"Mode switched to {self._mode()}.")
         self._render()
 
     def action_run_backup(self) -> None:
         if not self._can_continue:
-            self.notify("Preflight is blocked. Resolve FAIL checks first.", severity="error")
+            message = "Blocked: resolve FAIL checks in compatibility first."
+            self._set_status(message)
+            self.notify(message, severity="error")
             return
         self._backup_result = self._flow.run_backup()
         self._last_error = "" if self._backup_result.ok else self._backup_result.summary
         self._append_note(self._backup_result.summary)
+        self._set_status(self._backup_result.summary)
         self._render()
 
     def action_run_partition(self) -> None:
         if not self._can_continue:
-            self.notify("Preflight is blocked. Resolve FAIL checks first.", severity="error")
+            message = "Blocked: resolve FAIL checks in compatibility first."
+            self._set_status(message)
+            self.notify(message, severity="error")
             return
         if not self._backup_result or not self._backup_result.ok:
-            self.notify("Run backup first.", severity="warning")
+            message = "Blocked: run backup first."
+            self._set_status(message)
+            self.notify(message, severity="warning")
             return
         self._partition_result = self._flow.run_partition_prep()
         self._last_error = "" if self._partition_result.ok else self._partition_result.summary
         self._append_note(self._partition_result.summary)
+        self._set_status(self._partition_result.summary)
         self._render()
 
     def action_validate_ventoy(self) -> None:
         if self._config.ventoy_disk_number is None:
-            self.notify("No Ventoy disk number configured.", severity="warning")
+            message = "Ventoy skipped: no disk number configured."
+            self._set_status(message)
+            self.notify(message, severity="warning")
             return
         payload_paths: list[str] = []
         if self._config.source_iso_path:
@@ -317,10 +337,12 @@ class WindowsPrepApp(App[int]):
             self._ventoy_summary = f"Validated {validation.data_root}; free {free_gib} GiB, required {need_gib} GiB"
             self._ventoy_validated = True
             self._last_error = ""
+            self._set_status("Ventoy validation passed.")
         except VentoyError as exc:
             self._ventoy_summary = f"Validation failed: {exc}"
             self._ventoy_validated = False
             self._last_error = str(exc)
+            self._set_status(self._ventoy_summary)
         self._append_note(self._ventoy_summary)
         self._render()
 
@@ -334,11 +356,14 @@ class WindowsPrepApp(App[int]):
         ready, blockers = self._flow_readiness()
         if not ready:
             self._last_error = blockers[0]
+            self._set_status(self._last_error)
             self._set_stage(9)
             return
         if self._config.launch_legacy_on_continue:
+            self._set_status("Continuing to legacy PowerShell flow.")
             self.exit(EXIT_LAUNCH_LEGACY)
             return
+        self._set_status("Windows Python prep flow completed.")
         self.exit(EXIT_QUIT)
 
     def action_next_stage(self) -> None: self._set_stage((self._stage_idx + 1) % len(WINDOWS_STAGES))
