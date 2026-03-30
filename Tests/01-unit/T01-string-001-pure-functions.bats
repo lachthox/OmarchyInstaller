@@ -228,6 +228,34 @@ setup() {
 }
 
 # ===========================================================================
+# extract_block_device_path
+# ===========================================================================
+
+@test "extract_block_device_path: keeps a valid absolute device path" {
+  run extract_block_device_path "/dev/nvme0n1p1"
+  assert_success
+  assert_output "/dev/nvme0n1p1"
+}
+
+@test "extract_block_device_path: normalizes dev path missing leading slash" {
+  run extract_block_device_path "dev/sda1"
+  assert_success
+  assert_output "/dev/sda1"
+}
+
+@test "extract_block_device_path: prefixes bare partition token with /dev" {
+  run extract_block_device_path "sda1"
+  assert_success
+  assert_output "/dev/sda1"
+}
+
+@test "extract_block_device_path: strips control characters around device path" {
+  run extract_block_device_path $'\r\t/dev/sda1\n'
+  assert_success
+  assert_output "/dev/sda1"
+}
+
+# ===========================================================================
 # cpu_ucode_pkg  (tested via redefined version using fixture files)
 #
 # The original function hardcodes /proc/cpuinfo; we replicate its exact

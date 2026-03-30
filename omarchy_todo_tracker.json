@@ -1,0 +1,537 @@
+{
+  "schema_version": "1.0.0",
+  "schema": {
+    "required_fields": [
+      "Section",
+      "Task Number",
+      "Task Description",
+      "Assingee",
+      "Additional Info",
+      "Completion Flag",
+      "Completion Comment"
+    ],
+    "assingee_allowed_values": [
+      "Copilot",
+      "Codex"
+    ],
+    "task_schema": {
+      "type": "object",
+      "required": [
+        "Section",
+        "Task Number",
+        "Task Description",
+        "Assingee",
+        "Additional Info",
+        "Completion Flag",
+        "Completion Comment"
+      ],
+      "properties": {
+        "Section": {
+          "type": "string"
+        },
+        "Task Number": {
+          "type": "string"
+        },
+        "Task Description": {
+          "type": "string"
+        },
+        "Assingee": {
+          "type": "string",
+          "enum": [
+            "Copilot",
+            "Codex"
+          ]
+        },
+        "Additional Info": {
+          "type": "string"
+        },
+        "Completion Flag": {
+          "type": "boolean"
+        },
+        "Completion Comment": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "tasks": [
+    {
+      "Section": "GitHub Coordination",
+      "Task Number": "GH-001",
+      "Task Description": "Set up the master GitHub project and workflow states.",
+      "Assingee": "Copilot",
+      "Additional Info": "Create project OmarchyInstaller Rebuild with statuses Backlog/Ready/In Progress/Blocked/In Review/Done and fields Layer, Workstream, Priority, Risk, Dependency State, Agent Group.",
+      "Completion Flag": true,
+      "Completion Comment": "Verified live GitHub project #1 (OmarchyInstaller Rebuild) exists and exposes the required project fields, including Rebuild Status, Layer, Workstream, Priority, Risk, Dependency State, and Agent Group. Coordination docs and status ledger already record the setup as complete."
+    },
+    {
+      "Section": "GitHub Coordination",
+      "Task Number": "GH-002",
+      "Task Description": "Create the parent issue hierarchy for each major domain.",
+      "Assingee": "Copilot",
+      "Additional Info": "Parents for Foundation, Shared, Windows, Ventoy, Arch Live, Omarchy Handoff, Boot Guardian, Build/Release, Docs.",
+      "Completion Flag": true,
+      "Completion Comment": "Verified the GitHub parent issue hierarchy already exists: parent domains #11, #7, #6, #10, #4, #3, #5, #9, and #8 are present, with the documented child chain #12, #16, #13, #14, and #15 recorded in rebuild/docs/issue-hierarchy.md."
+    },
+    {
+      "Section": "GitHub Coordination",
+      "Task Number": "GH-003",
+      "Task Description": "Create reusable implementation issue template.",
+      "Assingee": "Copilot",
+      "Additional Info": "Template sections: Goal, Scope, Allowed Files, Forbidden Files, Inputs, Outputs, Rules, Acceptance Criteria, Out of Scope.",
+      "Completion Flag": true,
+      "Completion Comment": "Verified the reusable implementation issue template already exists at .github/ISSUE_TEMPLATE/rebuild-implementation.md with the required Goal, Scope, Allowed files, Forbidden files, Inputs, Outputs, Rules, Acceptance criteria, and Out of scope sections."
+    },
+    {
+      "Section": "GitHub Coordination",
+      "Task Number": "GH-004",
+      "Task Description": "Define labels, milestones, and PR discipline policies.",
+      "Assingee": "Copilot",
+      "Additional Info": "Include layer/type/risk labels, milestones 1-8, one PR per scoped slice, extra review for EFI/boot/partition/security-critical changes.",
+      "Completion Flag": true,
+      "Completion Comment": "Verified the repository already has the required rebuild labels, the eight milestones, and the PR template discipline in .github/PULL_REQUEST_TEMPLATE.md covering linked issue, workstream fields, allowed/forbidden files, and acceptance checks."
+    },
+    {
+      "Section": "GitHub Coordination",
+      "Task Number": "GH-005",
+      "Task Description": "Create coordination docs and truth ledger in rebuild/docs.",
+      "Assingee": "Copilot",
+      "Additional Info": "Create STATUS.md, ownership map, dependency map. Keep this disjoint from architecture/release docs.",
+      "Completion Flag": true,
+      "Completion Comment": "Verified the coordination docs already exist in rebuild/docs/: STATUS.md, ownership-map.md, and dependency-map.md. The status ledger also records the coordination layer as complete."
+    },
+    {
+      "Section": "GitHub Coordination",
+      "Task Number": "GH-006",
+      "Task Description": "Mark downstream work blocked whenever a prerequisite layer is incomplete.",
+      "Assingee": "Copilot",
+      "Additional Info": "Do not guess or fake missing dependencies; expose blocked state in project tracking and issue hierarchy.",
+      "Completion Flag": true,
+      "Completion Comment": "Verified blocked dependency handling is already documented and enforced: rebuild/docs/dependency-map.md and rebuild/docs/issue-hierarchy.md mark downstream slices blocked until upstream contracts complete, and the tracker reflects blocked downstream tasks."
+    },
+    {
+      "Section": "GitHub Coordination",
+      "Task Number": "GH-007",
+      "Task Description": "Create the single kickoff issue for rebuild/ containment and coordination docs.",
+      "Assingee": "Copilot",
+      "Additional Info": "This should be the first issue and must explicitly create rebuild/, rebuild/docs/, STATUS.md, ownership docs, and dependency docs.",
+      "Completion Flag": true,
+      "Completion Comment": "Verified the kickoff issue already exists as #12 with the expected containment and coordination scope, including rebuild/ output, STATUS.md, ownership/dependency docs, and issue/pull request templates."
+    },
+    {
+      "Section": "GitHub Coordination",
+      "Task Number": "GH-008",
+      "Task Description": "Create the scoped child issues under each parent domain.",
+      "Assingee": "Copilot",
+      "Additional Info": "Child issues must be tightly scoped and reviewable, not merged into one flat pile.",
+      "Completion Flag": true,
+      "Completion Comment": "Created the missing child issues for the remaining parent domains: #17 under #3, #18 under #5, #19 under #9, and #20 under #8. Added them to project #1 and updated rebuild/docs/issue-hierarchy.md and rebuild/docs/STATUS.md to keep the hierarchy ledger current."
+    },
+    {
+      "Section": "GitHub Coordination",
+      "Task Number": "GH-009",
+      "Task Description": "Create docs/coordination stage briefs.",
+      "Assingee": "Copilot",
+      "Additional Info": "Stage briefs should make each implementation stage explicit enough to execute without guessing.",
+      "Completion Flag": true,
+      "Completion Comment": "Created rebuild/docs/stage-briefs.md with the mandatory Stage 0 through Stage 12 execution order and added it to rebuild/docs/STATUS.md so the coordination ledger stays current."
+    },
+    {
+      "Section": "Containment & Architecture",
+      "Task Number": "ARC-001",
+      "Task Description": "Start all rebuild work inside rebuild/ containment area.",
+      "Assingee": "Copilot",
+      "Additional Info": "Mandatory first principle; do not rewrite legacy in place initially.",
+      "Completion Flag": true,
+      "Completion Comment": "Completed containment kickoff by formalizing rebuild-only boundaries in rebuild/docs/containment-boundary.md and linking it from rebuild/README.md and rebuild/docs/STATUS.md."
+    },
+    {
+      "Section": "Containment & Architecture",
+      "Task Number": "ARC-002",
+      "Task Description": "Document the four-layer architecture and ownership boundaries.",
+      "Assingee": "Codex",
+      "Additional Info": "Layer 0 Build/Release, Layer 1 Windows Prep, Layer 2 Arch Live, Layer 3 Installed System protections.",
+      "Completion Flag": true,
+      "Completion Comment": "Documented the four-layer architecture and ownership boundaries in rebuild/docs/architecture.md, including Layer 0 Build/Release through Layer 3 Installed-System Protections."
+    },
+    {
+      "Section": "Containment & Architecture",
+      "Task Number": "ARC-003",
+      "Task Description": "Preserve existing proven repo concepts while rebuilding.",
+      "Assingee": "Copilot",
+      "Additional Info": "Preserve GitHub ISO model, Ventoy CLI flow, live auto-start concept, and post-reboot Omarchy timing with added safeguards.",
+      "Completion Flag": true,
+      "Completion Comment": "Captured preserved proven concepts in rebuild/docs/architecture.md: GitHub ISO model, Ventoy transport flow, live auto-start behavior, and post-reboot Omarchy timing with safeguards."
+    },
+    {
+      "Section": "Containment & Architecture",
+      "Task Number": "ARC-004",
+      "Task Description": "Enforce core design principles and runtime boundaries.",
+      "Assingee": "Copilot",
+      "Additional Info": "Python orchestrates; native OS tools execute system ops; Omarchy is post-install only; Ventoy is transport model; deterministic safety-first behavior.",
+      "Completion Flag": true,
+      "Completion Comment": "Defined core design principles and runtime boundaries in rebuild/docs/architecture.md, including Python orchestration boundaries, native tool execution boundaries, Omarchy post-install rule, and safety-first deterministic behavior."
+    },
+    {
+      "Section": "Containment & Architecture",
+      "Task Number": "ARC-005",
+      "Task Description": "Define the target repo structure and file ownership boundaries in the architecture docs.",
+      "Assingee": "Codex",
+      "Additional Info": "Document where shared, platform-specific, tools, assets, and workflow files live so downstream work is not ambiguous.",
+      "Completion Flag": true,
+      "Completion Comment": "Defined target repo structure and file ownership boundaries in rebuild/docs/architecture.md, including shared/platform-specific/tooling/assets/workflow placement and structure intent."
+    },
+    {
+      "Section": "Repo Structure & Docs",
+      "Task Number": "STR-001",
+      "Task Description": "Create the concrete rebuild/ containment tree.",
+      "Assingee": "Codex",
+      "Additional Info": "Create the new architecture under rebuild/ without mixing it into legacy files.",
+      "Completion Flag": true,
+      "Completion Comment": "Created the concrete containment tree under rebuild/installer and rebuild/assets with directory boundaries aligned to architecture and ownership docs."
+    },
+    {
+      "Section": "Repo Structure & Docs",
+      "Task Number": "STR-002",
+      "Task Description": "Create the shared and platform-specific Python module families.",
+      "Assingee": "Codex",
+      "Additional Info": "Cover shared models/validation/versioning, Windows platform modules, Linux live modules, and installed-system modules.",
+      "Completion Flag": true,
+      "Completion Comment": "Added shared and platform-specific Python module families under rebuild/installer/shared, platforms/windows, platforms/linux_live, platforms/installed_system, and installer/ui with scaffold entrypoints."
+    },
+    {
+      "Section": "Repo Structure & Docs",
+      "Task Number": "STR-003",
+      "Task Description": "Create required assets, templates, and service/script files.",
+      "Assingee": "Codex",
+      "Additional Info": "Include systemd units, helper shell wrappers where needed, JSON templates, ISO payload assets, and startup assets.",
+      "Completion Flag": true,
+      "Completion Comment": "Added required assets and templates: systemd units, shell wrappers, JSON templates, ISO payload assets, and startup asset directories under rebuild/assets."
+    },
+    {
+      "Section": "Repo Structure & Docs",
+      "Task Number": "STR-004",
+      "Task Description": "Create repository metadata and dependency scaffold files.",
+      "Assingee": "Codex",
+      "Additional Info": "Add rebuild/README.md, pyproject.toml, requirements.txt, and requirements-dev.txt as first-class tracked tasks.",
+      "Completion Flag": true,
+      "Completion Comment": "Confirmed rebuild metadata scaffolding with rebuild/README.md, pyproject.toml, requirements.txt, and new requirements-dev.txt, including synced dev dependency group."
+    },
+    {
+      "Section": "Layer 0 Build/Release",
+      "Task Number": "L0-001",
+      "Task Description": "Implement Arch ISO CI pipeline.",
+      "Assingee": "Codex",
+      "Additional Info": "Build customized ISO with Python runtime, live installer app, startup hooks, required packages, version metadata.",
+      "Completion Flag": true,
+      "Completion Comment": "Implemented Arch ISO CI pipeline with .github/workflows/rebuild-iso.yml invoking rebuild/tools/build_iso_pipeline.py. Pipeline stages Python runtime payload files, startup-hook references, required system package manifest, and versioned build metadata manifest; validated via local dry-run output generation."
+    },
+    {
+      "Section": "Layer 0 Build/Release",
+      "Task Number": "L0-002",
+      "Task Description": "Implement Windows EXE CI pipeline using PyInstaller.",
+      "Assingee": "Codex",
+      "Additional Info": "Produce OmarchyInstaller.exe with stable packaging inputs and version stamping; no user Python dependency.",
+      "Completion Flag": true,
+      "Completion Comment": "Implemented Windows EXE CI pipeline via .github/workflows/rebuild-windows-exe.yml and rebuild/tools/build_windows_exe.py. Pipeline packages OmarchyInstaller.exe with PyInstaller from stable inputs (launcher + bundled windows-prep.ps1), applies version stamping, and emits checksum + build manifest metadata; validated with local dry-run."
+    },
+    {
+      "Section": "Layer 0 Build/Release",
+      "Task Number": "L0-003",
+      "Task Description": "Implement release pipeline and metadata publishing.",
+      "Assingee": "Codex",
+      "Additional Info": "Publish ISO, EXE, checksums, release manifest, compatibility manifest (build/commit/schema/ISO/EXE/compat rules/bootstrap expectations).",
+      "Completion Flag": true,
+      "Completion Comment": "Implemented release pipeline and metadata publishing via .github/workflows/rebuild-release.yml and rebuild/tools/publish_release.py. Pipeline now emits release_manifest.json, compatibility_manifest.json, and consolidated sha256sums, and supports optional GitHub Release asset publication for ISO + EXE + metadata artifacts. Validated end-to-end with local dry-run artifact chain."
+    },
+    {
+      "Section": "Layer 0 Build/Release",
+      "Task Number": "L0-004",
+      "Task Description": "Implement rebuild trigger matrix and freshness policy.",
+      "Assingee": "Copilot",
+      "Additional Info": "ISO-area changes rebuild ISO, EXE-area changes rebuild EXE, shared schema/version/compat changes rebuild both.",
+      "Completion Flag": true,
+      "Completion Comment": "Implemented the rebuild trigger matrix and freshness policy by adding shared-contract path coverage to .github/workflows/rebuild-windows-exe.yml and .github/workflows/rebuild-release.yml, and documenting the matrix and freshness rule in rebuild/docs/release-process.md and rebuild/docs/STATUS.md."
+    },
+    {
+      "Section": "Layer 0 Build/Release",
+      "Task Number": "L0-005",
+      "Task Description": "Create the GitHub Actions workflow files for ISO build, EXE build, release publishing, and rebuild triggers.",
+      "Assingee": "Copilot",
+      "Additional Info": "Explicitly create .github/workflows/* instead of leaving workflow wiring implied.",
+      "Completion Flag": true,
+      "Completion Comment": "Verified the required workflow files already exist under .github/workflows/: rebuild-iso.yml, rebuild-windows-exe.yml, and rebuild-release.yml. They provide the ISO build, Windows EXE build, release publishing, and trigger wiring for the rebuild layer, so no duplicate workflow files were needed."
+    },
+    {
+      "Section": "Shared Contracts",
+      "Task Number": "SH-001",
+      "Task Description": "Implement shared schema/models/compat modules.",
+      "Assingee": "Codex",
+      "Additional Info": "Use Pydantic for Windows producer + Arch consumer validation. Include versioning, compatibility, disk identity, network models.",
+      "Completion Flag": true,
+      "Completion Comment": "Implemented shared schema/models/compat modules in rebuild/installer/shared with strict Pydantic contracts for plan blocks, disk/partition/free-space identity, network profile, compatibility contract, plus version parsing/comparison and compatibility evaluation helpers."
+    },
+    {
+      "Section": "Shared Contracts",
+      "Task Number": "SH-002",
+      "Task Description": "Define plan.json as strict handoff contract and enforce compatibility checks.",
+      "Assingee": "Codex",
+      "Additional Info": "Required blocks: meta, disk identity, EFI identity, Windows partition identity, prepared free-space range, user choices, optional network, Omarchy assumptions.",
+      "Completion Flag": true,
+      "Completion Comment": "Defined plan.json as a strict handoff contract via PlanContract (meta, disk_identity, efi_identity, windows_partition_identity, prepared_free_space_range, user_choices, optional network, omarchy_assumptions, compatibility) and enforced compatibility checks with fail-closed validators and runtime compatibility assertion helpers."
+    },
+    {
+      "Section": "Layer 1 Windows Prep",
+      "Task Number": "WIN-001",
+      "Task Description": "Implement mandatory Windows safety checks and gating.",
+      "Assingee": "Codex",
+      "Additional Info": "Admin, supported Windows, UEFI, GPT, Secure Boot policy handling, BitLocker handling, Fast Startup handling, WinRE validation.",
+      "Completion Flag": true,
+      "Completion Comment": "Implemented deterministic Windows safety gate checks in rebuild/installer/platforms/windows/checks.py (admin, Windows version, UEFI mode, GPT style, Secure Boot policy warning, BitLocker state handling, Fast Startup gating, and WinRE validation) with structured pass/warn/fail reporting and can_proceed gating."
+    },
+    {
+      "Section": "Layer 1 Windows Prep",
+      "Task Number": "WIN-002",
+      "Task Description": "Implement disk/partition probe with stable identifiers.",
+      "Assingee": "Codex",
+      "Additional Info": "Capture disk serial/model/size, GPT GUIDs, partition sizes, start/end sectors, partition style, free-space region.",
+      "Completion Flag": true,
+      "Completion Comment": "Implemented stable disk/partition probing in rebuild/installer/platforms/windows/disk_probe.py with PowerShell collection, strict normalization into DiskIdentity/PartitionIdentity/FreeSpaceRange, EFI + Windows partition identity capture, sector bounds, and largest unallocated free-space region calculation. Exported probe entrypoints from rebuild/installer/platforms/windows/__init__.py."
+    },
+    {
+      "Section": "Layer 1 Windows Prep",
+      "Task Number": "WIN-003",
+      "Task Description": "Implement deterministic safety backup subsystem.",
+      "Assingee": "Codex",
+      "Additional Info": "Create EFI backup + BCD backup + disk metadata backup; Ventoy-first storage policy with alternate destination fallback and verification.",
+      "Completion Flag": true,
+      "Completion Comment": "Implemented deterministic Windows backup subsystem in rebuild/installer/platforms/windows/backup.py: Ventoy-first destination selection with fallback, writable/free-space validation, EFI tree copy via temporary mount, BCD export, disk metadata snapshot, artifact verification, and backup manifest generation. Added dry-run support and exported backup entrypoints via rebuild/installer/platforms/windows/__init__.py."
+    },
+    {
+      "Section": "Layer 1 Windows Prep",
+      "Task Number": "WIN-004",
+      "Task Description": "Implement Ventoy CLI creation/prep and safe USB validation.",
+      "Assingee": "Copilot",
+      "Additional Info": "Locate/acquire/execute Ventoy CLI, verify Ventoy structure, writability, and capacity for ISO + handoff + optional backup/log files.",
+      "Completion Flag": true,
+      "Completion Comment": "Implemented Ventoy CLI discovery/acquisition, Windows USB layout and capacity validation, deterministic Ventoy install orchestration, and a concrete handoff manifest contract in rebuild/installer/platforms/windows/handoff.py; exported the new APIs from rebuild/installer/platforms/windows/__init__.py and validated the edited files."
+    },
+    {
+      "Section": "Layer 1 Windows Prep",
+      "Task Number": "WIN-005",
+      "Task Description": "Implement ISO placement and handoff file generation on Ventoy.",
+      "Assingee": "Copilot",
+      "Additional Info": "Write ISO to deterministic path and omarchy/plan.json (+ optional wifi.json, install.log, windows-backup-info.json), then verify readability pre-reboot.",
+      "Completion Flag": true,
+      "Completion Comment": "Implemented deterministic Ventoy payload staging for the Windows prep flow: added ISO copy plus `omarchy/plan.json`, optional `omarchy/wifi.json`, `omarchy/install.log`, and `omarchy/windows-backup-info.json` writers with validation; exported the new helpers from the Windows platform package."
+    },
+    {
+      "Section": "Layer 1 Windows Prep",
+      "Task Number": "WIN-006",
+      "Task Description": "Implement Windows partition shrink policy.",
+      "Assingee": "Codex",
+      "Additional Info": "Only create unallocated space; do not create Linux filesystems/LUKS from Windows; write exact free-space metadata into plan.json.",
+      "Completion Flag": true,
+      "Completion Comment": "Implemented Windows partition shrink policy in rebuild/installer/platforms/windows/partition_prep.py. The flow only shrinks the Windows partition to create unallocated space, enforces supported resize bounds, verifies post-resize disk/EFI/Windows identities, and captures exact free-space metadata. Added apply_partition_metadata_to_plan() to inject disk/partition/free-space fields into a validated PlanContract for plan.json handoff."
+    },
+    {
+      "Section": "Layer 1 Windows Prep",
+      "Task Number": "WIN-007",
+      "Task Description": "Implement release/update/compatibility checks in Windows app.",
+      "Assingee": "Copilot",
+      "Additional Info": "Detect stale EXE, stale Ventoy ISO, schema mismatch, incompatible build pairing; warn or block per policy.",
+      "Completion Flag": true,
+      "Completion Comment": "Added release/update/compatibility gating to the Windows app: the PowerShell workflow now fetches latest release and compatibility manifests, compares the running EXE and cached Ventoy ISO against the release pairing, checks plan-schema compatibility, warns on non-packaged hosts, and blocks on stale or mismatched release metadata."
+    },
+    {
+      "Section": "Layer 1 Windows Prep",
+      "Task Number": "WIN-008",
+      "Task Description": "Implement Omarchy bootstrap location supply-chain health check on Windows side.",
+      "Assingee": "Copilot",
+      "Additional Info": "Validate expected bootstrap URL/path/repo contract and location drift; surface as warning/block event per severity.",
+      "Completion Flag": true,
+      "Completion Comment": "Added Windows-side Omarchy bootstrap location health checks to the PowerShell app. The app now reads release compatibility metadata, validates repo-origin resolution, and checks bootstrap path contracts, schema compatibility, and release pairing freshness with warn/block severity."
+    },
+    {
+      "Section": "Layer 1 Windows Prep",
+      "Task Number": "WIN-009",
+      "Task Description": "Implement Windows TUI flow screens and guardrails.",
+      "Assingee": "Copilot",
+      "Additional Info": "Welcome, compatibility, backup, partition prep, Ventoy USB, Secure Boot, network, summary, confirm, error handling.",
+      "Completion Flag": true,
+      "Completion Comment": "Replaced the placeholder screen scaffold with the ordered Windows flow screen contract: welcome, compatibility, backup, partition_prep, ventoy_usb, secure_boot, network, summary, confirm, and error_handling. Added a small contract guardrail to reject duplicate screen identifiers."
+    },
+    {
+      "Section": "Layer 2 Arch Live",
+      "Task Number": "L2-001",
+      "Task Description": "Implement custom Arch ISO runtime with Python auto-start entrypoint.",
+      "Assingee": "Codex",
+      "Additional Info": "Entry command: python3 /opt/omarchy-installer/main.py with required live dependencies.",
+      "Completion Flag": true,
+      "Completion Comment": "Implemented Arch live runtime bootstrap contract with canonical entrypoint python3 /opt/omarchy-installer/main.py and dependency checks. Added runtime entrypoint module rebuild/installer/main.py, updated ISO payload generation in rebuild/tools/build_iso_pipeline.py to emit wrapper/setup metadata aligned to the canonical path (with compat alias), expanded required runtime package list, updated release bootstrap expectations in rebuild/tools/publish_release.py, and replaced live-autostart payload script with a real launcher in rebuild/assets/scripts/live-autostart.sh."
+    },
+    {
+      "Section": "Layer 2 Arch Live",
+      "Task Number": "L2-002",
+      "Task Description": "Implement Ventoy handoff discovery and anti-stale plan validation.",
+      "Assingee": "Codex",
+      "Additional Info": "Locate omarchy/plan.json and verify schema/build/ISO compatibility before use.",
+      "Completion Flag": true,
+      "Completion Comment": "Implemented Ventoy handoff discovery and anti-stale plan validation in rebuild/installer/platforms/linux_live/discovery.py. Added candidate source discovery for omarchy/plan.json, strict PlanContract loading, schema/runtime compatibility enforcement, contract handoff-path verification, optional release/build freshness checks, runtime metadata context builder, and fail-closed selection of the newest valid plan. Exported discovery APIs via rebuild/installer/platforms/linux_live/__init__.py."
+    },
+    {
+      "Section": "Layer 2 Arch Live",
+      "Task Number": "L2-003",
+      "Task Description": "Implement machine identity matching against Windows plan.",
+      "Assingee": "Codex",
+      "Additional Info": "Validate serial/model/size, EFI GUID/PARTUUID, Windows GUID/PARTUUID, prepared free-space range. Abort on mismatch/ambiguity.",
+      "Completion Flag": true,
+      "Completion Comment": "Implemented Linux live machine-identity matching in rebuild/installer/platforms/linux_live/identity.py with lsblk probe support and fail-closed validation against plan.json. The matcher now validates disk serial/model/size identity, uniquely resolves EFI and Windows partitions via GUID/PARTUUID tokens, verifies prepared free-space sector range exactly, and aborts on mismatch or ambiguity. Exported identity APIs via rebuild/installer/platforms/linux_live/__init__.py."
+    },
+    {
+      "Section": "Layer 2 Arch Live",
+      "Task Number": "L2-004",
+      "Task Description": "Implement mandatory preflight summary before destructive actions.",
+      "Assingee": "Codex",
+      "Additional Info": "Summarize target disk, partitions, free-space, network state, intended Linux layout, boot policy, Omarchy handoff mode.",
+      "Completion Flag": true,
+      "Completion Comment": "Implemented mandatory Linux live preflight summary gate in rebuild/installer/platforms/linux_live/preflight.py. The summary now captures target disk/EFI/Windows partitions, validated free-space range, network state, intended Linux layout, boot policy, and Omarchy handoff mode/source. Added fail-closed blocker evaluation and assert_preflight_ready() to prevent destructive actions when required preflight fields are missing or unsafe. Exported APIs via rebuild/installer/platforms/linux_live/__init__.py."
+    },
+    {
+      "Section": "Layer 2 Arch Live",
+      "Task Number": "L2-005",
+      "Task Description": "Implement network fallback strategy in exact required order.",
+      "Assingee": "Codex",
+      "Additional Info": "Ethernet -> auto Wi-Fi handoff -> retry/rescan -> manual UI -> nmtui -> tethering hint -> offline/abort. Use NetworkManager + nmcli + nmtui.",
+      "Completion Flag": true,
+      "Completion Comment": "Implemented Linux live network fallback strategy in rebuild/installer/platforms/linux_live/network.py using NetworkManager commands in strict order: ethernet check, auto Wi-Fi handoff, retry/rescan loop, manual profile attempt, nmtui fallback, tethering hint, and offline abort. Added structured step-by-step result reporting with fail-closed abort enforcement via assert_network_ready(), and exported APIs through rebuild/installer/platforms/linux_live/__init__.py."
+    },
+    {
+      "Section": "Layer 2 Arch Live",
+      "Task Number": "L2-006",
+      "Task Description": "Implement Arch install orchestration and encryption policy.",
+      "Assingee": "Codex",
+      "Additional Info": "Create Linux partition only in prepared region, format/mount /mnt, run archinstall, deterministic encrypted layout (LUKS/Btrfs compatible).",
+      "Completion Flag": true,
+      "Completion Comment": "Implemented Linux install orchestration and encryption policy in rebuild/installer/platforms/linux_live/install.py. The executor now validates PlanContract input, enforces target disk + prepared free-space range usage, builds deterministic command plans for partition creation via sgdisk, LUKS2 open/format, Btrfs mkfs, /mnt mount, and archinstall invocation, and supports dry-run-safe staging with full command logs. Added concrete archinstall config generation and runtime partition discovery support for non-dry-run execution paths."
+    },
+    {
+      "Section": "Layer 2 Arch Live",
+      "Task Number": "L2-007",
+      "Task Description": "Implement Limine boot policy and Windows preservation checks.",
+      "Assingee": "Codex",
+      "Additional Info": "Final model UEFI->Limine->Omarchy/Windows, emergency Windows Boot Manager fallback, verify Windows EFI assets before finalization.",
+      "Completion Flag": true,
+      "Completion Comment": "Implemented Limine boot policy and Windows preservation checks in rebuild/installer/platforms/linux_live/boot_policy.py. Added EFI asset validation for Windows and Limine loaders, EFI entry/BootOrder discovery via efibootmgr, fail-closed boot policy summary with explicit blockers/warnings, and emergency Windows fallback path verification. Exported policy APIs through rebuild/installer/platforms/linux_live/__init__.py."
+    },
+    {
+      "Section": "Layer 2 Arch Live",
+      "Task Number": "L2-008",
+      "Task Description": "Implement Arch live TUI screens and interactive install flow.",
+      "Assingee": "Copilot",
+      "Additional Info": "Build preflight, network, install progress, finalize, and error screens for the live environment.",
+      "Completion Flag": true,
+      "Completion Comment": "Split the screen scaffold into an Arch live bootstrap contract and a Windows prep contract. The live bootstrap screen list now covers preflight, network, install_progress, finalize, and error, with duplicate-identifier guardrails, while the Windows prep flow retains its own ordered screen contract helper."
+    },
+    {
+      "Section": "Layer 2 Arch Live",
+      "Task Number": "L2-009",
+      "Task Description": "Implement Arch-live cleanup staging and residual removal.",
+      "Assingee": "Copilot",
+      "Additional Info": "Keep temporary runtime artifacts under a single staging path and remove them after successful install.",
+      "Completion Flag": true,
+      "Completion Comment": "Implemented single-root live-install staging and cleanup helpers in the Arch live layer. Added a deterministic stage root, explicit staging/cleanup helpers, and an execution result object so temporary runtime artifacts can be confined to one path and removed after success. Exported the helpers from the live package."
+    },
+    {
+      "Section": "Layer 3 Installed System",
+      "Task Number": "L3-001",
+      "Task Description": "Implement first-boot Omarchy wrapper and timing policy.",
+      "Assingee": "Codex",
+      "Additional Info": "Only after successful installed-Arch boot + login. Never from Windows/WSL/live ISO/partial install.",
+      "Completion Flag": true,
+      "Completion Comment": "Implemented installed-system first-boot timing policy and wrapper contract in rebuild/installer/platforms/installed_system/firstboot.py, wired exports and startup assets (rebuild/assets/scripts/firstboot-wrapper.sh, rebuild/assets/services/omarchy-firstboot.service), and added unit coverage in rebuild/tests/test_installed_system_firstboot.py. Also fixed review regressions: Secure Boot firmware reboot prompt/flow in windows-prep.ps1 and failure cleanup guards in rebuild/installer/platforms/linux_live/install.py."
+    },
+    {
+      "Section": "Layer 3 Installed System",
+      "Task Number": "L3-002",
+      "Task Description": "Implement mandatory Omarchy install-location health checks.",
+      "Assingee": "Codex",
+      "Additional Info": "Validate bootstrap contract (URL/path/repo and expected handoff files) before run; log and warn/block by policy.",
+      "Completion Flag": true,
+      "Completion Comment": "Implemented bootstrap health gating and install-location validation in rebuild/installer/platforms/installed_system/firstboot.py plus shared bootstrap contract helpers in rebuild/installer/platforms/installed_system/post_install.py. The first-boot flow now validates URL/path/repo + required handoff files before launch and records structured bootstrap results in logs/output."
+    },
+    {
+      "Section": "Layer 3 Installed System",
+      "Task Number": "L3-003",
+      "Task Description": "Implement post-Omarchy normalization and boot policy restoration.",
+      "Assingee": "Codex",
+      "Additional Info": "Re-validate Limine, Windows assets, boot order, and chainloadability; repair intended state if drifted.",
+      "Completion Flag": true,
+      "Completion Comment": "Implemented post-Omarchy boot-policy normalization in rebuild/installer/platforms/installed_system/post_install.py and wired it into firstboot handoff. After a successful Omarchy run, the flow now revalidates Limine/Windows EFI assets and boot order, performs deterministic efibootmgr boot-order repair when safe, and fails closed on unrecoverable drift."
+    },
+    {
+      "Section": "Layer 3 Installed System",
+      "Task Number": "BG-001",
+      "Task Description": "Implement once-per-boot health guardian on installed system.",
+      "Assingee": "Codex",
+      "Additional Info": "Python + systemd oneshot + expected-state JSON. Check EFI mount, Limine files, Windows files, boot entries.",
+      "Completion Flag": true,
+      "Completion Comment": "Implemented installed-system boot guardian health evaluation with expected-state JSON contract, EFI mount and boot entry checks, structured observed-state reporting, and once-per-boot check flow in rebuild/installer/platforms/installed_system/boot_guardian.py plus boot_guardian_state.py."
+    },
+    {
+      "Section": "Layer 3 Installed System",
+      "Task Number": "BG-002",
+      "Task Description": "Implement boot health severity behavior and support commands.",
+      "Assingee": "Codex",
+      "Additional Info": "Healthy quiet, warning flag/optional notify, critical error + repair path; provide omarchy-boot-check and omarchy-boot-repair.",
+      "Completion Flag": true,
+      "Completion Comment": "Implemented boot guardian severity and repair support with warning/critical results, boot-order repair command support, boot-guardian shell wrapper, service wiring, and unit coverage in rebuild/tests/test_boot_guardian.py."
+    },
+    {
+      "Section": "Cleanup & Safety",
+      "Task Number": "SAFE-001",
+      "Task Description": "Implement explicit artifact lifecycle ownership and cleanup strategy.",
+      "Assingee": "Copilot",
+      "Additional Info": "Buckets: live ISO only, Ventoy USB only, temp staging, final-system required. Keep temp staging under one directory and remove residuals after success.",
+      "Completion Flag": true,
+      "Completion Comment": "Documented explicit artifact lifecycle ownership buckets in the ownership map and implemented single-root live cleanup staging in the Arch live install layer. Temporary runtime artifacts now stay under one staging directory and are removed after successful install."
+    },
+    {
+      "Section": "Cleanup & Safety",
+      "Task Number": "SAFE-002",
+      "Task Description": "Implement centralized non-negotiable abort conditions.",
+      "Assingee": "Copilot",
+      "Additional Info": "Abort cleanly on admin/platform/security/backup/Ventoy/version/identity/boot/supply-chain unsafe states; no try-anyway path.",
+      "Completion Flag": true,
+      "Completion Comment": "Centralized the non-negotiable abort conditions in the Windows prep flow with a fail-closed gate that blocks on admin, Secure Boot, BitLocker, Fast Startup, disk identity, and release compatibility/supply-chain unsafe states. Removed the try-anyway path from the Secure Boot and Fast Startup readiness handling."
+    },
+    {
+      "Section": "Repo Structure & Docs",
+      "Task Number": "DOC-001",
+      "Task Description": "Write the core project documentation files for the rebuilt architecture.",
+      "Assingee": "Copilot",
+      "Additional Info": "Create architecture.md, boot-protection.md, plan-schema.md, release-process.md, and development-notes.md.",
+      "Completion Flag": true,
+      "Completion Comment": "Completed the core rebuild documentation set and verified the files are present under rebuild/docs/: architecture.md, boot-protection.md, plan-schema.md, release-process.md, and development-notes.md."
+    },
+    {
+      "Section": "Execution Order",
+      "Task Number": "SEQ-001",
+      "Task Description": "Execute implementation in mandatory stage order.",
+      "Assingee": "Copilot",
+      "Additional Info": "Stage 0 containment through Stage 12 CI/CD must be published and enforced as the execution sequence.",
+      "Completion Flag": true,
+      "Completion Comment": "Verified the mandatory execution order is already published and enforced in rebuild/docs/stage-briefs.md, with Stage 0 through Stage 12 defined in sequence and dependent work blocked until upstream contracts exist."
+    },
+    {
+      "Section": "Execution Order",
+      "Task Number": "SEQ-002",
+      "Task Description": "Create first five issues in required sequence.",
+      "Assingee": "Copilot",
+      "Additional Info": "Containment/docs -> shared foundation -> windows checks/backups foundation -> ventoy+ISO placement -> arch handoff+preflight foundation.",
+      "Completion Flag": true,
+      "Completion Comment": "Verified the first five issues are already present in the documented required order: containment/docs, shared foundation, Windows checks/backups foundation, Ventoy+ISO placement, and Arch handoff+preflight foundation."
+    }
+  ]
+}

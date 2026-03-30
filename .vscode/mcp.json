@@ -1,0 +1,22 @@
+{
+  "servers": {
+    "omarchy-task-orchestrator": {
+      "type": "stdio",
+      "command": "python",
+      "cwd": "${workspaceFolder}",
+      "args": [
+        "rebuild/tools/task_orchestrator_mcp/server.py"
+      ],
+      "env": {
+        "OMARCHY_TRACKER_PATH": "${workspaceFolder}/omarchy_todo_tracker.json",
+        "OMARCHY_RUNTIME_STATE_PATH": "${workspaceFolder}/rebuild/tools/task_orchestrator_mcp/runtime/task_state.json"
+      },
+      "dev": {
+        "watch": "rebuild/tools/task_orchestrator_mcp/**/*.py",
+        "debug": {
+          "type": "debugpy"
+        }
+      }
+    }
+  }
+}

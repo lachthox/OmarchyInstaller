@@ -89,6 +89,28 @@ trim() {
   sed 's/^[[:space:]]*//;s/[[:space:]]*$//' <<<"$*"
 }
 
+extract_block_device_path() {
+  local raw="$1"
+  local path=""
+
+  raw="$(printf '%s' "$raw" | tr -d '\r' | tr -cd '[:print:]\n\t ')"
+  path="$(printf '%s\n' "$raw" | grep -oE '/?dev/[[:alnum:]_.:-]+' | head -n1 || true)"
+
+  if [[ -n "$path" ]]; then
+    [[ "$path" == /dev/* ]] || path="/$path"
+    printf '%s\n' "$path"
+    return
+  fi
+
+  raw="$(trim "$raw")"
+  if [[ "$raw" =~ ^[[:alnum:]_.:-]+$ ]]; then
+    printf '/dev/%s\n' "$raw"
+    return
+  fi
+
+  printf '%s\n' "$raw"
+}
+
 json_escape() {
   local s="$1"
   s="${s//\\/\\\\}"
@@ -310,6 +332,31 @@ show_menu() {
     done
 
   fi
+}
+
+choose_menu_item_from_lines() {
+  local title="$1"
+  local prompt="$2"
+  shift 2
+
+  local -a lines=("$@")
+  local -a menu_items=()
+  local line key desc
+
+  (( ${#lines[@]} > 0 )) || return 1
+
+  if (( ${#lines[@]} == 1 )); then
+    printf '%s\n' "${lines[0]%%|*}"
+    return 0
+  fi
+
+  for line in "${lines[@]}"; do
+    key="${line%%|*}"
+    desc="${line#*|}"
+    menu_items+=("$key" "$desc")
+  done
+
+  show_menu "$title" "$prompt" "${menu_items[@]}"
 }
 
 format_eta() {
@@ -782,6 +829,72 @@ collect_disks() {
   '
 }
 
+disk_partition_count() {
+  local disk="$1"
+  lsblk -nrpo NAME,TYPE "$disk" 2>/dev/null | awk '$2=="part" {count++} END {print count+0}'
+}
+
+partition_belongs_to_disk() {
+  local disk="$1"
+  local partition="$2"
+  local pattern
+
+  if [[ "$disk" =~ [0-9]$ ]]; then
+    pattern="^${disk}p[0-9]+$"
+  else
+    pattern="^${disk}[0-9]+$"
+  fi
+
+  [[ "$partition" =~ $pattern ]]
+}
+
+collect_partition_paths() {
+  local disk="$1"
+  lsblk -nrpo NAME,TYPE "$disk" 2>/dev/null | awk '$2=="part" {print $1}'
+}
+
+find_partition_by_label() {
+  local disk="$1"
+  local label="$2"
+  lsblk -nrpo NAME,PARTLABEL "$disk" 2>/dev/null | awk -v label="$label" '$2==label {print $1; exit}'
+}
+
+disk_menu_hint() {
+  local disk="$1"
+  local out transport serial removable hint=""
+
+  out="$(lsblk -dnro TRAN,SERIAL,RM "$disk" 2>/dev/null | head -n1)"
+  transport="$(awk '{print $1}' <<<"$out")"
+  removable="$(awk '{print $NF}' <<<"$out")"
+  serial="$(awk '{if (NF > 2) {for (i = 2; i < NF; i++) printf "%s%s", (i > 2 ? " " : ""), $i}}' <<<"$out")"
+
+  if [[ -n "$transport" ]]; then
+    hint=" (${transport}"
+    [[ -n "$serial" ]] && hint+=" sn:${serial}"
+    [[ "$removable" == "1" ]] && hint+=" removable"
+    hint+=")"
+  elif [[ "$removable" == "1" ]]; then
+    hint=" (removable)"
+  fi
+
+  printf '%s\n' "$hint"
+}
+
+disk_partition_preview() {
+  local disk="$1"
+  lsblk -nrpo NAME,SIZE,FSTYPE,PARTLABEL "$disk" 2>/dev/null | awk '
+    {
+      name = $1
+      if (name == "") next
+
+      size = ($2 != "" ? $2 : "?")
+      fstype = ($3 != "" ? $3 : "?")
+      label = ($4 != "" ? $4 : "-")
+      print name " | " size " | fs:" fstype " | label:" label
+    }
+  '
+}
+
 pick_default_disk() {
   local candidate
   candidate="$(collect_disks | awk -F'|' '{print "/dev/" $1, $2}' | sort -k2 -h | tail -n1 | awk '{print $1}')"
@@ -798,7 +911,89 @@ find_efi_partition() {
     efi="$(lsblk -prno NAME,FSTYPE,MOUNTPOINT "$disk" | awk 'tolower($2)=="vfat" && ($3=="/boot" || $3=="/boot/efi") {print $1; exit}')"
   fi
 
+  if [[ -z "$efi" ]]; then
+    efi="$(lsblk -prno NAME,FSTYPE,PARTLABEL,PARTFLAGS "$disk" | awk '
+      tolower($2) ~ /^(vfat|fat|fat32)$/ && (tolower($3) ~ /(efi|esp|system)/ || tolower($4) ~ /(esp|boot)/) {print $1; exit}
+    ')"
+  fi
+
   echo "$efi"
+}
+
+collect_disk_partitions() {
+  local disk="$1"
+  lsblk -prno NAME,SIZE,FSTYPE,PARTTYPE,PARTLABEL,PARTFLAGS,MOUNTPOINT -P "$disk" 2>/dev/null | awk -v disk="$disk" '
+    function value_for(key, fallback,   pattern, value) {
+      pattern = key "=\"[^\"]*\""
+      if (match($0, pattern)) {
+        value = substr($0, RSTART + length(key) + 2, RLENGTH - length(key) - 3)
+        return value
+      }
+      return fallback
+    }
+
+    {
+      name = value_for("NAME", "")
+      if (name == "" || name == disk) next
+
+      size = value_for("SIZE", "")
+      fstype = tolower(value_for("FSTYPE", ""))
+      parttype = tolower(value_for("PARTTYPE", ""))
+      partlabel = value_for("PARTLABEL", "")
+      partflags = tolower(value_for("PARTFLAGS", ""))
+      mountpoint = value_for("MOUNTPOINT", "")
+
+      print name "|" size "|" fstype "|" parttype "|" partlabel "|" partflags "|" mountpoint
+    }
+  '
+}
+
+collect_efi_partition_candidates() {
+  local disk="$1"
+  collect_disk_partitions "$disk" | awk -F'|' -v efi_guid="c12a7328-f81f-11d2-ba4b-00a0c93ec93b" '
+    function describe(reason,   desc) {
+      desc = $2
+      desc = desc (($3 != "") ? " | " toupper($3) : " | unknown fs")
+      if ($5 != "") desc = desc " | label=" $5
+      if ($6 != "") desc = desc " | flags=" $6
+      if ($7 != "") desc = desc " | mnt=" $7
+      desc = desc " | " reason
+      print $1 "|" desc
+    }
+
+    tolower($4) == efi_guid {
+      describe("EFI type")
+      next
+    }
+
+    tolower($3) ~ /^(vfat|fat|fat32)$/ && ($7 == "/boot" || $7 == "/boot/efi") {
+      describe("boot mount")
+      next
+    }
+
+    tolower($3) ~ /^(vfat|fat|fat32)$/ && tolower($6) ~ /(esp|boot)/ {
+      describe("ESP flag")
+      next
+    }
+
+    tolower($3) ~ /^(vfat|fat|fat32)$/ && tolower($5) ~ /(efi|esp|system)/ {
+      describe("EFI label")
+    }
+  ' | awk -F'|' '!seen[$1]++'
+}
+
+collect_partition_menu_entries() {
+  local disk="$1"
+  collect_disk_partitions "$disk" | awk -F'|' '
+    {
+      desc = $2
+      desc = desc (($3 != "") ? " | " toupper($3) : " | unknown fs")
+      if ($5 != "") desc = desc " | label=" $5
+      if ($6 != "") desc = desc " | flags=" $6
+      if ($7 != "") desc = desc " | mnt=" $7
+      print $1 "|" desc
+    }
+  '
 }
 
 bytes_to_gib() {
@@ -1009,14 +1204,36 @@ main() {
   efi_part="$(find_efi_partition "$selected_disk")"
 
   if [[ -z "$efi_part" ]]; then
+    local -a efi_candidate_lines partition_lines
+    mapfile -t efi_candidate_lines < <(collect_efi_partition_candidates "$selected_disk")
+
+    if (( ${#efi_candidate_lines[@]} > 0 )); then
+      efi_part="$(choose_menu_item_from_lines \
+        "EFI Partition" \
+        "Auto-detect was inconclusive. Select the EFI partition on $selected_disk:" \
+        "${efi_candidate_lines[@]}")"
+    else
+      mapfile -t partition_lines < <(collect_partition_menu_entries "$selected_disk")
+      if (( ${#partition_lines[@]} > 0 )); then
+        efi_part="$(choose_menu_item_from_lines \
+          "EFI Partition" \
+          "Could not auto-detect EFI partition. Select the correct partition on $selected_disk:" \
+          "${partition_lines[@]}")"
+      fi
+    fi
+  fi
+
+  efi_part="$(extract_block_device_path "$efi_part")"
+
+  while [[ -z "$efi_part" || ! -b "$efi_part" ]]; do
     local efi_hint="${selected_disk}1"
     if [[ "$selected_disk" =~ [0-9]$ ]]; then
       efi_hint="${selected_disk}p1"
     fi
-    efi_part="$(ask_input "EFI Partition" "Could not auto-detect EFI partition. Enter EFI partition path:" "$efi_hint")"
-  fi
 
-  [[ -b "$efi_part" ]] || die "EFI partition does not exist: $efi_part"
+    show_message "EFI Partition" "The selected EFI partition path is invalid.\n\nDetected value: ${efi_part:-<empty>}\n\nEnter a valid existing partition path."
+    efi_part="$(extract_block_device_path "$(ask_input "EFI Partition" "Enter EFI partition path:" "$efi_hint")")"
+  done
 
   local free_bytes free_gib
   free_bytes="$(free_bytes_on_disk "$selected_disk")"
