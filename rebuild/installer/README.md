@@ -10,4 +10,4 @@ Planned ownership boundaries:
 - `platforms/installed_system/`: Omarchy wrapper, boot guardian, repair tooling
 - `ui/`: Textual screens and shared widgets
 
-Scaffold modules now exist for each boundary, with placeholder entrypoints that will be replaced by implementation slices.
+The live installer now has an interactive Textual entrypoint in `installer/ui/screens.py`, and the Windows-side flow runs through `installer/platforms/windows/app.py` with Python-first migration logic.
