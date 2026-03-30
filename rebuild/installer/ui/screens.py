@@ -661,7 +661,7 @@ class LiveInstallerApp(App[int]):
     """
 
     BINDINGS = [
-        Binding("enter,c", "next_guided_step", "Next Step"),
+        Binding("enter", "next_guided_step", "Next Step"),
         Binding("d", "toggle_details", "Details"),
         Binding("r", "refresh_runtime", "Refresh"),
         Binding("q", "quit_flow", "Quit"),
@@ -713,12 +713,16 @@ class LiveInstallerApp(App[int]):
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         with Vertical(id="body"):
-            yield Static("Omarchy Arch Live Installer (Python TUI)", id="title")
-            yield Static("Simple guided setup. Press [Enter] for the next step. Press [D] for advanced details.", id="subtitle")
-            yield Static("", id="stages")
-            yield Static("", id="content")
-            yield Static("", id="status")
-            yield Static("", id="hints")
+            yield Static("Omarchy Arch Live Installer (Python TUI)", id="title", markup=False)
+            yield Static(
+                "Simple guided setup. Press [Enter] for the next step. Press [D] for advanced details.",
+                id="subtitle",
+                markup=False,
+            )
+            yield Static("", id="stages", markup=False)
+            yield Static("", id="content", markup=False)
+            yield Static("", id="status", markup=False)
+            yield Static("", id="hints", markup=False)
 
     def on_mount(self) -> None:
         self.action_refresh_runtime()
@@ -740,6 +744,14 @@ class LiveInstallerApp(App[int]):
         stage_id = self._active_stage_id()
         label = LIVE_STAGE_LABELS.get(stage_id, stage_id.title())
         return f">> CURRENT STEP: {self._active_stage_index + 1}/{len(self._stage_ids)} {label} <<"
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        del parameters
+        if self._install_input_capture_active():
+            return action == "next_guided_step"
+        if self._partition_confirmation_active():
+            return action == "next_guided_step"
+        return True
 
     def _render(self) -> None:
         stage_line_parts = []
