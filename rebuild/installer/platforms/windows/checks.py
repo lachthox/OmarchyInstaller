@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from enum import Enum
+import os
 import re
 import subprocess
 from typing import Protocol
@@ -70,6 +71,43 @@ class PowerShellProbe:
             return ""
         return completed.stdout.strip()
 
+    def _run_cmd(self, command: list[str]) -> str:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if completed.returncode != 0:
+            return ""
+        return completed.stdout.strip()
+
+    def _normalize_bitlocker_output(self, output: str) -> str:
+        if not output:
+            return "Unknown"
+        normalized = output.strip()
+        lowered = normalized.lower()
+
+        if lowered in {"1", "on", "protectionon", "protection on"}:
+            return "On"
+        if lowered in {"0", "off", "protectionoff", "protection off"}:
+            return "Off"
+
+        protection_match = re.search(r"Protection\s+Status:\s*(Protection\s+On|Protection\s+Off)", output, re.IGNORECASE)
+        if protection_match:
+            state = protection_match.group(1).lower()
+            return "On" if "on" in state else "Off"
+
+        decrypted_match = re.search(r"Conversion\s+Status:\s*Fully\s+Decrypted", output, re.IGNORECASE)
+        if decrypted_match:
+            return "Off"
+
+        encrypted_match = re.search(r"Conversion\s+Status:\s*(Fully|Used Space Only)\s+Encrypted", output, re.IGNORECASE)
+        if encrypted_match:
+            return "On"
+
+        return "Unknown"
+
     def is_admin(self) -> bool:
         output = self._run_ps(
             "[bool]([Security.Principal.WindowsPrincipal]"
@@ -109,14 +147,13 @@ class PowerShellProbe:
             "} else { '' }"
         )
         output = self._run_ps(command)
-        if not output:
-            return "Unknown"
-        normalized = output.strip()
-        if normalized == "1":
-            return "On"
-        if normalized == "0":
-            return "Off"
-        return normalized
+        normalized = self._normalize_bitlocker_output(output)
+        if normalized != "Unknown":
+            return normalized
+
+        system_drive = os.environ.get("SystemDrive", "C:")
+        fallback_output = self._run_cmd(["manage-bde.exe", "-status", system_drive])
+        return self._normalize_bitlocker_output(fallback_output)
 
     def fast_startup_enabled(self) -> bool | None:
         output = self._run_ps(
