@@ -1,0 +1,18 @@
+{
+  "schema_version": "0.1.0",
+  "build": {
+    "git_commit": "",
+    "build_id": "",
+    "built_at_utc": ""
+  },
+  "artifacts": {
+    "iso_name": "",
+    "exe_name": "",
+    "checksums_file": ""
+  },
+  "compatibility": {
+    "minimum_windows_prep_version": "",
+    "minimum_live_runtime_version": ""
+  }
+}
+

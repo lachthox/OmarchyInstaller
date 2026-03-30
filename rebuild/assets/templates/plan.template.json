@@ -1,0 +1,16 @@
+{
+  "schema_version": "0.1.0",
+  "plan_id": "plan-template",
+  "windows": {
+    "source_device": "",
+    "backup_path": ""
+  },
+  "linux_live": {
+    "target_disk": "",
+    "boot_policy": "preserve-windows"
+  },
+  "installed_system": {
+    "firstboot_profile": "default"
+  }
+}
+

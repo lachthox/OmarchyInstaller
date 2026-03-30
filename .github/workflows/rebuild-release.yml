@@ -1,0 +1,184 @@
+name: Rebuild Release Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (optional, defaults to date-based tag)"
+        required: false
+        type: string
+      dry_run:
+        description: "Build placeholder outputs and metadata only"
+        type: boolean
+        required: false
+        default: true
+      publish:
+        description: "Upload assets to GitHub Release"
+        type: boolean
+        required: false
+        default: false
+  push:
+    branches:
+      - Python-Rebuild
+      - main
+    paths:
+      - "build-custom-iso.sh"
+      - "windows-prep.ps1"
+      - "rebuild/assets/**"
+      - "rebuild/installer/**"
+      - "rebuild/requirements.txt"
+      - "rebuild/requirements-dev.txt"
+      - "rebuild/installer/shared/**"
+      - "rebuild/tools/build_iso_pipeline.py"
+      - "rebuild/tools/build_windows_exe.py"
+      - "rebuild/tools/publish_release.py"
+      - "rebuild/tools/windows/**"
+      - ".github/workflows/rebuild-release.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  build-iso:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      OUTPUT_DIR: ${{ github.workspace }}/rebuild/dist/release-iso
+      WORK_DIR: ${{ github.workspace }}/rebuild/dist/release-iso-work
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ISO dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            xorriso \
+            squashfs-tools \
+            erofs-utils \
+            rsync \
+            curl
+
+      - name: Build ISO artifact
+        shell: bash
+        run: |
+          EXTRA_ARGS=()
+          if [[ "${{ github.event.inputs.dry_run || 'true' }}" == "true" ]]; then
+            EXTRA_ARGS+=(--dry-run)
+          fi
+          python rebuild/tools/build_iso_pipeline.py \
+            --workspace "$GITHUB_WORKSPACE" \
+            --output-dir "$OUTPUT_DIR" \
+            --work-dir "$WORK_DIR" \
+            "${EXTRA_ARGS[@]}"
+
+      - name: Upload ISO outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-iso-output
+          path: ${{ env.OUTPUT_DIR }}
+          if-no-files-found: error
+
+  build-windows-exe:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      OUTPUT_DIR: ${{ github.workspace }}\rebuild\dist\release-windows-exe
+      WORK_DIR: ${{ github.workspace }}\rebuild\dist\release-windows-exe-work
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install EXE dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyinstaller
+
+      - name: Build Windows EXE artifact
+        shell: pwsh
+        run: |
+          $extraArgs = @()
+          if ("${{ github.event.inputs.dry_run || 'true' }}" -eq "true") {
+            $extraArgs += "--dry-run"
+          }
+          python rebuild/tools/build_windows_exe.py `
+            --workspace "$env:GITHUB_WORKSPACE" `
+            --output-dir "$env:OUTPUT_DIR" `
+            --work-dir "$env:WORK_DIR" `
+            @extraArgs
+
+      - name: Upload Windows EXE outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-windows-exe-output
+          path: ${{ env.OUTPUT_DIR }}
+          if-no-files-found: error
+
+  publish-release:
+    runs-on: ubuntu-latest
+    needs:
+      - build-iso
+      - build-windows-exe
+    timeout-minutes: 30
+    env:
+      INPUT_DIR: ${{ github.workspace }}/rebuild/dist/release-inputs
+      OUTPUT_DIR: ${{ github.workspace }}/rebuild/dist/release-output
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download ISO artifact bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: release-iso-output
+          path: ${{ env.INPUT_DIR }}/iso
+
+      - name: Download Windows EXE artifact bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: release-windows-exe-output
+          path: ${{ env.INPUT_DIR }}/windows
+
+      - name: Build release metadata and optionally publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          EXTRA_ARGS=()
+          if [[ -n "${{ github.event.inputs.tag }}" ]]; then
+            EXTRA_ARGS+=(--tag "${{ github.event.inputs.tag }}")
+          fi
+          if [[ "${{ github.event.inputs.publish || 'false' }}" == "true" ]]; then
+            EXTRA_ARGS+=(--publish --repo "${{ github.repository }}")
+          fi
+          if [[ "${{ github.event.inputs.dry_run || 'true' }}" == "true" ]]; then
+            EXTRA_ARGS+=(--dry-run)
+          fi
+
+          python rebuild/tools/publish_release.py \
+            --workspace "$GITHUB_WORKSPACE" \
+            --artifact-dir "$INPUT_DIR" \
+            --output-dir "$OUTPUT_DIR" \
+            "${EXTRA_ARGS[@]}"
+
+      - name: Upload release metadata bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: rebuild-release-output
+          path: ${{ env.OUTPUT_DIR }}
+          if-no-files-found: error

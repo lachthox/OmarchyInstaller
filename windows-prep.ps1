@@ -27,6 +27,7 @@ $script:TuiFrameCount = 0
 $script:TuiRenderFailed = $false
 $script:RunId = [guid]::NewGuid().ToString('N')
 $script:RunStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+$script:SupportedPlanSchemaVersion = '0.1.0'
 $script:TuiState = [ordered]@{
   Title       = 'Omarchy Windows Pre-Install Assistant'
   Section     = 'Initializing'
@@ -1154,16 +1155,67 @@ function Show-SystemReadiness {
   try {
     $fastStartup = Get-ItemPropertyValue -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power' -Name HiberbootEnabled
     if ($fastStartup -eq 1) {
-      Write-Warn 'Fast Startup is enabled. Consider disabling it to avoid dual-boot filesystem issues.'
-      if (Read-YesNo -Message 'Disable Fast Startup now?' -DefaultYes $true) {
-        Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power' -Name HiberbootEnabled -Type DWord -Value 0
-        Write-Info 'Fast Startup disabled.'
-      }
+      Write-Warn 'Fast Startup is enabled and must be disabled before proceeding with Omarchy prep.'
     } else {
       Write-Info 'Fast Startup is already disabled.'
     }
   } catch {
     Write-Warn 'Could not query or modify Fast Startup setting.'
+  }
+}
+
+function Invoke-NonNegotiableAbortGate {
+  param(
+    [string]$SecureBootState = $null,
+    [string]$MediaTargetDir = ''
+  )
+
+  $blockers = [System.Collections.Generic.List[string]]::new()
+
+  if (-not (Test-Admin)) {
+    $blockers.Add('admin: run the workflow from an elevated PowerShell session.')
+  }
+
+  if ([string]::IsNullOrWhiteSpace($SecureBootState)) {
+    $SecureBootState = Get-SecureBootState
+  }
+  if ($SecureBootState -eq 'Enabled') {
+    $blockers.Add('boot: Secure Boot is enabled and must be disabled before continuing.')
+  }
+
+  try {
+    $osDrive = "$($env:SystemDrive.TrimEnd(':')):"
+    $bl = Get-BitLockerVolume -MountPoint $osDrive -ErrorAction Stop
+    if ($bl.ProtectionStatus -eq 'On') {
+      $blockers.Add("security: BitLocker is ON for $osDrive and recovery keys/backups are required before any partition work.")
+    }
+  } catch {
+    $blockers.Add('security: BitLocker state could not be confirmed safely.')
+  }
+
+  try {
+    $fastStartup = Get-ItemPropertyValue -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power' -Name HiberbootEnabled
+    if ($fastStartup -eq 1) {
+      $blockers.Add('security: Fast Startup is enabled and must be disabled before continuing.')
+    }
+  } catch {
+    $blockers.Add('security: Fast Startup state could not be confirmed safely.')
+  }
+
+  if (-not (Get-DefaultInternalDisk)) {
+    $blockers.Add('identity: no stable internal target disk could be identified.')
+  }
+
+  if (-not [string]::IsNullOrWhiteSpace($MediaTargetDir)) {
+    try {
+      $null = Invoke-ReleaseCompatibilityGate -TargetDir $MediaTargetDir
+    } catch {
+      $blockers.Add("version/supply_chain: $($_.Exception.Message)")
+    }
+  }
+
+  if ($blockers.Count -gt 0) {
+    throw ("Non-negotiable abort conditions were met: {0}" -f ($blockers -join '; '))
   }
 }
 
@@ -1262,12 +1314,13 @@ function Get-LatestArchIso {
 function Get-GitHubReleaseIso {
   # Queries the GitHub Releases API for the latest omarchy-auto ISO.
   # Returns $null if no release is found, otherwise a PSCustomObject with
-  # IsoUrl, ShaUrl, Tag, and IsoName.
+  # IsoUrl, ShaUrl, ReleaseManifestUrl, CompatibilityManifestUrl, Repository, Tag, and IsoName.
   param(
     [string]$Owner = '',
     [string]$Repo  = ''
   )
 
+  $resolvedFromOrigin = $false
   if ([string]::IsNullOrWhiteSpace($Owner) -or [string]::IsNullOrWhiteSpace($Repo)) {
     try {
       $remoteUrl = (& git remote get-url origin 2>$null | Select-Object -First 1)
@@ -1277,6 +1330,7 @@ function Get-GitHubReleaseIso {
         if ($m.Success) {
           if ([string]::IsNullOrWhiteSpace($Owner)) { $Owner = $m.Groups['owner'].Value }
           if ([string]::IsNullOrWhiteSpace($Repo)) { $Repo = $m.Groups['repo'].Value }
+          $resolvedFromOrigin = $true
           Write-DebugLog -Category 'github.release.repo' -Message ("Resolved from git origin: owner='{0}' repo='{1}'" -f $Owner, $Repo)
         }
       }
@@ -1301,6 +1355,8 @@ function Get-GitHubReleaseIso {
 
   $isoAsset = $release.assets | Where-Object { $_.name -match '-omarchy-auto\.iso$' } | Select-Object -First 1
   $shaAsset = $release.assets | Where-Object { $_.name -match '-omarchy-auto\.iso\.sha256$' } | Select-Object -First 1
+  $releaseManifestAsset = $release.assets | Where-Object { $_.name -eq 'release_manifest.json' } | Select-Object -First 1
+  $compatibilityManifestAsset = $release.assets | Where-Object { $_.name -eq 'compatibility_manifest.json' } | Select-Object -First 1
 
   if (-not $isoAsset) {
     Write-DebugLog -Category 'github.release.warn' -Message 'No omarchy-auto ISO asset found in latest release.'
@@ -1310,9 +1366,361 @@ function Get-GitHubReleaseIso {
   return [PSCustomObject]@{
     IsoUrl  = [string]$isoAsset.browser_download_url
     ShaUrl  = if ($shaAsset) { [string]$shaAsset.browser_download_url } else { $null }
+    ReleaseManifestUrl = if ($releaseManifestAsset) { [string]$releaseManifestAsset.browser_download_url } else { $null }
+    CompatibilityManifestUrl = if ($compatibilityManifestAsset) { [string]$compatibilityManifestAsset.browser_download_url } else { $null }
+    Repository = "$Owner/$Repo"
+    RepositoryResolvedFromOrigin = $resolvedFromOrigin
     Tag     = [string]$release.tag_name
     IsoName = [string]$isoAsset.name
   }
+}
+
+function Get-CurrentExecutablePath {
+  try {
+    return [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+  } catch {
+    return $null
+  }
+}
+
+function Get-FileSha256 {
+  param(
+    [Parameter(Mandatory = $true)][string]$Path
+  )
+
+  if (-not (Test-Path -LiteralPath $Path)) {
+    return $null
+  }
+
+  return (Get-FileHash -Path $Path -Algorithm SHA256).Hash.Trim().ToLowerInvariant()
+}
+
+function Convert-ToVersionObject {
+  param(
+    [string]$Value
+  )
+
+  if ([string]::IsNullOrWhiteSpace($Value)) {
+    return $null
+  }
+
+  $normalized = ([string]$Value).Trim() -replace '[^0-9\.]', ''
+  if ([string]::IsNullOrWhiteSpace($normalized)) {
+    return $null
+  }
+
+  try {
+    return [version]$normalized
+  } catch {
+    return $null
+  }
+}
+
+function Test-VersionAtLeast {
+  param(
+    [string]$Current,
+    [string]$Minimum
+  )
+
+  $currentVersion = Convert-ToVersionObject -Value $Current
+  $minimumVersion = Convert-ToVersionObject -Value $Minimum
+  if (-not $currentVersion -or -not $minimumVersion) {
+    return $null
+  }
+
+  return ($currentVersion -ge $minimumVersion)
+}
+
+function Get-ReleaseCompatibilityReport {
+  param(
+    [Parameter(Mandatory = $true)][string]$TargetDir
+  )
+
+  $report = [ordered]@{
+    CanProceed = $true
+    Checks = [System.Collections.Generic.List[object]]::new()
+  }
+
+  $release = Get-GitHubReleaseIso
+  if (-not $release) {
+    $report.Checks.Add([PSCustomObject]@{
+      Name = 'release_metadata'
+      Status = 'warn'
+      Message = 'Latest release metadata is unavailable; skipping freshness enforcement.'
+      Current = 'unavailable'
+      Expected = 'latest GitHub release assets'
+    })
+    return [PSCustomObject]$report
+  }
+
+  if (-not $release.ReleaseManifestUrl -or -not $release.CompatibilityManifestUrl) {
+    $report.Checks.Add([PSCustomObject]@{
+      Name = 'release_metadata_assets'
+      Status = 'warn'
+      Message = 'Latest release is missing release or compatibility manifest assets; compatibility checks are limited.'
+      Current = "releaseManifest=$($release.ReleaseManifestUrl) compatibilityManifest=$($release.CompatibilityManifestUrl)"
+      Expected = 'both manifest assets'
+    })
+    return [PSCustomObject]$report
+  }
+
+  try {
+    $headers = @{ 'Accept' = 'application/vnd.github+json'; 'User-Agent' = 'OmarchyInstaller/1.0' }
+    $releaseManifest = Invoke-RestMethod -Uri $release.ReleaseManifestUrl -Headers $headers -UseBasicParsing -ErrorAction Stop
+    $compatibilityManifest = Invoke-RestMethod -Uri $release.CompatibilityManifestUrl -Headers $headers -UseBasicParsing -ErrorAction Stop
+  } catch {
+    $report.Checks.Add([PSCustomObject]@{
+      Name = 'release_manifest_fetch'
+      Status = 'warn'
+      Message = 'Could not load release compatibility metadata; freshness checks were skipped.'
+      Current = $_.Exception.Message
+      Expected = 'reachable release_manifest.json and compatibility_manifest.json assets'
+    })
+    return [PSCustomObject]$report
+  }
+
+  $releaseTag = [string]$releaseManifest.tag
+  $compatibilityTag = [string]$compatibilityManifest.tag
+  if ($releaseTag -ne $compatibilityTag) {
+    $report.CanProceed = $false
+    $report.Checks.Add([PSCustomObject]@{
+      Name = 'build_pairing'
+      Status = 'fail'
+      Message = 'Release and compatibility manifests disagree on the release tag.'
+      Current = $releaseTag
+      Expected = $compatibilityTag
+    })
+  }
+
+  if (-not $release.RepositoryResolvedFromOrigin) {
+    $report.Checks.Add([PSCustomObject]@{
+      Name = 'repo_contract'
+      Status = 'warn'
+      Message = 'Git origin did not resolve cleanly; using the default GitHub repository contract.'
+      Current = $release.Repository
+      Expected = 'resolved from git origin'
+    })
+  } else {
+    $report.Checks.Add([PSCustomObject]@{
+      Name = 'repo_contract'
+      Status = 'pass'
+      Message = 'Git origin resolved to the release repository contract.'
+      Current = $release.Repository
+      Expected = $release.Repository
+    })
+  }
+
+  $releaseIsoSha = [string]$releaseManifest.artifacts.iso.sha256
+  $compatIsoSha = [string]$compatibilityManifest.artifact_pairing.iso_sha256
+  if ($releaseIsoSha -and $compatIsoSha -and $releaseIsoSha -ne $compatIsoSha) {
+    $report.CanProceed = $false
+    $report.Checks.Add([PSCustomObject]@{
+      Name = 'build_pairing_iso'
+      Status = 'fail'
+      Message = 'Release and compatibility manifests disagree on the ISO SHA256.'
+      Current = $releaseIsoSha
+      Expected = $compatIsoSha
+    })
+  }
+
+  $releaseExeSha = [string]$releaseManifest.artifacts.exe.sha256
+  $compatExeSha = [string]$compatibilityManifest.artifact_pairing.exe_sha256
+  if ($releaseExeSha -and $compatExeSha -and $releaseExeSha -ne $compatExeSha) {
+    $report.CanProceed = $false
+    $report.Checks.Add([PSCustomObject]@{
+      Name = 'build_pairing_exe'
+      Status = 'fail'
+      Message = 'Release and compatibility manifests disagree on the EXE SHA256.'
+      Current = $releaseExeSha
+      Expected = $compatExeSha
+    })
+  }
+
+  $supportedSchema = $script:SupportedPlanSchemaVersion
+  $releaseSchema = [string]$releaseManifest.contracts.plan_schema_version
+  $compatSchema = [string]$compatibilityManifest.minimum_versions.live_runtime_plan_schema_version
+  if (($releaseSchema -and $releaseSchema -ne $supportedSchema) -or ($compatSchema -and $compatSchema -ne $supportedSchema)) {
+    $report.CanProceed = $false
+    $report.Checks.Add([PSCustomObject]@{
+      Name = 'schema_compatibility'
+      Status = 'fail'
+      Message = 'The Windows app schema contract does not match the latest release compatibility contract.'
+      Current = "release=$releaseSchema compatibility=$compatSchema supported=$supportedSchema"
+      Expected = $supportedSchema
+    })
+  }
+
+  $bootstrapExpectations = $compatibilityManifest.bootstrap_expectations
+  $expectedBootstrapContracts = [ordered]@{
+    live_entrypoint = 'python3 /opt/omarchy-installer/main.py'
+    live_setup_wrapper = '/opt/omarchy-setup/setup.sh'
+    live_entrypoint_compat_alias = 'python3 /opt/omarchy-setup/main.py'
+    firstboot_wrapper_target = '/usr/local/bin/omarchy-firstboot-wrapper.sh'
+    omarchy_timing_contract = 'post-install-only'
+  }
+
+  if (-not $bootstrapExpectations) {
+    $report.Checks.Add([PSCustomObject]@{
+      Name = 'bootstrap_expectations'
+      Status = 'warn'
+      Message = 'Compatibility manifest does not include bootstrap expectations; skipping strict location enforcement.'
+      Current = 'missing'
+      Expected = 'bootstrap_expectations object'
+    })
+  } else {
+    foreach ($entry in $expectedBootstrapContracts.GetEnumerator()) {
+      $actual = [string]$bootstrapExpectations.($entry.Key)
+      if ([string]::IsNullOrWhiteSpace($actual)) {
+        $report.Checks.Add([PSCustomObject]@{
+          Name = "bootstrap_$($entry.Key)"
+          Status = 'warn'
+          Message = 'Bootstrap expectation is missing from compatibility metadata; strict enforcement skipped for this field.'
+          Current = 'missing'
+          Expected = $entry.Value
+        })
+        continue
+      }
+
+      if ($actual -ne $entry.Value) {
+        $report.CanProceed = $false
+        $report.Checks.Add([PSCustomObject]@{
+          Name = "bootstrap_$($entry.Key)"
+          Status = 'fail'
+          Message = 'The bootstrap location contract has drifted from the expected release metadata.'
+          Current = $actual
+          Expected = $entry.Value
+        })
+        continue
+      }
+
+      $report.Checks.Add([PSCustomObject]@{
+        Name = "bootstrap_$($entry.Key)"
+        Status = 'pass'
+        Message = 'Bootstrap location contract matches the release metadata.'
+        Current = $actual
+        Expected = $entry.Value
+      })
+    }
+  }
+
+  $exePath = Get-CurrentExecutablePath
+  if ($exePath) {
+    $exeName = [System.IO.Path]::GetFileName($exePath)
+    $exeHash = Get-FileSha256 -Path $exePath
+    $exeVersion = ''
+    try {
+      $exeVersion = ([System.Diagnostics.FileVersionInfo]::GetVersionInfo($exePath)).FileVersion
+    } catch {
+      $exeVersion = ''
+    }
+
+    if ($exeName -notin @('powershell.exe', 'pwsh.exe')) {
+      $versionCheck = Test-VersionAtLeast -Current $exeVersion -Minimum ([string]$compatibilityManifest.minimum_versions.windows_prep_exe_version)
+      if ($versionCheck -eq $false) {
+        $report.CanProceed = $false
+        $report.Checks.Add([PSCustomObject]@{
+          Name = 'stale_exe_version'
+          Status = 'fail'
+          Message = 'The running Windows app build is older than the latest compatible release.'
+          Current = $exeVersion
+          Expected = [string]$compatibilityManifest.minimum_versions.windows_prep_exe_version
+        })
+      }
+
+      if ($exeHash) {
+        if ($exeHash -ne $compatExeSha) {
+          $report.CanProceed = $false
+          $report.Checks.Add([PSCustomObject]@{
+            Name = 'stale_exe_hash'
+            Status = 'fail'
+            Message = 'The running Windows app binary does not match the latest release pairing.'
+            Current = $exeHash
+            Expected = $compatExeSha
+          })
+        }
+      } else {
+        $report.Checks.Add([PSCustomObject]@{
+          Name = 'exe_hash_validation'
+          Status = 'warn'
+          Message = 'The packaged EXE hash could not be computed.'
+          Current = $exeName
+          Expected = $compatExeSha
+        })
+      }
+    } else {
+      $report.Checks.Add([PSCustomObject]@{
+        Name = 'exe_freshness'
+        Status = 'warn'
+        Message = 'Running under a shell host, so packaged EXE freshness checks were skipped.'
+        Current = $exeName
+        Expected = 'packaged OmarchyInstaller.exe'
+      })
+    }
+  }
+
+  $isoPath = Join-Path $TargetDir $release.IsoName
+  if (Test-Path -LiteralPath $isoPath) {
+    $isoHash = Get-FileSha256 -Path $isoPath
+    if ($isoHash -and $isoHash -ne $compatIsoSha) {
+      $report.Checks.Add([PSCustomObject]@{
+        Name = 'stale_iso_cache'
+        Status = 'warn'
+        Message = 'A cached Ventoy ISO is present but does not match the latest compatible release; it will be refreshed before use.'
+        Current = $isoHash
+        Expected = $compatIsoSha
+      })
+    } elseif ($isoHash) {
+      $report.Checks.Add([PSCustomObject]@{
+        Name = 'stale_iso_cache'
+        Status = 'pass'
+        Message = 'Cached Ventoy ISO matches the latest compatible release.'
+        Current = $isoHash
+        Expected = $compatIsoSha
+      })
+    }
+  } else {
+    $report.Checks.Add([PSCustomObject]@{
+      Name = 'stale_iso_cache'
+      Status = 'warn'
+      Message = 'No cached Ventoy ISO was found locally; the latest release will be downloaded on demand.'
+      Current = 'missing'
+      Expected = $release.IsoName
+    })
+  }
+
+  return [PSCustomObject]$report
+}
+
+function Write-ReleaseCompatibilityReport {
+  param(
+    [Parameter(Mandatory = $true)]$Report
+  )
+
+  Write-Section 'Release Compatibility'
+  foreach ($check in $Report.Checks) {
+    switch ($check.Status) {
+      'pass' { Write-Info ("[PASS] {0}: {1}" -f $check.Name, $check.Message) }
+      'warn' { Write-Warn ("[WARN] {0}: {1}" -f $check.Name, $check.Message) }
+      default { Write-Warn ("[FAIL] {0}: {1}" -f $check.Name, $check.Message) }
+    }
+  }
+}
+
+function Invoke-ReleaseCompatibilityGate {
+  param(
+    [Parameter(Mandatory = $true)][string]$TargetDir
+  )
+
+  $report = Get-ReleaseCompatibilityReport -TargetDir $TargetDir
+  Write-ReleaseCompatibilityReport -Report $report
+
+  if (-not $report.CanProceed) {
+    $failures = $report.Checks | Where-Object { $_.Status -eq 'fail' }
+    $summary = ($failures | ForEach-Object { "$($_.Name): $($_.Message)" }) -join '; '
+    throw "Release/update compatibility check failed: $summary"
+  }
+
+  return $report
 }
 
 function Invoke-DownloadCustomizedIso {
@@ -1749,6 +2157,7 @@ function Main {
   $mainStep++
   Write-StageProgress -Id $mainProgressId -Step $mainStep -Total $mainTotal -Activity 'Windows pre-install workflow' -EtaMinutes 30
   Show-SystemReadiness -SecureBootState $secureBootState
+  Invoke-NonNegotiableAbortGate -SecureBootState $secureBootState -MediaTargetDir ([System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'media')))
   $mainStep++
   Write-StageProgress -Id $mainProgressId -Step $mainStep -Total $mainTotal -Activity 'Windows pre-install workflow' -EtaMinutes 25
   Show-DiskOverview
