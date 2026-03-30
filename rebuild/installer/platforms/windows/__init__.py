@@ -1,5 +1,6 @@
 """Windows preparation platform modules."""
 
+from .app import EXIT_LAUNCH_LEGACY, EXIT_QUIT, run_windows_preflight_tui
 from .checks import run_windows_preflight
 from .disk_probe import DiskProbeError, DiskProbeSnapshot, collect_disk_probe_snapshot
 from .backup import BackupError, BackupResult, backup_boot_state, run_windows_backup_subsystem
@@ -17,6 +18,8 @@ __all__ = [
     "BackupResult",
     "DiskProbeError",
     "DiskProbeSnapshot",
+    "EXIT_LAUNCH_LEGACY",
+    "EXIT_QUIT",
     "PartitionPrepError",
     "PartitionPrepPolicy",
     "PartitionPrepResult",
@@ -25,6 +28,7 @@ __all__ = [
     "backup_boot_state",
     "collect_disk_probe_snapshot",
     "prepare_unallocated_space",
+    "run_windows_preflight_tui",
     "run_windows_backup_subsystem",
     "run_windows_preflight",
 ]

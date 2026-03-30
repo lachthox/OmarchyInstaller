@@ -169,6 +169,8 @@ def run_pipeline(args: argparse.Namespace) -> int:
                 str(build_dir),
                 "--specpath",
                 str(spec_dir),
+                "--paths",
+                str(workspace / "rebuild"),
                 "--version-file",
                 str(version_file),
                 "--add-data",
