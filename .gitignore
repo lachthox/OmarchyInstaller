@@ -4,7 +4,8 @@ Thumbs.db
 desktop.ini
 
 # Editors / IDE
-.vscode/
+.vscode/*
+!.vscode/mcp.json
 .idea/
 *.swp
 *.swo
@@ -24,6 +25,8 @@ desktop.ini
 dist/
 build/
 .cache/
+__pycache__/
+*.pyc
 
 # Archive artifacts
 *.zip
