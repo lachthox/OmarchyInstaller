@@ -165,7 +165,13 @@ find "$STAGING_DIR/opt/omarchy-setup" -type f -name '*.sh' -exec sed -i 's/\r$//
 # ── Create the live-shell autostart hook ────────────────────────────────────
 
 mkdir -p "$STAGING_DIR/usr/local/bin"
-cat > "$STAGING_DIR/usr/local/bin/omarchy-live-autostart" <<'AUTOSTART'
+PAYLOAD_AUTOSTART="$STAGING_DIR/opt/omarchy-setup/hooks/live-autostart.sh"
+
+if [[ -f "$PAYLOAD_AUTOSTART" ]]; then
+  cp "$PAYLOAD_AUTOSTART" "$STAGING_DIR/usr/local/bin/omarchy-live-autostart"
+  chmod 0755 "$STAGING_DIR/usr/local/bin/omarchy-live-autostart"
+else
+  cat > "$STAGING_DIR/usr/local/bin/omarchy-live-autostart" <<'AUTOSTART'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
@@ -185,7 +191,8 @@ if [[ -z "${ans:-}" || "$ans" =~ [Yy] ]]; then
   exec ./setup.sh
 fi
 AUTOSTART
-chmod +x "$STAGING_DIR/usr/local/bin/omarchy-live-autostart"
+  chmod 0755 "$STAGING_DIR/usr/local/bin/omarchy-live-autostart"
+fi
 
 mkdir -p "$STAGING_DIR/root"
 cat > "$STAGING_DIR/root/.bash_profile" <<'PROFILE'
