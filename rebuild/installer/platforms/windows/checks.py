@@ -88,12 +88,27 @@ class PowerShellProbe:
         normalized = output.strip()
         lowered = normalized.lower()
 
+        if lowered in {"decrypting", "decryptioninprogress", "decryption in progress"}:
+            return "Decrypting"
         if lowered in {"1", "on", "protectionon", "protection on"}:
             return "On"
         if lowered in {"0", "off", "protectionoff", "protection off"}:
             return "Off"
 
+        decryption_match = re.search(r"Conversion\s+Status:\s*Decryption\s+In\s+Progress", output, re.IGNORECASE)
+        if decryption_match:
+            return "Decrypting"
+
         protection_match = re.search(r"Protection\s+Status:\s*(Protection\s+On|Protection\s+Off)", output, re.IGNORECASE)
+        if protection_match and "off" in protection_match.group(1).lower():
+            percentage_match = re.search(r"Percentage\s+Encrypted:\s*(\d+(\.\d+)?)%", output, re.IGNORECASE)
+            if percentage_match:
+                try:
+                    percentage = float(percentage_match.group(1))
+                    if percentage > 0:
+                        return "Decrypting"
+                except ValueError:
+                    pass
         if protection_match:
             state = protection_match.group(1).lower()
             return "On" if "on" in state else "Off"
@@ -143,13 +158,45 @@ class PowerShellProbe:
     def bitlocker_state(self) -> str:
         command = (
             "if (Get-Command Get-BitLockerVolume -ErrorAction SilentlyContinue) { "
-            "(Get-BitLockerVolume -MountPoint $env:SystemDrive | Select-Object -First 1).ProtectionStatus "
+            "$v = Get-BitLockerVolume -MountPoint $env:SystemDrive | Select-Object -First 1; "
+            "if ($null -ne $v) { "
+            "[PSCustomObject]@{ "
+            "protection_status = [string]$v.ProtectionStatus; "
+            "volume_status = [string]$v.VolumeStatus; "
+            "encryption_percentage = [int]$v.EncryptionPercentage "
+            "} | ConvertTo-Json -Compress "
+            "} "
             "} else { '' }"
         )
         output = self._run_ps(command)
-        normalized = self._normalize_bitlocker_output(output)
-        if normalized != "Unknown":
-            return normalized
+        if output:
+            try:
+                import json
+
+                payload = json.loads(output)
+                protection_status = str(payload.get("protection_status", "")).strip().lower()
+                volume_status = str(payload.get("volume_status", "")).strip().lower()
+                try:
+                    encryption_percentage = int(payload.get("encryption_percentage", 0))
+                except (TypeError, ValueError):
+                    encryption_percentage = 0
+
+                if "decryption" in volume_status:
+                    return "Decrypting"
+                if "fullydecrypted" in volume_status or "fully decrypted" in volume_status:
+                    return "Off"
+                if protection_status in {"0", "off", "protectionoff", "protection off"}:
+                    if encryption_percentage > 0:
+                        return "Decrypting"
+                    return "Off"
+                if protection_status in {"1", "on", "protectionon", "protection on"}:
+                    return "On"
+                if "encrypted" in volume_status or "encryption" in volume_status:
+                    return "On"
+            except Exception:
+                normalized = self._normalize_bitlocker_output(output)
+                if normalized != "Unknown":
+                    return normalized
 
         system_drive = os.environ.get("SystemDrive", "C:")
         fallback_output = self._run_cmd(["manage-bde.exe", "-status", system_drive])
@@ -228,6 +275,13 @@ def _check_secure_boot(probe: WindowsProbe) -> CheckResult:
 def _check_bitlocker(probe: WindowsProbe) -> CheckResult:
     state = probe.bitlocker_state()
     normalized = state.lower()
+    if normalized in {"decrypting", "decryptioninprogress", "decryption in progress"}:
+        return CheckResult(
+            "bitlocker",
+            CheckStatus.FAIL,
+            "BitLocker decryption is in progress. Wait until fully decrypted before proceeding.",
+            state,
+        )
     if normalized in {"off", "0"}:
         return CheckResult("bitlocker", CheckStatus.PASS, "BitLocker protection is not active on system drive.", state)
     if normalized in {"on", "1", "protectionon"}:

@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
+import subprocess
 from typing import Any
 
+from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
@@ -21,6 +24,7 @@ EXIT_QUIT = 0
 EXIT_LAUNCH_LEGACY = 10
 GIB = 1024**3
 WINDOWS_STAGES: tuple[str, ...] = (
+    "settings",
     "welcome",
     "compatibility",
     "backup",
@@ -98,7 +102,7 @@ class WindowsPrepApp(App[int]):
         Binding("enter,space", "do_next_step", "Next Step"),
         Binding("r", "refresh_runtime", "Refresh"),
         Binding("d", "toggle_details", "Details"),
-        Binding("y", "toggle_yolo_mode", "YOLO"),
+        Binding("t", "toggle_yolo_mode", "Toggle YOLO"),
         Binding("c", "do_next_step", "Next Step"),
         Binding("q", "quit_flow", "Quit"),
     ]
@@ -114,6 +118,7 @@ class WindowsPrepApp(App[int]):
         self._last_error = ""
         self._status_message = "Ready."
         self._show_details = False
+        self._simple_step_idx = 0
         self._yolo_mode = bool(self._config.yolo_mode)
         self._yolo_approved_failures = {
             str(name).strip().lower()
@@ -122,6 +127,10 @@ class WindowsPrepApp(App[int]):
         }
         self._backup_result: FlowStepResult | None = None
         self._partition_result: FlowStepResult | None = None
+        self._compat_prompt_active = False
+        self._compat_prompt_index = 0
+        self._compat_prompt_failures: list[dict[str, str]] = []
+        self._compat_prompt_message = ""
         self._ventoy_cli_path = ""
         self._ventoy_summary = "Ventoy USB not validated yet."
         self._ventoy_validated = False
@@ -140,7 +149,7 @@ class WindowsPrepApp(App[int]):
             yield Static("", id="content")
             yield Static("", id="status")
             yield Static(
-                "Keys: [Enter] next step  [R] refresh  [D] details  [Y] yolo  [Q] quit",
+                "Keys: [Enter] next  [R] refresh  [D] details  [Q] quit",
                 id="hints",
             )
         if self._show_details:
@@ -207,7 +216,13 @@ class WindowsPrepApp(App[int]):
     def _render_stage_bar(self) -> str:
         yolo_label = " YOLO:ON" if self._yolo_mode else " YOLO:OFF"
         if not self._show_details:
-            return f"Simple mode: follow the guided steps below. Press [D] for advanced details.{yolo_label}"
+            step = WINDOWS_STAGES[self._simple_step_idx]
+            visible_steps = [item for item in WINDOWS_STAGES if item not in {"error_handling", "network", "secure_boot"}]
+            pos = visible_steps.index(step) + 1 if step in visible_steps else 1
+            return (
+                f"Simple mode: one step at a time. Step {pos}/{len(visible_steps)}: {step}. "
+                f"Press [D] for advanced details.{yolo_label}"
+            )
         parts: list[str] = []
         for i, stage in enumerate(WINDOWS_STAGES, start=1):
             active = "*" if i - 1 == self._stage_idx else " "
@@ -224,46 +239,152 @@ class WindowsPrepApp(App[int]):
         return "\n".join(lines)
 
     def _simple_content(self) -> str:
-        checks = self._check_map()
+        step = WINDOWS_STAGES[self._simple_step_idx]
         ready, blockers = self._flow_readiness()
-        check_state = "Ready" if self._compatibility_allows_progress() else "Needs attention"
-        backup_state = "Done" if self._backup_result and self._backup_result.ok else "Pending"
-        partition_state = "Done" if self._partition_result and self._partition_result.ok else "Pending"
-        ventoy_required = self._config.ventoy_disk_number is not None
-        ventoy_state = (
-            "Not required"
-            if not ventoy_required
-            else ("Done" if self._ventoy_validated else "Pending")
-        )
+        mode_line = f"Mode: {self._mode()}"
 
-        failure_lines = [
-            f"- {CHECK_LABELS.get(c['name'], c['name'])}: {c['message']}"
-            for c in self._unapproved_failures()
-        ]
-        blocker_lines = "\n".join(f"- {item}" for item in blockers) if blockers else "- none"
+        if step == "settings":
+            yolo_line = (
+                f"YOLO is ON ({len(self._yolo_approved_failures)} fail checks approved)."
+                if self._yolo_mode
+                else "YOLO is OFF."
+            )
+            return "\n".join(
+                [
+                    "Settings",
+                    mode_line,
+                    yolo_line,
+                    "",
+                    "Use [T] on this screen to toggle YOLO mode.",
+                    "Press [Enter] to continue to compatibility checks.",
+                ]
+            )
 
-        return "\n".join(
-            [
-                "Guided Setup",
-                "",
-                f"1. Compatibility checks: {check_state}",
-                f"2. Backup Windows boot data: {backup_state}",
-                f"3. Prepare free space: {partition_state}",
-                f"4. Validate Ventoy USB: {ventoy_state}",
-                f"5. Ready to continue: {'Yes' if ready else 'No'}",
-                "",
-                f"Current mode: {self._mode()}",
-                (
-                    f"YOLO mode: enabled ({len(self._yolo_approved_failures)} approved FAIL checks can be bypassed)."
-                    if self._yolo_mode
-                    else "YOLO mode: disabled."
-                ),
-                "Next action: Press [Enter] to do the next required step automatically.",
-                "",
-                "Why blocked:",
-                ("\n".join(failure_lines) if failure_lines else blocker_lines),
-            ]
-        )
+        if step == "welcome":
+            return "\n".join(
+                [
+                    "Welcome",
+                    mode_line,
+                    "",
+                    "This wizard will guide you one step at a time:",
+                    "1. Compatibility checks",
+                    "2. Backup boot data",
+                    "3. Prepare free space",
+                    "4. Validate Ventoy USB (optional)",
+                    "5. Confirm and continue",
+                    "",
+                    "Press [Enter] to continue.",
+                ]
+            )
+
+        if step == "compatibility":
+            failures = self._unapproved_failures()
+            if self._compat_prompt_active and self._compat_prompt_failures:
+                idx = min(self._compat_prompt_index, len(self._compat_prompt_failures) - 1)
+                failure = self._compat_prompt_failures[idx]
+                label = CHECK_LABELS.get(failure.get("name", ""), failure.get("name", "unknown"))
+                return "\n".join(
+                    [
+                        "Compatibility",
+                        f"Failing check {idx + 1}/{len(self._compat_prompt_failures)}",
+                        "",
+                        f"{label}",
+                        failure.get("message", ""),
+                        "",
+                        (self._compat_prompt_message or "Attempt auto-fix for this check? [Y/N]"),
+                    ]
+                )
+            if not failures:
+                state = "Ready"
+                details = "All required compatibility checks are passing."
+            else:
+                state = "Needs attention"
+                details = "\n".join(
+                    f"- {CHECK_LABELS.get(c['name'], c['name'])}: {c['message']}"
+                    for c in failures[:5]
+                )
+            return "\n".join(
+                [
+                    "Compatibility",
+                    mode_line,
+                    f"State: {state}",
+                    "",
+                    details,
+                    "",
+                    "Press [Enter] to review each failure and choose auto-fix [Y/N].",
+                ]
+            )
+
+        if step == "backup":
+            status = self._backup_result.summary if self._backup_result else "Not run yet."
+            return "\n".join(
+                [
+                    "Backup",
+                    mode_line,
+                    f"Status: {status}",
+                    "",
+                    "Press [Enter] to run backup step.",
+                ]
+            )
+
+        if step == "partition_prep":
+            status = self._partition_result.summary if self._partition_result else "Not run yet."
+            return "\n".join(
+                [
+                    "Partition Prep",
+                    mode_line,
+                    f"Status: {status}",
+                    "",
+                    "Press [Enter] to prepare free space.",
+                ]
+            )
+
+        if step == "ventoy_usb":
+            if self._config.ventoy_disk_number is None:
+                return "\n".join(
+                    [
+                        "Ventoy USB",
+                        "Not required for this run.",
+                        "",
+                        "Press [Enter] to continue.",
+                    ]
+                )
+            return "\n".join(
+                [
+                    "Ventoy USB",
+                    f"Disk: {self._config.ventoy_disk_number}",
+                    f"Status: {self._ventoy_summary}",
+                    "",
+                    "Press [Enter] to validate Ventoy USB.",
+                ]
+            )
+
+        if step == "summary":
+            blocker_lines = "\n".join(f"- {item}" for item in blockers) if blockers else "- none"
+            return "\n".join(
+                [
+                    "Summary",
+                    mode_line,
+                    f"Ready to continue: {'Yes' if ready else 'No'}",
+                    "",
+                    "Blockers:",
+                    blocker_lines,
+                    "",
+                    "Press [Enter] to continue to confirmation.",
+                ]
+            )
+
+        if step == "confirm":
+            return "\n".join(
+                [
+                    "Confirm",
+                    f"Ready to continue: {'Yes' if ready else 'No'}",
+                    "",
+                    "Press [Enter] to complete Windows prep flow.",
+                ]
+            )
+
+        return "Guided step unavailable."
 
     def _detailed_content(self) -> str:
         stage = WINDOWS_STAGES[self._stage_idx]
@@ -280,6 +401,16 @@ class WindowsPrepApp(App[int]):
                 else "YOLO: disabled."
             )
             return f"Welcome\n{mode_line}\n{yolo_line}\n\nPath: compatibility -> backup -> partition -> summary -> confirm\nRecent: {recent}"
+        if stage == "settings":
+            yolo_line = (
+                f"YOLO: enabled ({len(self._yolo_approved_failures)} approved FAIL checks)."
+                if self._yolo_mode
+                else "YOLO: disabled."
+            )
+            return (
+                f"Settings\n{mode_line}\n{yolo_line}\n\n"
+                "Toggle YOLO in this settings screen with [T]."
+            )
         if stage == "compatibility":
             compat_state = "READY" if self._compatibility_allows_progress() else "BLOCKED"
             yolo_suffix = " (YOLO override active)" if self._yolo_mode and not self._can_continue else ""
@@ -356,6 +487,105 @@ class WindowsPrepApp(App[int]):
         self._append_note(f"Preflight refresh: {'ready' if self._can_continue else 'blocked'}")
         self._set_status("Preflight refreshed.")
         self._render()
+        if not self._unapproved_failures():
+            self._compat_prompt_active = False
+            self._compat_prompt_index = 0
+            self._compat_prompt_failures = []
+            self._compat_prompt_message = ""
+
+    def _start_compat_prompt(self) -> None:
+        self._compat_prompt_failures = self._unapproved_failures()
+        self._compat_prompt_index = 0
+        self._compat_prompt_active = bool(self._compat_prompt_failures)
+        self._compat_prompt_message = "Attempt auto-fix for this check? [Y/N]"
+
+    def _attempt_fix_for_failure(self, name: str) -> tuple[bool, str]:
+        key = name.strip().lower()
+        if key == "fast_startup":
+            subprocess.run(
+                ["powershell.exe", "-NoProfile", "-Command", "powercfg /h off; Set-ItemProperty -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power' -Name HiberbootEnabled -Type DWord -Value 0 -ErrorAction SilentlyContinue"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            return True, "Attempted to disable Fast Startup."
+        if key == "winre":
+            completed = subprocess.run(
+                ["reagentc.exe", "/enable"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if completed.returncode == 0:
+                return True, "Attempted to enable Windows RE."
+            detail = completed.stderr.strip() or completed.stdout.strip() or "Unknown reagentc error."
+            return False, f"Could not enable WinRE automatically: {detail}"
+        if key == "admin":
+            return False, "Cannot auto-fix admin from inside app. Relaunch as Administrator."
+        if key == "bitlocker":
+            system_drive = (os.environ.get("SystemDrive", "C:") or "C:").strip()
+            completed = subprocess.run(
+                ["manage-bde.exe", "-off", system_drive],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if completed.returncode == 0:
+                return (
+                    True,
+                    "Attempted BitLocker decryption start. Progress may take time; flow remains blocked until fully decrypted.",
+                )
+            detail = completed.stderr.strip() or completed.stdout.strip() or "Unknown manage-bde error."
+            return False, f"Could not start BitLocker decryption: {detail}"
+        if key == "secure_boot":
+            return False, "Secure Boot must be changed in BIOS/UEFI firmware."
+        if key == "boot_mode":
+            return False, "Boot mode must be changed in BIOS/UEFI firmware."
+        if key == "partition_style":
+            return False, "Partition style conversion is destructive; manual operation required."
+        if key == "windows_version":
+            return False, "Windows version upgrade must be done manually."
+        return False, "No automatic fix is available for this check."
+
+    def _handle_compat_prompt_response(self, do_fix: bool) -> None:
+        if not self._compat_prompt_active or not self._compat_prompt_failures:
+            return
+        idx = min(self._compat_prompt_index, len(self._compat_prompt_failures) - 1)
+        failure = self._compat_prompt_failures[idx]
+        label = CHECK_LABELS.get(failure.get("name", ""), failure.get("name", "unknown"))
+
+        if do_fix:
+            ok, message = self._attempt_fix_for_failure(failure.get("name", ""))
+            self._append_note(f"{label}: {message}")
+            self._compat_prompt_message = f"{label}: {message}"
+        else:
+            self._append_note(f"{label}: auto-fix skipped by user.")
+            self._compat_prompt_message = f"{label}: skipped."
+
+        # Move to the next item in this review pass before refreshing list state.
+        self._compat_prompt_index += 1
+        self.action_refresh_runtime()
+        remaining = self._unapproved_failures()
+        self._compat_prompt_failures = remaining
+        if not remaining:
+            self._compat_prompt_active = False
+            self._compat_prompt_index = 0
+            self._compat_prompt_message = "All compatibility failures cleared."
+            self._set_status("Compatibility failures cleared.")
+            self._render()
+            return
+
+        if self._compat_prompt_index >= len(remaining):
+            self._compat_prompt_active = False
+            self._compat_prompt_index = 0
+            self._compat_prompt_message = "Compatibility review pass complete."
+            self._set_status("Some failures still remain. Press [Enter] to review again.")
+            self._render()
+            return
+
+        self._compat_prompt_message = "Attempt auto-fix for this check? [Y/N]"
+        self._set_status("Choose [Y] or [N] for each failing check.")
+        self._render()
 
     def action_toggle_apply_mode(self) -> None:
         self._flow.apply_changes = not self._flow.apply_changes
@@ -365,6 +595,10 @@ class WindowsPrepApp(App[int]):
 
     def action_toggle_yolo_mode(self) -> None:
         """Toggle YOLO mode."""
+        if not self._show_details and WINDOWS_STAGES[self._simple_step_idx] != "settings":
+            self._set_status("Open the Settings step to change YOLO mode.")
+            self._render()
+            return
         if self._yolo_mode:
             self._yolo_mode = False
             self._yolo_approved_failures.clear()
@@ -463,6 +697,50 @@ class WindowsPrepApp(App[int]):
         self.exit(EXIT_QUIT)
 
     def action_do_next_step(self) -> None:
+        if not self._show_details:
+            step = WINDOWS_STAGES[self._simple_step_idx]
+            if step == "settings":
+                self._simple_step_idx = WINDOWS_STAGES.index("welcome")
+            elif step == "welcome":
+                self._simple_step_idx = WINDOWS_STAGES.index("compatibility")
+            elif step == "compatibility":
+                if not self._compatibility_allows_progress():
+                    self._start_compat_prompt()
+                    if self._compat_prompt_active:
+                        self._set_status("Compatibility checks are blocking progress. Choose [Y] or [N].")
+                    else:
+                        self._set_status("Compatibility checks are blocking progress. Press [R].")
+                    self._render()
+                    return
+                self._simple_step_idx = WINDOWS_STAGES.index("backup")
+            elif step == "backup":
+                self.action_run_backup()
+                if not self._backup_result or not self._backup_result.ok:
+                    return
+                self._simple_step_idx = WINDOWS_STAGES.index("partition_prep")
+            elif step == "partition_prep":
+                self.action_run_partition()
+                if not self._partition_result or not self._partition_result.ok:
+                    return
+                if self._config.ventoy_disk_number is None:
+                    self._simple_step_idx = WINDOWS_STAGES.index("summary")
+                else:
+                    self._simple_step_idx = WINDOWS_STAGES.index("ventoy_usb")
+            elif step == "ventoy_usb":
+                if self._config.ventoy_disk_number is not None and not self._ventoy_validated:
+                    self.action_validate_ventoy()
+                    if not self._ventoy_validated:
+                        return
+                self._simple_step_idx = WINDOWS_STAGES.index("summary")
+            elif step == "summary":
+                self._simple_step_idx = WINDOWS_STAGES.index("confirm")
+            elif step == "confirm":
+                self.action_continue_flow()
+                return
+            self._set_status(f"Step: {WINDOWS_STAGES[self._simple_step_idx]}.")
+            self._render()
+            return
+
         if not self._compatibility_allows_progress():
             self._set_stage(1)
             self._set_status("Compatibility checks are blocking progress. Fix the listed items, then press [R].")
@@ -487,8 +765,21 @@ class WindowsPrepApp(App[int]):
         else:
             self._set_status("Detailed view enabled." if self._show_details else "Simple view enabled.")
         if not self._show_details:
-            self._stage_idx = 0
+            self._stage_idx = WINDOWS_STAGES.index("welcome")
+            if self._simple_step_idx >= len(WINDOWS_STAGES):
+                self._simple_step_idx = WINDOWS_STAGES.index("settings")
         self._render()
+
+    def on_key(self, event: events.Key) -> None:
+        if not (not self._show_details and WINDOWS_STAGES[self._simple_step_idx] == "compatibility" and self._compat_prompt_active):
+            return
+        if event.key.lower() in {"y"}:
+            self._handle_compat_prompt_response(True)
+            event.stop()
+            return
+        if event.key.lower() in {"n"}:
+            self._handle_compat_prompt_response(False)
+            event.stop()
 
     def action_next_stage(self) -> None: self._set_stage((self._stage_idx + 1) % len(WINDOWS_STAGES))
     def action_prev_stage(self) -> None: self._set_stage((self._stage_idx - 1) % len(WINDOWS_STAGES))

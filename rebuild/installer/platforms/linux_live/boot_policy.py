@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import json
 from pathlib import Path
 import re
 import subprocess
@@ -12,6 +13,7 @@ from typing import Any, Protocol
 WINDOWS_EFI_PATH = Path("EFI/Microsoft/Boot/bootmgfw.efi")
 LIMINE_PRIMARY_PATH = Path("EFI/Limine/BOOTX64.EFI")
 LIMINE_FALLBACK_PATH = Path("EFI/BOOT/BOOTX64.EFI")
+EFI_SYSTEM_PARTITION_GUID = "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
 
 
 class BootPolicyError(RuntimeError):
@@ -34,6 +36,13 @@ class SubprocessCommandRunner:
             text=True,
             check=False,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class EfiMountResolution:
+    mount_path: str
+    mounted_by_tool: bool
+    notes: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +80,98 @@ def _run_checked(runner: CommandRunner, command: list[str]) -> str:
         detail = completed.stderr.strip() or completed.stdout.strip() or "command failed"
         raise BootPolicyError(f"{' '.join(command)}: {detail}")
     return completed.stdout
+
+
+def _run_optional(runner: CommandRunner, command: list[str]) -> str:
+    completed = runner.run(command)
+    if completed.returncode != 0:
+        return ""
+    return completed.stdout
+
+
+def _mounted_candidates() -> list[str]:
+    candidates: list[str] = []
+    try:
+        for raw in Path("/proc/mounts").read_text(encoding="utf-8").splitlines():
+            parts = raw.split()
+            if len(parts) < 3:
+                continue
+            mountpoint = parts[1]
+            fstype = parts[2].lower()
+            if fstype in {"vfat", "fat", "fat32", "msdos"}:
+                candidates.append(mountpoint)
+    except OSError:
+        return []
+    return candidates
+
+
+def _detect_efi_partition_device(runner: CommandRunner) -> str:
+    output = _run_optional(runner, ["lsblk", "-J", "-o", "PATH,TYPE,PARTTYPE,MOUNTPOINTS"])
+    if not output:
+        return ""
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError:
+        return ""
+
+    def walk(node: dict[str, Any]) -> str:
+        if str(node.get("type", "")).strip().lower() == "part":
+            parttype = str(node.get("parttype", "")).strip().lower()
+            if parttype == EFI_SYSTEM_PARTITION_GUID:
+                return str(node.get("path", "")).strip()
+        for child in node.get("children", []) or []:
+            if isinstance(child, dict):
+                found = walk(child)
+                if found:
+                    return found
+        return ""
+
+    for device in payload.get("blockdevices", []) or []:
+        if isinstance(device, dict):
+            found = walk(device)
+            if found:
+                return found
+    return ""
+
+
+def resolve_efi_mount_path(
+    preferred_mount: str | Path = "/boot/efi",
+    *,
+    runner: CommandRunner | None = None,
+) -> EfiMountResolution:
+    """Resolve a usable EFI mount path, attempting auto-mount when needed."""
+    active_runner = runner or SubprocessCommandRunner()
+    notes: list[str] = []
+
+    preferred = Path(preferred_mount).expanduser()
+    if preferred.exists() and preferred.is_dir() and preferred.is_mount():
+        return EfiMountResolution(mount_path=str(preferred), mounted_by_tool=False, notes=tuple(notes))
+
+    mounted = _mounted_candidates()
+    for path in mounted:
+        candidate = Path(path)
+        if (candidate / "EFI").exists():
+            notes.append(f"Using already-mounted EFI candidate: {candidate}")
+            return EfiMountResolution(mount_path=str(candidate), mounted_by_tool=False, notes=tuple(notes))
+
+    device = _detect_efi_partition_device(active_runner)
+    if not device:
+        notes.append("Could not auto-detect EFI partition device via lsblk.")
+        return EfiMountResolution(mount_path=str(preferred), mounted_by_tool=False, notes=tuple(notes))
+
+    preferred.mkdir(parents=True, exist_ok=True)
+    mounted_ok = _run_optional(active_runner, ["mount", device, str(preferred)])
+    if mounted_ok != "":
+        notes.append(f"Auto-mounted EFI partition {device} to {preferred}.")
+        return EfiMountResolution(mount_path=str(preferred), mounted_by_tool=True, notes=tuple(notes))
+
+    # mount sometimes prints nothing on success, so verify directly
+    if preferred.is_mount():
+        notes.append(f"Auto-mounted EFI partition {device} to {preferred}.")
+        return EfiMountResolution(mount_path=str(preferred), mounted_by_tool=True, notes=tuple(notes))
+
+    notes.append(f"Failed to auto-mount EFI partition {device} to {preferred}.")
+    return EfiMountResolution(mount_path=str(preferred), mounted_by_tool=False, notes=tuple(notes))
 
 
 def _validate_efi_mount(efi_mount: str | Path) -> tuple[Path, tuple[str, ...], tuple[str, ...]]:
