@@ -93,25 +93,10 @@ class WindowsPrepApp(App[int]):
     """
 
     BINDINGS = [
-        Binding("1", "goto_1", "Welcome"),
-        Binding("2", "goto_2", "Compat"),
-        Binding("3", "goto_3", "Backup"),
-        Binding("4", "goto_4", "Partition"),
-        Binding("5", "goto_5", "Ventoy"),
-        Binding("6", "goto_6", "Secure"),
-        Binding("7", "goto_7", "Network"),
-        Binding("8", "goto_8", "Summary"),
-        Binding("9", "goto_9", "Confirm"),
-        Binding("0", "goto_10", "Errors"),
-        Binding("n,right", "next_stage", "Next"),
-        Binding("p,left", "prev_stage", "Prev"),
+        Binding("enter,space", "do_next_step", "Next Step"),
         Binding("r", "refresh_runtime", "Refresh"),
-        Binding("a", "toggle_apply_mode", "Apply/Dry"),
-        Binding("b", "run_backup", "Backup"),
-        Binding("s", "run_partition", "Partition"),
-        Binding("v", "validate_ventoy", "Ventoy"),
-        Binding("c", "continue_flow", "Continue"),
-        Binding("l", "launch_legacy", "Legacy"),
+        Binding("d", "toggle_details", "Details"),
+        Binding("c", "do_next_step", "Next Step"),
         Binding("q", "quit_flow", "Quit"),
     ]
 
@@ -125,6 +110,7 @@ class WindowsPrepApp(App[int]):
         self._notes: list[str] = []
         self._last_error = ""
         self._status_message = "Ready."
+        self._show_details = False
         self._backup_result: FlowStepResult | None = None
         self._partition_result: FlowStepResult | None = None
         self._ventoy_cli_path = ""
@@ -145,10 +131,11 @@ class WindowsPrepApp(App[int]):
             yield Static("", id="content")
             yield Static("", id="status")
             yield Static(
-                "Keys: [1-0] stage [N/P] nav [R] refresh [A] mode [B] backup [S] partition [V] ventoy [C] continue [L] legacy [Q] quit",
+                "Keys: [Enter] next step  [R] refresh  [D] details  [Q] quit",
                 id="hints",
             )
-        yield Footer()
+        if self._show_details:
+            yield Footer()
 
     def on_mount(self) -> None:
         self.action_refresh_runtime()
@@ -194,6 +181,8 @@ class WindowsPrepApp(App[int]):
         return "ok"
 
     def _render_stage_bar(self) -> str:
+        if not self._show_details:
+            return "Simple mode: follow the guided steps below. Press [D] for advanced details."
         parts: list[str] = []
         for i, stage in enumerate(WINDOWS_STAGES, start=1):
             active = "*" if i - 1 == self._stage_idx else " "
@@ -209,7 +198,45 @@ class WindowsPrepApp(App[int]):
             lines.append(f"{label:<18} {_status_label(check['status']):<6} {check['value']:<8} {check['message']}")
         return "\n".join(lines)
 
-    def _content(self) -> str:
+    def _simple_content(self) -> str:
+        checks = self._check_map()
+        ready, blockers = self._flow_readiness()
+        check_state = "Ready" if self._can_continue else "Needs attention"
+        backup_state = "Done" if self._backup_result and self._backup_result.ok else "Pending"
+        partition_state = "Done" if self._partition_result and self._partition_result.ok else "Pending"
+        ventoy_required = self._config.ventoy_disk_number is not None
+        ventoy_state = (
+            "Not required"
+            if not ventoy_required
+            else ("Done" if self._ventoy_validated else "Pending")
+        )
+
+        failure_lines = [
+            f"- {CHECK_LABELS.get(c['name'], c['name'])}: {c['message']}"
+            for c in self._checks
+            if c["status"] == "fail"
+        ]
+        blocker_lines = "\n".join(f"- {item}" for item in blockers) if blockers else "- none"
+
+        return "\n".join(
+            [
+                "Guided Setup",
+                "",
+                f"1. Compatibility checks: {check_state}",
+                f"2. Backup Windows boot data: {backup_state}",
+                f"3. Prepare free space: {partition_state}",
+                f"4. Validate Ventoy USB: {ventoy_state}",
+                f"5. Ready to continue: {'Yes' if ready else 'No'}",
+                "",
+                f"Current mode: {self._mode()}",
+                "Next action: Press [Enter] to do the next required step automatically.",
+                "",
+                "Why blocked:",
+                ("\n".join(failure_lines) if failure_lines else blocker_lines),
+            ]
+        )
+
+    def _detailed_content(self) -> str:
         stage = WINDOWS_STAGES[self._stage_idx]
         checks = self._check_map()
         mode_line = f"Mode: {self._mode()} (target free space: {self._flow.target_free_gib} GiB)"
@@ -249,6 +276,11 @@ class WindowsPrepApp(App[int]):
         fails = [f"- {CHECK_LABELS.get(c['name'], c['name'])}: {c['message']}" for c in self._checks if c["status"] == "fail"]
         warns = [f"- {CHECK_LABELS.get(c['name'], c['name'])}: {c['message']}" for c in self._checks if c["status"] == "warn"]
         return f"Error Handling\nLast Error: {self._last_error or 'none'}\nFailures:\n{'\n'.join(fails) if fails else '- none'}\nWarnings:\n{'\n'.join(warns) if warns else '- none'}"
+
+    def _content(self) -> str:
+        if self._show_details:
+            return self._detailed_content()
+        return self._simple_content()
 
     def _render(self) -> None:
         self.query_one("#stages", Static).update(self._render_stage_bar())
@@ -365,6 +397,30 @@ class WindowsPrepApp(App[int]):
             return
         self._set_status("Windows Python prep flow completed.")
         self.exit(EXIT_QUIT)
+
+    def action_do_next_step(self) -> None:
+        if not self._can_continue:
+            self._set_stage(1)
+            self._set_status("Compatibility checks are blocking progress. Fix the listed items, then press [R].")
+            self._render()
+            return
+        if not self._backup_result or not self._backup_result.ok:
+            self.action_run_backup()
+            return
+        if not self._partition_result or not self._partition_result.ok:
+            self.action_run_partition()
+            return
+        if self._config.ventoy_disk_number is not None and not self._ventoy_validated:
+            self.action_validate_ventoy()
+            return
+        self.action_continue_flow()
+
+    def action_toggle_details(self) -> None:
+        self._show_details = not self._show_details
+        self._set_status("Detailed view enabled." if self._show_details else "Simple view enabled.")
+        if not self._show_details:
+            self._stage_idx = 0
+        self._render()
 
     def action_next_stage(self) -> None: self._set_stage((self._stage_idx + 1) % len(WINDOWS_STAGES))
     def action_prev_stage(self) -> None: self._set_stage((self._stage_idx - 1) % len(WINDOWS_STAGES))
