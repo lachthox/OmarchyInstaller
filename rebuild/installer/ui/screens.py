@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 import shutil
 
 from textual.app import App, ComposeResult
@@ -12,7 +13,14 @@ from textual.containers import Vertical
 from textual import events
 from textual.widgets import Footer, Header, Static
 
-from ..platforms.linux_live.boot_policy import BootPolicyError, BootPolicySummary, summarize_boot_policy
+from ..platforms.linux_live.boot_policy import (
+    BootPolicyError,
+    BootPolicySummary,
+    LIMINE_FALLBACK_PATH,
+    LIMINE_PRIMARY_PATH,
+    WINDOWS_EFI_PATH,
+    summarize_boot_policy,
+)
 from ..platforms.linux_live.discovery import (
     HandoffDiscoveryError,
     HandoffDiscoveryResult,
@@ -32,6 +40,15 @@ LIVE_BOOTSTRAP_SCREEN_CONTRACT: tuple[str, ...] = (
     "finalize",
     "errors",
 )
+
+LIVE_STAGE_LABELS: dict[str, str] = {
+    "welcome": "Welcome",
+    "network": "Network",
+    "partitioning": "Partition",
+    "install": "Install",
+    "finalize": "Finalize",
+    "errors": "Issues",
+}
 
 REQUIRED_LIVE_BINARIES: tuple[str, ...] = (
     "python3",
@@ -88,10 +105,10 @@ def _now_utc() -> str:
 def _partition_warnings_for_standalone(handoff_note: str) -> tuple[str, ...]:
     warnings = [
         "NO validated handoff config found. Running in standalone/manual mode.",
-        "Partition step is HIGH-RISK without plan metadata from Windows prep.",
-        "Wrong disk or partition choice can permanently destroy data.",
-        "Verify target disk, EFI partition, and free-space range manually before continuing.",
-        "Confirm Windows backup and recovery path before any partition write.",
+        "NO CONFIG MODE will use AUTOMATIC WHOLE-DISK install behavior.",
+        "THIS CAN DELETE YOUR EXISTING OS AND ALL DATA ON THE TARGET DISK.",
+        "Wrong target disk choice can permanently destroy data.",
+        "Confirm backup and recovery path before continuing.",
     ]
     if handoff_note.strip():
         warnings.append(f"Discovery note: {handoff_note.strip()}")
@@ -223,14 +240,18 @@ def _status_marker(stage_id: str, snapshot: LiveRuntimeSnapshot) -> str:
     return "warn" if error_present else "ok"
 
 
+def _status_tag(marker: str) -> str:
+    if marker == "ok":
+        return "OK"
+    if marker == "blocked":
+        return "BLOCKED"
+    return "WARN"
+
+
 def _next_stage(stage_id: str, snapshot: LiveRuntimeSnapshot) -> str:
     if stage_id == "welcome":
-        if not snapshot.dependencies_ok:
-            return "welcome"
         return "network"
     if stage_id == "network":
-        if not _network_ready(snapshot):
-            return "network"
         return "partitioning"
     if stage_id == "partitioning":
         return "install"
@@ -251,8 +272,8 @@ def format_stage_content(
 ) -> str:
     """Render stage-specific body content from collected runtime state."""
     if stage_id == "welcome":
-        mode_line = "Plan mode (validated handoff)" if snapshot.handoff_mode == "ventoy-plan" else "Standalone mode (manual partition caution)"
-        partition_line = "Ready from handoff plan" if _partition_ready(snapshot) else "Manual partition mode with warnings"
+        mode_line = "Plan mode (validated handoff)" if snapshot.handoff_mode == "ventoy-plan" else "No-config mode (automatic whole-disk install path)"
+        partition_line = "Ready from handoff plan" if _partition_ready(snapshot) else "Automatic whole-disk mode with destructive warnings"
         return "\n".join(
             [
                 "Guided Setup",
@@ -311,6 +332,7 @@ def format_stage_content(
                     f"Source Root: {plan.source_root}",
                     "",
                     "Partitioning may proceed using validated metadata from Windows prep.",
+                    'No manual "Proceed" confirmation is required in config mode.',
                 ]
             )
         warning_lines = "\n".join(f"WARNING {idx}. {item}" for idx, item in enumerate(snapshot.partition_warnings, start=1))
@@ -325,16 +347,16 @@ def format_stage_content(
         else:
             confirm_lines = (
                 "WARNING YOU COULD DELETE YOUR EXISTING OS PROCEED WITH CAUTION\n"
-                "Press [Enter] again to start confirmation."
+                "Press [[Enter]] again to start confirmation."
             )
         return "\n".join(
             [
                 "Partition Plan",
-                "HIGH-RISK MANUAL MODE",
+                "HIGH-RISK NO-CONFIG MODE",
                 "",
                 warning_lines or "WARNING. No validated partition plan was found.",
                 "",
-                "Proceed only if you manually verified disk/partition targets.",
+                "If you continue in NO CONFIG mode, installer path is automatic whole-disk target.",
                 "",
                 confirm_lines,
             ]
@@ -344,22 +366,22 @@ def format_stage_content(
         if snapshot.install_result is None:
             return "\n".join(
                 [
-                    "Install",
-                    "Dry-run orchestration probe: FAILED",
-                    f"Error: {snapshot.install_error or 'install probe did not execute'}",
+                    "Install Readiness",
+                    "Installer engine check: FAILED",
+                    f"Error: {snapshot.install_error or 'Installer probe did not execute'}",
                 ]
             )
-        commands = "\n".join(f"- {cmd}" for cmd in snapshot.install_result.commands[:8]) or "- none"
+        command_count = len(snapshot.install_result.commands)
+        command_line = "No shell commands queued yet." if command_count == 0 else f"{command_count} command(s) prepared."
         return "\n".join(
             [
-                "Install",
-                "Dry-run orchestration probe: PASS",
-                f"Status: {snapshot.install_result.status}",
-                f"Stage Root: {snapshot.install_result.stage_root}",
-                f"Error: {snapshot.install_error or 'none'}",
+                "Install Readiness",
+                "Installer engine check: PASS",
+                "Core install flow is prepared for the next step.",
+                f"Planner status: {snapshot.install_result.status}",
+                f"Command plan: {command_line}",
                 "",
-                "Planned Commands:",
-                commands,
+                "Press [Enter] to continue to finalize checks.",
             ]
         )
 
@@ -368,17 +390,24 @@ def format_stage_content(
             return "\n".join(
                 [
                     "Finalize",
-                    "Boot policy check: BLOCKED",
+                    "Boot policy / EFI check: BLOCKED",
                     f"Error: {snapshot.boot_policy_error or 'boot policy probe did not execute'}",
                 ]
             )
         blockers = "\n".join(f"- {item}" for item in snapshot.boot_policy_result.blockers) or "- none"
         warnings = "\n".join(f"- {item}" for item in snapshot.boot_policy_result.warnings) or "- none"
+        efi_root = Path(snapshot.boot_policy_result.efi_mount)
+        windows_target = efi_root / WINDOWS_EFI_PATH
+        limine_primary = efi_root / LIMINE_PRIMARY_PATH
+        limine_fallback = efi_root / LIMINE_FALLBACK_PATH
         return "\n".join(
             [
                 "Finalize",
+                "Boot policy / EFI check: ATTEMPTED",
                 f"Can Finalize: {snapshot.boot_policy_result.can_finalize}",
                 f"EFI Mount: {snapshot.boot_policy_result.efi_mount}",
+                f"Windows EFI target: {windows_target}",
+                f"Limine EFI targets: {limine_primary} | {limine_fallback}",
                 "",
                 "Blockers:",
                 blockers,
@@ -491,7 +520,7 @@ class LiveInstallerApp(App[int]):
         yield Header(show_clock=True)
         with Vertical(id="body"):
             yield Static("Omarchy Arch Live Installer (Python TUI)", id="title")
-            yield Static("Guided mode: Network -> Partitioning -> Install -> Finalize. Press [D] for advanced details.", id="subtitle")
+            yield Static("Simple guided setup. Press [Enter] for the next step. Press [D] for advanced details.", id="subtitle")
             yield Static("", id="stages")
             yield Static("", id="content")
             yield Static("", id="status")
@@ -504,6 +533,13 @@ class LiveInstallerApp(App[int]):
     def _active_stage_id(self) -> str:
         return self._stage_ids[self._active_stage_index]
 
+    def _partition_confirmation_active(self) -> bool:
+        return bool(
+            self._partition_confirm_armed
+            and self._active_stage_id() == "partitioning"
+            and self._snapshot.handoff_mode == "standalone"
+        )
+
     def _set_status(self, message: str) -> None:
         self._status_message = message.strip() or "Ready."
 
@@ -511,8 +547,9 @@ class LiveInstallerApp(App[int]):
         stage_line_parts = []
         for idx, stage_id in enumerate(self._stage_ids, start=1):
             marker = _status_marker(stage_id, self._snapshot)
+            label = LIVE_STAGE_LABELS.get(stage_id, stage_id.title())
             active = "*" if idx - 1 == self._active_stage_index else " "
-            stage_line_parts.append(f"{active}{idx}:{stage_id}[{marker}]")
+            stage_line_parts.append(f"{active}{idx}:{label}[{_status_tag(marker)}]")
 
         stages_widget = self.query_one("#stages", Static)
         if self._details_mode:
@@ -533,9 +570,9 @@ class LiveInstallerApp(App[int]):
 
         hint_widget = self.query_one("#hints", Static)
         if self._details_mode:
-            hint_widget.update("Keys: [Enter] next step  [N/P] nav  [1-6] jump  [R] refresh  [D] details  [Q] quit")
+            hint_widget.update("Keys: [Enter] next  [N/P] move  [1-6] jump  [R] refresh  [D] details  [Q] quit")
         else:
-            hint_widget.update("Keys: [Enter] next step  [R] refresh  [D] details  [Q] quit")
+            hint_widget.update("Keys: [Enter] next  [R] refresh  [D] details  [Q] quit")
 
     def _set_stage(self, stage_id: str) -> None:
         self._active_stage_index = self._stage_ids.index(stage_id)
@@ -559,45 +596,96 @@ class LiveInstallerApp(App[int]):
                 self._set_status('Type exactly "Proceed" then press Enter.')
                 self._render()
                 return
+        if current == "partitioning" and self._snapshot.handoff_mode == "ventoy-plan":
+            self._partition_confirm_armed = False
+            self._partition_confirm_text = ""
+            self._partition_confirmed = True
         target = _next_stage(current, self._snapshot)
+        if target in {"install", "finalize", "errors"}:
+            self._snapshot = collect_live_runtime_snapshot(
+                live_runtime_version=self._live_runtime_version,
+                max_plan_age_hours=self._max_plan_age_hours,
+                efi_mount=self._efi_mount,
+            )
         self._active_stage_index = self._stage_ids.index(target)
-        self._set_status(f"Moved to {target}.")
+        if target == "install":
+            self._set_status("Moved to install. Install probe attempted.")
+        elif target == "finalize":
+            self._set_status("Moved to finalize. EFI/bootloader checks attempted.")
+        else:
+            self._set_status(f"Moved to {target}.")
         self._render()
 
     def action_next_stage(self) -> None:
+        if self._partition_confirmation_active():
+            self._set_status('Type exactly "Proceed" then press Enter.')
+            self._render()
+            return
         self._active_stage_index = (self._active_stage_index + 1) % len(self._stage_ids)
         self._set_status(f"Moved to {self._active_stage_id()}.")
         self._render()
 
     def action_previous_stage(self) -> None:
+        if self._partition_confirmation_active():
+            self._set_status('Type exactly "Proceed" then press Enter.')
+            self._render()
+            return
         self._active_stage_index = (self._active_stage_index - 1) % len(self._stage_ids)
         self._set_status(f"Moved to {self._active_stage_id()}.")
         self._render()
 
     def action_goto_welcome(self) -> None:
+        if self._partition_confirmation_active():
+            self._set_status('Type exactly "Proceed" then press Enter.')
+            self._render()
+            return
         self._set_stage("welcome")
 
     def action_goto_network(self) -> None:
+        if self._partition_confirmation_active():
+            self._set_status('Type exactly "Proceed" then press Enter.')
+            self._render()
+            return
         self._set_stage("network")
 
     def action_goto_partitioning(self) -> None:
         self._set_stage("partitioning")
 
     def action_goto_install(self) -> None:
+        if self._partition_confirmation_active():
+            self._set_status('Type exactly "Proceed" then press Enter.')
+            self._render()
+            return
         self._set_stage("install")
 
     def action_goto_finalize(self) -> None:
+        if self._partition_confirmation_active():
+            self._set_status('Type exactly "Proceed" then press Enter.')
+            self._render()
+            return
         self._set_stage("finalize")
 
     def action_goto_errors(self) -> None:
+        if self._partition_confirmation_active():
+            self._set_status('Type exactly "Proceed" then press Enter.')
+            self._render()
+            return
         self._set_stage("errors")
 
     def action_toggle_details(self) -> None:
+        if self._partition_confirmation_active():
+            self._set_status('Type exactly "Proceed" then press Enter.')
+            self._render()
+            return
         self._details_mode = not self._details_mode
         self._set_status("Detailed view enabled." if self._details_mode else "Simple guided view enabled.")
         self._render()
 
     def action_refresh_runtime(self) -> None:
+        if self._partition_confirmation_active():
+            self._set_status('Type exactly "Proceed" then press Enter.')
+            self._render()
+            return
         self._snapshot = collect_live_runtime_snapshot(
             live_runtime_version=self._live_runtime_version,
             max_plan_age_hours=self._max_plan_age_hours,
@@ -615,9 +703,7 @@ class LiveInstallerApp(App[int]):
         self._render()
 
     def on_key(self, event: events.Key) -> None:
-        if not self._partition_confirm_armed:
-            return
-        if self._active_stage_id() != "partitioning" or self._snapshot.handoff_mode != "standalone":
+        if not self._partition_confirmation_active():
             return
         if event.key == "backspace":
             self._partition_confirm_text = self._partition_confirm_text[:-1]

@@ -98,6 +98,7 @@ class WindowsPrepApp(App[int]):
         Binding("enter,space", "do_next_step", "Next Step"),
         Binding("r", "refresh_runtime", "Refresh"),
         Binding("d", "toggle_details", "Details"),
+        Binding("y", "toggle_yolo_mode", "YOLO"),
         Binding("c", "do_next_step", "Next Step"),
         Binding("q", "quit_flow", "Quit"),
     ]
@@ -139,7 +140,7 @@ class WindowsPrepApp(App[int]):
             yield Static("", id="content")
             yield Static("", id="status")
             yield Static(
-                "Keys: [Enter] next step  [R] refresh  [D] details  [Q] quit",
+                "Keys: [Enter] next step  [R] refresh  [D] details  [Y] yolo  [Q] quit",
                 id="hints",
             )
         if self._show_details:
@@ -204,13 +205,14 @@ class WindowsPrepApp(App[int]):
         return "ok"
 
     def _render_stage_bar(self) -> str:
+        yolo_label = " YOLO:ON" if self._yolo_mode else " YOLO:OFF"
         if not self._show_details:
-            return "Simple mode: follow the guided steps below. Press [D] for advanced details."
+            return f"Simple mode: follow the guided steps below. Press [D] for advanced details.{yolo_label}"
         parts: list[str] = []
         for i, stage in enumerate(WINDOWS_STAGES, start=1):
             active = "*" if i - 1 == self._stage_idx else " "
             parts.append(f"{active}{i % 10}:{stage}[{self._stage_health(stage)}]")
-        return "  ".join(parts)
+        return "  ".join(parts) + yolo_label
 
     def _checks_table(self) -> str:
         if not self._checks:
@@ -252,7 +254,7 @@ class WindowsPrepApp(App[int]):
                 "",
                 f"Current mode: {self._mode()}",
                 (
-                    "YOLO mode: enabled (approved fails can be bypassed)."
+                    f"YOLO mode: enabled ({len(self._yolo_approved_failures)} approved FAIL checks can be bypassed)."
                     if self._yolo_mode
                     else "YOLO mode: disabled."
                 ),
@@ -272,11 +274,21 @@ class WindowsPrepApp(App[int]):
         recent = " | ".join(self._notes[-3:]) if self._notes else "No actions yet."
         ready, blockers = self._flow_readiness()
         if stage == "welcome":
-            return f"Welcome\n{mode_line}\n\nPath: compatibility -> backup -> partition -> summary -> confirm\nRecent: {recent}"
+            yolo_line = (
+                f"YOLO: enabled ({len(self._yolo_approved_failures)} approved FAIL checks)."
+                if self._yolo_mode
+                else "YOLO: disabled."
+            )
+            return f"Welcome\n{mode_line}\n{yolo_line}\n\nPath: compatibility -> backup -> partition -> summary -> confirm\nRecent: {recent}"
         if stage == "compatibility":
             compat_state = "READY" if self._compatibility_allows_progress() else "BLOCKED"
             yolo_suffix = " (YOLO override active)" if self._yolo_mode and not self._can_continue else ""
-            return f"Compatibility Checks\n{mode_line}\n{self._snapshot_summary}\n\n{self._checks_table()}\n\nState: {compat_state}{yolo_suffix}"
+            yolo_line = (
+                f"YOLO approvals: {', '.join(sorted(self._yolo_approved_failures)) or 'none'}"
+                if self._yolo_mode
+                else "YOLO approvals: n/a"
+            )
+            return f"Compatibility Checks\n{mode_line}\n{self._snapshot_summary}\n\n{self._checks_table()}\n\nState: {compat_state}{yolo_suffix}\n{yolo_line}"
         if stage == "backup":
             return f"Backup Stage\n{mode_line}\nPrimary: {self._flow._resolve_backup_destination()}\nFallback: {self._config.backup_fallback_destination or 'none'}\n\nResult: {backup}\n\nPress B to run."
         if stage == "partition_prep":
@@ -349,6 +361,29 @@ class WindowsPrepApp(App[int]):
         self._flow.apply_changes = not self._flow.apply_changes
         self._append_note(f"Mode switched to {self._mode()}")
         self._set_status(f"Mode switched to {self._mode()}.")
+        self._render()
+
+    def action_toggle_yolo_mode(self) -> None:
+        """Toggle YOLO mode."""
+        if self._yolo_mode:
+            self._yolo_mode = False
+            self._yolo_approved_failures.clear()
+            self._append_note("YOLO disabled.")
+            self._set_status("YOLO mode disabled.")
+            self._render()
+            return
+
+        if not self._checks:
+            self._checks, self._can_continue = _coerce_report(run_windows_preflight())
+        fail_names = {
+            check.get("name", "").strip().lower()
+            for check in self._checks
+            if check.get("status") == "fail" and check.get("name", "").strip()
+        }
+        self._yolo_mode = True
+        self._yolo_approved_failures.update(fail_names)
+        self._append_note(f"YOLO enabled ({len(fail_names)} fail checks approved).")
+        self._set_status(f"YOLO mode enabled. Approved {len(fail_names)} fail checks.")
         self._render()
 
     def action_run_backup(self) -> None:
