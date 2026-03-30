@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 import os
 from pathlib import Path
 import subprocess
@@ -14,15 +15,24 @@ from textual.binding import Binding
 from textual.containers import Vertical
 from textual.widgets import Footer, Header, Static
 
+from ...shared import PLAN_SCHEMA_VERSION, validate_plan_contract
+from .backup import DEFAULT_MIN_FREE_BYTES
 from .checks import run_windows_preflight
 from .disk_probe import DiskProbeError, collect_disk_probe_snapshot
 from .flow import FlowStepResult, WindowsMigrationFlow
-from .handoff import VentoyError, find_ventoy_cli_path, validate_ventoy_usb
+from .handoff import (
+    VentoyError,
+    find_ventoy_cli_path,
+    stage_ventoy_handoff_bundle,
+    validate_ventoy_usb,
+)
 
 
 EXIT_QUIT = 0
 EXIT_LAUNCH_LEGACY = 10
 GIB = 1024**3
+WINDOWS_PREP_VERSION = os.environ.get("OMARCHY_WINDOWS_PREP_VERSION", "0.1.0-dev")
+LIVE_RUNTIME_MIN_VERSION = os.environ.get("OMARCHY_LIVE_RUNTIME_MIN_VERSION", "0.1.0-dev")
 WINDOWS_STAGES: tuple[str, ...] = (
     "settings",
     "welcome",
@@ -48,6 +58,20 @@ CHECK_LABELS = {
     "winre": "WinRE",
 }
 
+STAGE_LABELS = {
+    "settings": "Settings",
+    "welcome": "Welcome",
+    "compatibility": "Safety Checks",
+    "backup": "Backup",
+    "partition_prep": "Free Space",
+    "ventoy_usb": "USB Prep",
+    "secure_boot": "Secure Boot",
+    "network": "Wi-Fi",
+    "summary": "Summary",
+    "confirm": "Finish",
+    "error_handling": "Issues",
+}
+
 
 def _coerce_report(report: dict[str, Any]) -> tuple[list[dict[str, str]], bool]:
     checks = report.get("checks", [])
@@ -70,6 +94,22 @@ def _coerce_report(report: dict[str, Any]) -> tuple[list[dict[str, str]], bool]:
 
 def _status_label(status: str) -> str:
     return {"pass": "PASS", "warn": "WARN", "fail": "FAIL"}.get(status, status.upper() or "UNKNOWN")
+
+
+def _now_utc() -> str:
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _git_capture(*args: str) -> str:
+    completed = subprocess.run(
+        ["git", "-C", str(Path.cwd()), *args],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        return ""
+    return completed.stdout.strip()
 
 
 @dataclass(slots=True)
@@ -220,14 +260,24 @@ class WindowsPrepApp(App[int]):
             visible_steps = [item for item in WINDOWS_STAGES if item not in {"error_handling", "network", "secure_boot"}]
             pos = visible_steps.index(step) + 1 if step in visible_steps else 1
             return (
-                f"Simple mode: one step at a time. Step {pos}/{len(visible_steps)}: {step}. "
+                f"Simple mode: one step at a time. Step {pos}/{len(visible_steps)}: {STAGE_LABELS.get(step, step)}. "
                 f"Press [D] for advanced details.{yolo_label}"
             )
-        parts: list[str] = []
-        for i, stage in enumerate(WINDOWS_STAGES, start=1):
-            active = "*" if i - 1 == self._stage_idx else " "
-            parts.append(f"{active}{i % 10}:{stage}[{self._stage_health(stage)}]")
-        return "  ".join(parts) + yolo_label
+        current_stage = WINDOWS_STAGES[self._stage_idx]
+        current_label = STAGE_LABELS.get(current_stage, current_stage)
+        visible_steps = [item for item in WINDOWS_STAGES if item not in {"error_handling", "network", "secure_boot"}]
+        progress_items: list[str] = []
+        for stage in visible_steps:
+            label = STAGE_LABELS.get(stage, stage)
+            if stage == current_stage:
+                progress_items.append(f"[{label}]")
+            else:
+                progress_items.append(label)
+        return (
+            f"Current step: {current_label} | "
+            + " -> ".join(progress_items)
+            + yolo_label
+        )
 
     def _checks_table(self) -> str:
         if not self._checks:
