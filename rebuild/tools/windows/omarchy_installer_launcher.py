@@ -65,6 +65,27 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Run Python preflight checks non-interactively and print JSON.",
     )
+    parser.add_argument(
+        "--python-apply",
+        action="store_true",
+        help="Apply Python backup/partition steps (default is dry-run simulation).",
+    )
+    parser.add_argument(
+        "--python-target-free-gib",
+        type=int,
+        default=120,
+        help="Target unallocated free space (GiB) for Python partition prep.",
+    )
+    parser.add_argument(
+        "--python-backup-destination",
+        default="",
+        help="Backup destination path for Python backup step.",
+    )
+    parser.add_argument(
+        "--python-backup-fallback-destination",
+        default="",
+        help="Fallback backup destination path for Python backup step.",
+    )
     return parser
 
 
@@ -81,11 +102,24 @@ def run_legacy_powershell(passthrough_args: list[str]) -> int:
     return int(completed.returncode)
 
 
-def run_python_tui(preflight_only: bool) -> int:
+def run_python_tui(
+    *,
+    preflight_only: bool,
+    apply_changes: bool,
+    target_free_gib: int,
+    backup_destination: str,
+    backup_fallback_destination: str,
+) -> int:
     ensure_rebuild_on_syspath()
     from installer.platforms.windows import EXIT_LAUNCH_LEGACY, run_windows_preflight_tui
 
-    result = run_windows_preflight_tui(launch_legacy_on_continue=not preflight_only)
+    result = run_windows_preflight_tui(
+        launch_legacy_on_continue=not preflight_only,
+        apply_changes=apply_changes,
+        target_free_gib=target_free_gib,
+        backup_destination=backup_destination or None,
+        backup_fallback_destination=backup_fallback_destination or None,
+    )
     if result == EXIT_LAUNCH_LEGACY:
         return LEGACY_HANDOFF_EXIT_CODE
     return int(result)
@@ -111,7 +145,13 @@ def main() -> int:
         return run_legacy_powershell(passthrough_args)
 
     try:
-        tui_result = run_python_tui(preflight_only=args.python_preflight_only)
+        tui_result = run_python_tui(
+            preflight_only=args.python_preflight_only,
+            apply_changes=args.python_apply,
+            target_free_gib=max(40, int(args.python_target_free_gib)),
+            backup_destination=args.python_backup_destination,
+            backup_fallback_destination=args.python_backup_fallback_destination,
+        )
     except Exception as exc:  # pragma: no cover - runtime fallback
         print(f"Python TUI startup failed, falling back to PowerShell: {exc}", file=sys.stderr)
         return run_legacy_powershell(passthrough_args)

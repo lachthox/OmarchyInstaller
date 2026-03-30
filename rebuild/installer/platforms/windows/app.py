@@ -12,6 +12,7 @@ from textual.widgets import DataTable, Footer, Header, Static
 
 from .checks import run_windows_preflight
 from .disk_probe import DiskProbeError, collect_disk_probe_snapshot
+from .flow import FlowStepResult, WindowsMigrationFlow
 
 
 EXIT_QUIT = 0
@@ -41,6 +42,10 @@ def _coerce_report(report: dict[str, Any]) -> tuple[list[dict[str, str]], bool]:
 @dataclass(slots=True)
 class WindowsTuiConfig:
     launch_legacy_on_continue: bool = True
+    apply_changes: bool = False
+    target_free_gib: int = 120
+    backup_destination: str | None = None
+    backup_fallback_destination: str | None = None
 
 
 class WindowsPreflightApp(App[int]):
@@ -70,6 +75,8 @@ class WindowsPreflightApp(App[int]):
 
     BINDINGS = [
         Binding("r", "refresh", "Refresh Checks"),
+        Binding("b", "run_backup_step", "Run Backup Step"),
+        Binding("p", "run_partition_step", "Run Partition Step"),
         Binding("c", "continue_flow", "Continue"),
         Binding("l", "launch_legacy", "Legacy PowerShell"),
         Binding("q", "quit_flow", "Quit"),
@@ -81,6 +88,15 @@ class WindowsPreflightApp(App[int]):
         self._can_continue = False
         self._checks: list[dict[str, str]] = []
         self._snapshot_summary = "Disk snapshot not collected yet."
+        self._notes: list[str] = []
+        self._backup_result: FlowStepResult | None = None
+        self._partition_result: FlowStepResult | None = None
+        self._flow = WindowsMigrationFlow(
+            apply_changes=self._config.apply_changes,
+            target_free_gib=max(40, int(self._config.target_free_gib)),
+            backup_destination=self._config.backup_destination,
+            backup_fallback_destination=self._config.backup_fallback_destination,
+        )
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -89,7 +105,7 @@ class WindowsPreflightApp(App[int]):
             yield DataTable(id="checks")
             yield Static("", id="summary")
             yield Static(
-                "Keys: [R] refresh checks  [C] continue  [L] launch legacy flow  [Q] quit",
+                "Keys: [R] refresh  [B] backup  [P] partition prep  [C] continue  [L] legacy  [Q] quit",
                 id="hints",
             )
         yield Footer()
@@ -112,15 +128,36 @@ class WindowsPreflightApp(App[int]):
     def _render_summary(self) -> None:
         summary = self.query_one("#summary", Static)
         state = "READY" if self._can_continue else "BLOCKED"
+        mode = "APPLY" if self._flow.apply_changes else "DRY-RUN"
+        backup_line = (
+            self._backup_result.summary
+            if self._backup_result
+            else "Backup step not executed yet."
+        )
+        partition_line = (
+            self._partition_result.summary
+            if self._partition_result
+            else "Partition prep step not executed yet."
+        )
+        recent_notes = " | ".join(self._notes[-2:]) if self._notes else "No recent actions."
         summary.update(
             "\n".join(
                 [
                     f"State: {state}",
+                    f"Mode: {mode} (target free space: {self._flow.target_free_gib} GiB)",
                     self._snapshot_summary,
-                    "Press C to continue into the migrated flow front-door.",
+                    f"Backup: {backup_line}",
+                    f"Partition: {partition_line}",
+                    f"Recent: {recent_notes}",
+                    "Press C to run Python prep steps and continue.",
                 ]
             )
         )
+
+    def _append_note(self, message: str) -> None:
+        self._notes.append(message)
+        if len(self._notes) > 8:
+            self._notes = self._notes[-8:]
 
     def action_refresh(self) -> None:
         report = run_windows_preflight()
@@ -153,12 +190,53 @@ class WindowsPreflightApp(App[int]):
         else:
             self._snapshot_summary = "Resolve FAIL checks before proceeding."
 
+        self._append_note(f"Preflight refresh: {'ready' if can_proceed else 'blocked'}")
+        self._render_summary()
+
+    def action_run_backup_step(self) -> None:
+        if not self._can_continue:
+            self.notify("Preflight is blocked. Resolve FAIL checks first.", severity="error")
+            return
+        self.notify("Running Python backup step...")
+        result = self._flow.run_backup()
+        self._backup_result = result
+        if result.ok:
+            self.notify("Backup step completed.", severity="information")
+        else:
+            self.notify(result.summary, severity="error")
+        self._append_note(result.summary)
+        self._render_summary()
+
+    def action_run_partition_step(self) -> None:
+        if not self._can_continue:
+            self.notify("Preflight is blocked. Resolve FAIL checks first.", severity="error")
+            return
+        if not self._backup_result or not self._backup_result.ok:
+            self.notify("Run backup step first.", severity="warning")
+            return
+        self.notify("Running Python partition-prep step...")
+        result = self._flow.run_partition_prep()
+        self._partition_result = result
+        if result.ok:
+            self.notify("Partition prep step completed.", severity="information")
+        else:
+            self.notify(result.summary, severity="error")
+        self._append_note(result.summary)
         self._render_summary()
 
     def action_continue_flow(self) -> None:
         if not self._can_continue:
             self.notify("Preflight is blocked. Resolve FAIL checks first.", severity="error")
             return
+        if not self._backup_result or not self._backup_result.ok:
+            self.action_run_backup_step()
+            if not self._backup_result or not self._backup_result.ok:
+                return
+        if not self._partition_result or not self._partition_result.ok:
+            self.action_run_partition_step()
+            if not self._partition_result or not self._partition_result.ok:
+                return
+        self._append_note("Python flow completed.")
         if self._config.launch_legacy_on_continue:
             self.exit(EXIT_LAUNCH_LEGACY)
             return
@@ -171,12 +249,24 @@ class WindowsPreflightApp(App[int]):
         self.exit(EXIT_QUIT)
 
 
-def run_windows_preflight_tui(*, launch_legacy_on_continue: bool = True) -> int:
+def run_windows_preflight_tui(
+    *,
+    launch_legacy_on_continue: bool = True,
+    apply_changes: bool = False,
+    target_free_gib: int = 120,
+    backup_destination: str | None = None,
+    backup_fallback_destination: str | None = None,
+) -> int:
     app = WindowsPreflightApp(
-        WindowsTuiConfig(launch_legacy_on_continue=launch_legacy_on_continue)
+        WindowsTuiConfig(
+            launch_legacy_on_continue=launch_legacy_on_continue,
+            apply_changes=apply_changes,
+            target_free_gib=target_free_gib,
+            backup_destination=backup_destination,
+            backup_fallback_destination=backup_fallback_destination,
+        )
     )
     result = app.run()
     if isinstance(result, int):
         return result
     return EXIT_QUIT
-
