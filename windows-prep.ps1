@@ -2,7 +2,7 @@
 param(
   [switch]$EnableDebugLog,
   [switch]$DisableDebugLog,
-  [string]$DebugLogPath = (Join-Path $PSScriptRoot 'windows-prep-run.log'),
+  [string]$DebugLogPath = '',
   [string]$AutoInput = $env:OMARCHY_AUTOINPUT
 )
 
@@ -18,6 +18,14 @@ $script:EnableDebugLog = if ($DisableDebugLog) {
   [bool]$EnableDebugLog
 } else {
   $true
+}
+$effectiveScriptRoot = if (-not [string]::IsNullOrWhiteSpace($PSScriptRoot)) {
+  $PSScriptRoot
+} else {
+  (Get-Location).Path
+}
+if ([string]::IsNullOrWhiteSpace($DebugLogPath)) {
+  $DebugLogPath = Join-Path $effectiveScriptRoot 'windows-prep-run.log'
 }
 $script:DebugLogPath = $DebugLogPath
 $script:MaxPromptAttempts = 20
