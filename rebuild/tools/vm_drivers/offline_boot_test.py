@@ -99,7 +99,10 @@ def run(iso_path: Path, work_dir: Path) -> dict:
     console = SerialConsole("127.0.0.1", SERIAL_PORT)
     try:
         console.connect(timeout=30)
-        console.wait_for("login:", timeout=120)
+        # Shared CI hardware (GitHub-hosted runners) is markedly slower than
+        # a dedicated nested-KVM box for CD-ROM-backed squashfs boot; 120s
+        # was measured as too tight there even though KVM is active.
+        console.wait_for("login:", timeout=300)
         console.send_line("root")
         console.wait_for("archiso ~", "# ", timeout=20)
 

@@ -151,7 +151,10 @@ def qemu_base_args(*, ovmf_code: str, ovmf_vars: Path, disk_img: Path) -> list[s
 
 
 def login_as_root(console: SerialConsole, evidence: Evidence) -> None:
-    console.wait_for("login:", timeout=120)
+    # Shared CI hardware (GitHub-hosted runners) is markedly slower than a
+    # dedicated nested-KVM box for CD-ROM-backed squashfs boot; 120s was
+    # measured as too tight there even though KVM acceleration is active.
+    console.wait_for("login:", timeout=300)
     console.send_line("root")
     console.wait_for("archiso ~", "# ", timeout=30)
     evidence.note("logged in as root on ttyS0")
@@ -578,7 +581,7 @@ def run_reboot_phase(
         evidence.note("booting installed disk directly (ISO detached)")
         qemu.start()
         console.connect(timeout=30)
-        marker = console.wait_for("Enter passphrase", "passphrase for", "login:", timeout=90)
+        marker = console.wait_for("Enter passphrase", "passphrase for", "login:", timeout=180)
         evidence.note(f"reboot boot marker: {marker}")
         if marker != "login:":
             # A bare "\r", a bare "\n", and "\r\n" with a settle delay all

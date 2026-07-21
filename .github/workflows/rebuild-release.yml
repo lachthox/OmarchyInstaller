@@ -209,10 +209,21 @@ jobs:
           command -v qemu-img
           test -n "$OMARCHY_ISOLATED_VM_DRIVER"
           chmod +x "$OMARCHY_ISOLATED_VM_DRIVER"
-      - run: python -m rebuild.tools.vm_install_test --iso-glob 'rebuild/dist/vm-input/*-omarchy-auto.iso' --work-dir rebuild/dist/vm-gate --require-install --require-reboot
+      # The disk fixture and driver need root (losetup/mount/sgdisk/mkfs); the
+      # job otherwise runs as the unprivileged `runner` user.
+      - run: sudo -E env "PATH=$PATH" python -m rebuild.tools.vm_install_test --iso-glob 'rebuild/dist/vm-input/*-omarchy-auto.iso' --work-dir rebuild/dist/vm-gate --require-install --require-reboot
       - uses: actions/upload-artifact@v7
         if: always()
-        with: {name: vm-install-evidence, path: rebuild/dist/vm-gate, if-no-files-found: error}
+        with:
+          name: vm-install-evidence
+          # Excludes the multi-hundred-GB (sparse) disposable disk images:
+          # actions/upload-artifact doesn't preserve sparseness, so archiving
+          # them turned a few seconds of real evidence into a ~30-minute
+          # upload of mostly zero bytes. The evidence itself is the JSON/logs.
+          path: |
+            rebuild/dist/vm-gate/*.json
+            rebuild/dist/vm-gate/*.log
+          if-no-files-found: error
 
   recovery-rehearsal:
     runs-on: ubuntu-latest
@@ -229,7 +240,8 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y qemu-utils gdisk dosfstools ntfs-3g
       - name: Damage the disposable GPT/EFI state and rehearse the documented recovery
-        run: python -m rebuild.tools.vm_drivers.recovery_rehearsal --work-dir rebuild/dist/vm-gate --output rebuild/dist/vm-gate/recovery-test.json
+        # Also needs root for losetup/mount/sgdisk, same as vm-install-reboot.
+        run: sudo -E env "PATH=$PATH" python -m rebuild.tools.vm_drivers.recovery_rehearsal --work-dir rebuild/dist/vm-gate --output rebuild/dist/vm-gate/recovery-test.json
       - uses: actions/upload-artifact@v7
         if: always()
         with: {name: recovery-rehearsal-evidence, path: rebuild/dist/vm-gate/recovery-test.json, if-no-files-found: error}

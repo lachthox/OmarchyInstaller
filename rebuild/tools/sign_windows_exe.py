@@ -98,7 +98,10 @@ def main() -> int:
 
     pfx_b64 = os.environ.get("WINDOWS_CODESIGN_PFX_BASE64", "")
     password = os.environ.get("WINDOWS_CODESIGN_PASSWORD", "")
-    timestamp_url = os.environ.get("WINDOWS_CODESIGN_TIMESTAMP_URL", DEFAULT_TIMESTAMP_URL)
+    # A GitHub Actions `env:` mapping from an unset secret sets the variable
+    # to an empty string rather than leaving it absent, so `os.environ.get`'s
+    # default never triggers on its own -- fall back explicitly.
+    timestamp_url = os.environ.get("WINDOWS_CODESIGN_TIMESTAMP_URL", "").strip() or DEFAULT_TIMESTAMP_URL
 
     evidence = {
         "schema_version": "1.0.0",
