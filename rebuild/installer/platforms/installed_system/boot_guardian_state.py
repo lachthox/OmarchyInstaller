@@ -30,6 +30,8 @@ class BootGuardianExpectedState:
     schema_version: str = BOOT_GUARDIAN_STATE_SCHEMA_VERSION
     policy_name: str = "omarchy-boot-guardian"
     efi_mount: str = "/boot/efi"
+    efi_filesystem_uuid: str = ""
+    efi_partuuid: str = ""
     windows_efi_relative_path: str = "EFI/Microsoft/Boot/bootmgfw.efi"
     limine_efi_relative_paths: tuple[str, ...] = ("EFI/Limine/BOOTX64.EFI", "EFI/BOOT/BOOTX64.EFI")
     expected_boot_labels: dict[str, tuple[str, ...]] = field(default_factory=_default_expected_boot_labels)
@@ -58,6 +60,10 @@ class BootGuardianExpectedState:
             )
         policy_name = str(payload.get("policy_name", "")).strip() or "omarchy-boot-guardian"
         efi_mount = str(payload.get("efi_mount", "")).strip() or "/boot/efi"
+        efi_filesystem_uuid = str(payload.get("efi_filesystem_uuid", "")).strip().casefold()
+        efi_partuuid = str(payload.get("efi_partuuid", "")).strip().casefold()
+        if not efi_filesystem_uuid or not efi_partuuid:
+            raise BootGuardianStateError("Expected-state must contain machine-specific EFI UUID and PARTUUID.")
         windows_efi_relative_path = str(payload.get("windows_efi_relative_path", "")).strip() or "EFI/Microsoft/Boot/bootmgfw.efi"
 
         limine_raw = payload.get("limine_efi_relative_paths", ())
@@ -99,6 +105,8 @@ class BootGuardianExpectedState:
             schema_version=schema_version,
             policy_name=policy_name,
             efi_mount=efi_mount,
+            efi_filesystem_uuid=efi_filesystem_uuid,
+            efi_partuuid=efi_partuuid,
             windows_efi_relative_path=windows_efi_relative_path,
             limine_efi_relative_paths=limine_efi_relative_paths,
             expected_boot_labels=expected_boot_labels,
@@ -112,6 +120,9 @@ class BootGuardianExpectedState:
 class BootGuardianObservedState:
     efi_mount: str
     efi_mount_exists: bool
+    efi_mount_verified: bool
+    efi_filesystem_uuid: str
+    efi_partuuid: str
     windows_efi_exists: bool
     limine_efi_exists: bool
     boot_entries: tuple[BootEntry, ...]

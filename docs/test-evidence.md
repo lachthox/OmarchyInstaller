@@ -186,3 +186,19 @@ Date: 2026-07-21
 - Full local suite: 113 passed, 1 skipped. The skipped test is the actual Unix
   pseudo-terminal integration, which is platform-gated off on Windows and runs
   on a non-root Linux CI/VM host.
+
+## Phase 15 evidence
+
+- Pre-install preservation validates a real FAT ESP mount and the Windows loader
+  without requiring Limine. Post-install finalization requires both loaders,
+  measures firmware entries and Windows fallback, and blocks target activation
+  on any critical mismatch.
+- Installed guardian state has no built-in default. `findmnt` must prove the
+  canonical path is a FAT mount whose filesystem UUID and PARTUUID exactly match
+  machine-specific expected state before entries or repair are considered.
+- Tests cover missing state, an unmounted ESP directory, no pre-install Limine,
+  correct post-install state, missing Windows, ambiguous similar labels,
+  boot-order-only drift, failed repair, and successful repair with remeasurement.
+- A healthy/repaired guardian writes the boot-policy marker atomically. Overall
+  completion is written only when the independent Omarchy marker also exists.
+- Full local suite: 119 passed, 1 platform-gated Unix PTY test skipped.

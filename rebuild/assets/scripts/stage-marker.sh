@@ -15,3 +15,8 @@ printf '{"schema_version":"1.0.0","stage":"%s","status":"complete","completed_at
 chmod 0600 "$temporary"
 mv -f "$temporary" "$directory/$stage.json"
 trap - EXIT
+
+if [[ -f "$directory/omarchy-complete.json" && -f "$directory/boot-policy-complete.json" \
+  && ! -f "$directory/overall-setup-complete.json" ]]; then
+  exec "$0" overall-setup-complete
+fi

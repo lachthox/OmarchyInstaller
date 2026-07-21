@@ -40,6 +40,7 @@ from .target_finalize import (
     finalize_target_system,
     validate_target_root,
 )
+from .boot_guardian import record_boot_policy_completion
 
 
 def __getattr__(name: str):
@@ -82,4 +83,5 @@ __all__ = [
     "deploy_target_assets",
     "finalize_target_system",
     "validate_target_root",
+    "record_boot_policy_completion",
 ]

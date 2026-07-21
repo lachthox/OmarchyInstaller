@@ -25,6 +25,10 @@ class FinalizeRunner:
 
     def run(self, command: list[str]) -> subprocess.CompletedProcess[str]:
         self.commands.append(command)
+        if command == ["efibootmgr", "-v"]:
+            return subprocess.CompletedProcess(command, 0, "Boot0001* Limine\tHD(...)\nBoot0002* Windows Boot Manager\tHD(...)\n", "")
+        if command == ["efibootmgr"]:
+            return subprocess.CompletedProcess(command, 0, "BootOrder: 0001,0002\n", "")
         return subprocess.CompletedProcess(command, self.returncode, "", "invalid target")
 
 

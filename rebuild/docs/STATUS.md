@@ -26,10 +26,13 @@ test success as installation success.
 - The one-time Omarchy launcher is a normal-user interactive login flow with a
   release-paired download hash, output-only PTY transcript, atomic state, and
   explicit retry; the former root retrying service is removed.
+- Boot preservation, post-install finalization, and installed guardian contracts
+  are separate; expected machine state and a `findmnt`-verified `/boot` ESP are
+  mandatory, and repair is limited to unambiguous boot-order drift.
 
 ## Active work
 
-- Phase 15: canonical boot policy and fail-closed guardian deployment.
+- Phase 16: task orchestrator atomicity and crash-safe locking.
 
 ## Known blockers
 

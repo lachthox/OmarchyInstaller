@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import json
 from pathlib import Path
 import re
 import subprocess
@@ -63,6 +64,41 @@ class BootPolicySummary:
         payload["blockers"] = list(self.blockers)
         payload["warnings"] = list(self.warnings)
         return payload
+
+
+@dataclass(frozen=True, slots=True)
+class PreinstallPreservationSummary:
+    efi_mount: str
+    efi_mount_verified: bool
+    windows_efi_exists: bool
+    can_proceed: bool
+    blockers: tuple[str, ...]
+
+
+def summarize_preinstall_preservation(
+    *, efi_mount: str | Path, runner: CommandRunner | None = None
+) -> PreinstallPreservationSummary:
+    """Verify the mounted ESP and Windows loader without requiring Limine yet."""
+    mount = Path(efi_mount)
+    active_runner = runner or SubprocessCommandRunner()
+    completed = active_runner.run(["findmnt", "--json", "--target", str(mount), "--output", "TARGET,FSTYPE"])
+    verified = False
+    if completed.returncode == 0:
+        try:
+            measured = json.loads(completed.stdout).get("filesystems", [])[0]
+            verified = (
+                Path(str(measured.get("target", ""))).resolve() == mount.resolve()
+                and str(measured.get("fstype", "")).casefold() in {"vfat", "fat", "fat32"}
+            )
+        except (json.JSONDecodeError, IndexError, KeyError, TypeError):
+            verified = False
+    windows_exists = verified and verify_windows_efi_assets(mount)
+    blockers: list[str] = []
+    if not verified:
+        blockers.append("EFI path is not a verified FAT mount.")
+    if not windows_exists:
+        blockers.append("Windows EFI asset is missing from EFI partition.")
+    return PreinstallPreservationSummary(str(mount), verified, windows_exists, not blockers, tuple(blockers))
 
 
 def _run_checked(runner: CommandRunner, command: list[str]) -> str:

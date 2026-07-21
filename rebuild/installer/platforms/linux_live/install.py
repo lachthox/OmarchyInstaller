@@ -556,6 +556,8 @@ def execute_install_plan(
                                 luks_uuid=luks_uuid,
                                 mapper_name=crypt_mapper_name,
                                 efi_mount=plan_contract.user_choices.filesystem.esp_mountpoint,
+                                efi_filesystem_uuid=plan_contract.efi_identity.filesystem_uuid,
+                                efi_partuuid=plan_contract.efi_identity.partuuid,
                                 bootstrap_url=plan_contract.omarchy_assumptions.bootstrap_url,
                                 expected_sha256=plan_contract.omarchy_assumptions.expected_sha256,
                                 upstream_version=plan_contract.omarchy_assumptions.upstream_version,

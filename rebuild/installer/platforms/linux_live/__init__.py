@@ -30,10 +30,12 @@ from .network import (
 from .boot_policy import (
     BootPolicyError,
     BootPolicySummary,
+    PreinstallPreservationSummary,
     assert_boot_policy_ready,
     discover_boot_entries,
     discover_boot_order,
     summarize_boot_policy,
+    summarize_preinstall_preservation,
     verify_limine_efi_assets,
     verify_windows_efi_assets,
 )
@@ -73,6 +75,7 @@ __all__ = [
     "assert_network_ready",
     "BootPolicyError",
     "BootPolicySummary",
+    "PreinstallPreservationSummary",
     "assert_boot_policy_ready",
     "discover_boot_entries",
     "discover_boot_order",
@@ -83,6 +86,7 @@ __all__ = [
     "match_machine_identity",
     "resolve_network_connectivity",
     "summarize_boot_policy",
+    "summarize_preinstall_preservation",
     "verify_limine_efi_assets",
     "verify_windows_efi_assets",
     "resolve_live_stage_root",

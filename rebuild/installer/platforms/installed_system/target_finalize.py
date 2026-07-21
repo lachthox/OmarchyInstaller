@@ -13,6 +13,7 @@ import subprocess
 from typing import Any, Protocol
 
 from .boot_guardian_state import BootGuardianExpectedState
+from ..linux_live.boot_policy import summarize_boot_policy
 
 
 INSTALL_SUCCESS_PATH = Path("var/lib/omarchy/install/install-success.json")
@@ -42,6 +43,8 @@ class TargetMachineState:
     luks_uuid: str
     mapper_name: str = "omarchy-cryptroot"
     efi_mount: str = "/boot"
+    efi_filesystem_uuid: str = "1111-2222"
+    efi_partuuid: str = "00000000-0000-4000-8000-000000000001"
     bootstrap_url: str = "https://omarchy.org/install"
     expected_sha256: str = "0" * 64
     upstream_version: str = "unknown"
@@ -156,7 +159,11 @@ def deploy_target_assets(
         directory.chmod(0o700)
         deployed.append(str(directory))
 
-    expected = BootGuardianExpectedState(efi_mount=machine.efi_mount).to_dict()
+    expected = BootGuardianExpectedState(
+        efi_mount=machine.efi_mount,
+        efi_filesystem_uuid=machine.efi_filesystem_uuid,
+        efi_partuuid=machine.efi_partuuid,
+    ).to_dict()
     expected["machine"] = asdict(machine)
     _write_atomic(_target(root, EXPECTED_STATE_PATH), expected)
     deployed.append(str(_target(root, EXPECTED_STATE_PATH)))
@@ -276,6 +283,14 @@ def finalize_target_system(
     active_runner = runner or SubprocessCommandRunner()
     _run_checked(active_runner, ["arch-chroot", str(root), "/usr/bin/env", "PYTHONPATH=/opt/omarchy-installer", "/usr/bin/python", "-c", "import installer.platforms.installed_system.first_login; import installer.platforms.installed_system.boot_guardian"])
     _run_checked(active_runner, ["systemd-analyze", "verify", f"--root={root}", "omarchy-boot-guardian.service"])
+    boot_summary = summarize_boot_policy(
+        "omarchy-post-install",
+        efi_mount=_target(root, machine.efi_mount),
+        runner=active_runner,
+    )
+    if not boot_summary.can_finalize:
+        raise TargetFinalizationError("Post-install boot policy is invalid: " + "; ".join(boot_summary.blockers))
+    validated = (*validated, "post-install-boot-policy")
 
     enabled: list[str] = []
     wants = _target(root, "/etc/systemd/system/multi-user.target.wants")

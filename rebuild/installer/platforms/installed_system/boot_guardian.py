@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 import subprocess
@@ -45,6 +46,44 @@ class BootGuardianRuntime:
     observed_state: BootGuardianObservedState
 
 
+def record_boot_policy_completion(
+    result: BootGuardianResult,
+    *,
+    marker_directory: str | Path = "/var/lib/omarchy/install",
+) -> tuple[str, ...]:
+    """Atomically record boot policy, and overall completion when Omarchy is done."""
+    if result.status not in {"healthy", "repaired"}:
+        raise BootGuardianStateError("Boot-policy completion cannot be recorded from an unhealthy result.")
+    directory = Path(marker_directory)
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    written: list[str] = []
+    boot_marker = directory / "boot-policy-complete.json"
+    payload = {
+        "schema_version": "1.0.0",
+        "stage": "boot-policy-complete",
+        "status": "complete",
+        "guardian": result.to_dict(),
+    }
+    if not boot_marker.exists():
+        temporary = boot_marker.with_name(f".{boot_marker.name}.tmp")
+        temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        temporary.chmod(0o600)
+        os.replace(temporary, boot_marker)
+        written.append(str(boot_marker))
+    omarchy_marker = directory / "omarchy-complete.json"
+    overall_marker = directory / "overall-setup-complete.json"
+    if omarchy_marker.is_file() and not overall_marker.exists():
+        temporary = overall_marker.with_name(f".{overall_marker.name}.tmp")
+        temporary.write_text(
+            json.dumps({"schema_version": "1.0.0", "stage": "overall-setup-complete", "status": "complete"}, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        temporary.chmod(0o600)
+        os.replace(temporary, overall_marker)
+        written.append(str(overall_marker))
+    return tuple(written)
+
+
 def _resolve_state_path(state_path: str | Path | None) -> Path:
     return Path(state_path).expanduser().resolve() if state_path is not None else DEFAULT_BOOT_GUARDIAN_STATE_PATH
 
@@ -58,7 +97,30 @@ def load_expected_state(state_path: str | Path | None = None) -> tuple[BootGuard
         except Exception as exc:  # pragma: no cover - defensive wrapping
             raise BootGuardianStateError(f"Failed to load boot guardian expected-state from {resolved}: {exc}") from exc
         return state, f"file:{resolved}"
-    return BootGuardianExpectedState(), "built-in-default"
+    raise BootGuardianStateError(f"Mandatory boot guardian expected-state is missing: {resolved}")
+
+
+def _measure_efi_mount(
+    runner: CommandRunner, mount_path: Path
+) -> tuple[bool, str, str]:
+    completed = runner.run([
+        "findmnt", "--json", "--target", str(mount_path),
+        "--output", "TARGET,SOURCE,FSTYPE,UUID,PARTUUID",
+    ])
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or "findmnt did not identify a mount"
+        raise BootPolicyError(f"EFI path is not a verified mount: {detail}")
+    try:
+        filesystems = json.loads(completed.stdout).get("filesystems", [])
+        measured = filesystems[0]
+    except (json.JSONDecodeError, IndexError, KeyError, TypeError) as exc:
+        raise BootPolicyError("findmnt returned invalid EFI mount data") from exc
+    target = str(measured.get("target", ""))
+    fstype = str(measured.get("fstype", "")).casefold()
+    fs_uuid = str(measured.get("uuid", "")).casefold()
+    partuuid = str(measured.get("partuuid", "")).casefold()
+    verified = Path(target).resolve() == mount_path.resolve() and fstype in {"vfat", "fat", "fat32"}
+    return verified, fs_uuid, partuuid
 
 
 def _normalize_label(value: str) -> str:
@@ -118,7 +180,17 @@ def _build_observed_state(
     limine_efi_exists = mount_exists and verify_limine_efi_assets(mount_path)
 
     measurement_error = ""
+    mount_verified = False
+    efi_filesystem_uuid = ""
+    efi_partuuid = ""
     try:
+        mount_verified, efi_filesystem_uuid, efi_partuuid = _measure_efi_mount(active_runner, mount_path)
+        if not mount_verified:
+            raise BootPolicyError("EFI path exists but is not the expected FAT mount")
+        if efi_filesystem_uuid != expected.efi_filesystem_uuid.casefold():
+            raise BootPolicyError("EFI filesystem UUID does not match expected state")
+        if efi_partuuid != expected.efi_partuuid.casefold():
+            raise BootPolicyError("EFI PARTUUID does not match expected state")
         boot_entries = discover_boot_entries(runner=active_runner)
         boot_order = discover_boot_order(runner=active_runner)
     except BootPolicyError as exc:
@@ -131,6 +203,9 @@ def _build_observed_state(
     return BootGuardianObservedState(
         efi_mount=mount_str,
         efi_mount_exists=mount_exists,
+        efi_mount_verified=mount_verified,
+        efi_filesystem_uuid=efi_filesystem_uuid,
+        efi_partuuid=efi_partuuid,
         windows_efi_exists=windows_efi_exists,
         limine_efi_exists=limine_efi_exists,
         boot_entries=boot_entries,
@@ -330,6 +405,8 @@ def run_boot_guardian_check(
     runner: CommandRunner | None = None,
 ) -> BootGuardianResult:
     expected, state_source = load_expected_state(state_path)
+    if efi_mount is not None and Path(efi_mount).resolve() != Path(expected.efi_mount).resolve():
+        raise BootGuardianStateError("EFI mount override conflicts with mandatory expected-state path.")
     observed = _build_observed_state(expected, efi_mount=efi_mount, runner=runner)
     return evaluate_boot_guardian(expected, observed, state_source=state_source, mode="check")
 
@@ -353,6 +430,8 @@ def run_boot_guardian_repair(
 ) -> BootGuardianResult:
     active_runner = runner or SubprocessCommandRunner()
     expected, state_source = load_expected_state(state_path)
+    if efi_mount is not None and Path(efi_mount).resolve() != Path(expected.efi_mount).resolve():
+        raise BootGuardianStateError("EFI mount override conflicts with mandatory expected-state path.")
     observed = _build_observed_state(expected, efi_mount=efi_mount, runner=active_runner)
     initial = evaluate_boot_guardian(expected, observed, state_source=state_source, mode="repair")
 
@@ -477,6 +556,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
     parser.add_argument("--quiet", action="store_true", help="Suppress healthy output.")
+    parser.add_argument("--record-completion", action="store_true", help="Write atomic boot/overall stage markers only after a healthy measurement.")
+    parser.add_argument("--marker-directory", default="/var/lib/omarchy/install")
     return parser
 
 
@@ -502,6 +583,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     _emit_result(result, json_output=args.json, quiet=args.quiet)
+    if args.record_completion and result.status in {"healthy", "repaired"}:
+        record_boot_policy_completion(result, marker_directory=args.marker_directory)
     return result.exit_code
 
 
