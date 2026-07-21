@@ -54,7 +54,31 @@ done
 # ── Work directory ──────────────────────────────────────────────────────────
 
 WORK_DIR="$(mktemp -d)"
-trap 'rm -rf "$WORK_DIR"' EXIT
+MOUNT_POINTS=()
+
+cleanup_mounts() {
+  local cleanup_rc=0
+  local mountpoint
+  for ((idx=${#MOUNT_POINTS[@]}-1; idx>=0; idx--)); do
+    mountpoint="${MOUNT_POINTS[$idx]}"
+    if mountpoint -q "$mountpoint"; then
+      if ! umount -R "$mountpoint"; then
+        echo "Warning: failed to unmount $mountpoint" >&2
+        cleanup_rc=1
+      fi
+    fi
+  done
+  if [[ "$cleanup_rc" -eq 0 ]]; then
+    MOUNT_POINTS=()
+  fi
+  return "$cleanup_rc"
+}
+
+cleanup() {
+  cleanup_mounts || true
+  rm -rf -- "$WORK_DIR"
+}
+trap cleanup EXIT INT TERM
 
 ROOTFS_DIR="$WORK_DIR/rootfs"
 ORIG_ROOTFS="$WORK_DIR/original_rootfs.img"
@@ -165,27 +189,9 @@ find "$STAGING_DIR/opt/omarchy-setup" -type f -name '*.sh' -exec sed -i 's/\r$//
 # ── Create the live-shell autostart hook ────────────────────────────────────
 
 mkdir -p "$STAGING_DIR/usr/local/bin"
-cat > "$STAGING_DIR/usr/local/bin/omarchy-live-autostart" <<'AUTOSTART'
-#!/usr/bin/env bash
-set -Eeuo pipefail
-
-OMARCHY_DIR="/opt/omarchy-setup"
-if [[ ! -x "$OMARCHY_DIR/setup.sh" ]]; then
-  exit 0
-fi
-
-echo
-echo "Omarchy setup assistant is available."
-read -r -n1 -p "Start Omarchy setup now? [Y/n] " ans
-echo
-
-if [[ -z "${ans:-}" || "$ans" =~ [Yy] ]]; then
-  cd "$OMARCHY_DIR"
-  chmod +x setup.sh
-  exec ./setup.sh
-fi
-AUTOSTART
-chmod +x "$STAGING_DIR/usr/local/bin/omarchy-live-autostart"
+install -m 0755 \
+  "$SETUP_DIR/hooks/live-autostart.sh" \
+  "$STAGING_DIR/usr/local/bin/omarchy-live-autostart"
 
 mkdir -p "$STAGING_DIR/root"
 cat > "$STAGING_DIR/root/.bash_profile" <<'PROFILE'
@@ -216,34 +222,32 @@ PROFILE
 chmod 0755 "$STAGING_DIR/usr/local/bin/omarchy-live-autostart"
 chmod 0755 "$STAGING_DIR/opt/omarchy-setup/setup.sh" 2>/dev/null || true
 
-ensure_nmtui_in_rootfs() {
+ensure_live_runtime() {
   local rootfs="$1"
 
-  if [[ -x "$rootfs/usr/bin/nmtui" ]]; then
-    echo "  nmtui already present in live rootfs."
-    return 0
-  fi
-
   if [[ ! -x "$rootfs/usr/bin/pacman" ]]; then
-    echo "Warning: pacman not found in extracted rootfs; cannot install NetworkManager. Continuing with iwctl fallback." >&2
-    return 0
+    echo "Error: pacman is missing from the extracted Arch rootfs." >&2
+    return 1
   fi
 
-  echo "  Installing NetworkManager (includes nmtui) into live rootfs..."
+  echo "  Installing the pinned, signed live runtime..."
 
   mkdir -p "$rootfs/proc" "$rootfs/sys" "$rootfs/dev" "$rootfs/run" "$rootfs/etc"
   cp -fL /etc/resolv.conf "$rootfs/etc/resolv.conf" 2>/dev/null || true
 
   mount --bind /dev "$rootfs/dev"
+  MOUNT_POINTS+=("$rootfs/dev")
   mount --bind /run "$rootfs/run"
+  MOUNT_POINTS+=("$rootfs/run")
   mount -t proc proc "$rootfs/proc"
+  MOUNT_POINTS+=("$rootfs/proc")
   mount -t sysfs sys "$rootfs/sys"
+  MOUNT_POINTS+=("$rootfs/sys")
 
   local install_rc=0
-  local cache_mounted=0
   mkdir -p "$rootfs/var/cache/pacman/pkg"
   if mount -t tmpfs -o size=512m tmpfs "$rootfs/var/cache/pacman/pkg"; then
-    cache_mounted=1
+    MOUNT_POINTS+=("$rootfs/var/cache/pacman/pkg")
   else
     echo "Warning: could not mount tmpfs for pacman cache; continuing with directory cache." >&2
   fi
@@ -266,63 +270,44 @@ ensure_nmtui_in_rootfs() {
       mkdir -p -m 700 /etc/pacman.d/gnupg
     fi
 
-    pacman-key --init >/dev/null 2>&1 || true
-    pacman-key --populate archlinux >/dev/null 2>&1 || true
+    printf "Server = https://archive.archlinux.org/repos/2026/07/01/\$repo/os/\$arch\n" > /etc/pacman.d/mirrorlist
+    pacman-key --init
+    pacman-key --populate archlinux
 
-    rm -f /usr/share/licenses/gcc-libs/RUNTIME.LIBRARY.EXCEPTION || true
-    find /usr/share/locale -type f -path "*/LC_MESSAGES/libstdc++.mo" -delete 2>/dev/null || true
-
-    pacman -Sy --noconfirm --needed \
-      --overwrite "/usr/lib/libgcc*" \
-      --overwrite "/usr/lib/libstdc++*" \
-      --overwrite "/usr/share/licenses/gcc-libs/*" \
-      --overwrite "/usr/share/locale/*/LC_MESSAGES/libstdc++.mo" \
+    pacman -Syu --noconfirm --needed \
       --cachedir /var/cache/pacman/pkg \
-      archlinux-keyring networkmanager || {
-      cp /etc/pacman.conf /tmp/pacman.nosig.conf
-      if grep -Eq "^[[:space:]]*SigLevel[[:space:]]*=" /tmp/pacman.nosig.conf; then
-        sed -Ei "s|^[[:space:]]*SigLevel[[:space:]]*=.*|SigLevel = Never|" /tmp/pacman.nosig.conf
-      else
-        printf "\nSigLevel = Never\n" >> /tmp/pacman.nosig.conf
-      fi
+      archlinux-keyring python python-pip networkmanager gptfdisk cryptsetup \
+      btrfs-progs util-linux systemd efibootmgr git curl
 
-      if grep -Eq "^[[:space:]]*CheckSpace" /tmp/pacman.nosig.conf; then
-        sed -Ei "s|^[[:space:]]*CheckSpace|# CheckSpace|" /tmp/pacman.nosig.conf
-      fi
+    [[ "$(pacman -Q archinstall | awk "{print \$2}")" == "4.4-1" ]]
+    python -m venv /opt/omarchy-venv
+    /opt/omarchy-venv/bin/python -m pip install \
+      --require-hashes -r /opt/omarchy-setup/requirements.lock
+    site_packages="$(/opt/omarchy-venv/bin/python -c "import site; print(site.getsitepackages()[0])")"
+    printf "/opt/omarchy-setup\n" > "$site_packages/omarchy-setup.pth"
 
-      pacman -Sy --config /tmp/pacman.nosig.conf --noconfirm --needed \
-        --overwrite "/usr/lib/libgcc*" \
-        --overwrite "/usr/lib/libstdc++*" \
-        --overwrite "/usr/share/licenses/gcc-libs/*" \
-        --overwrite "/usr/share/locale/*/LC_MESSAGES/libstdc++.mo" \
-        --cachedir /var/cache/pacman/pkg \
-        archlinux-keyring networkmanager
-    }
+    for command in python3 nmcli archinstall cryptsetup mkfs.btrfs mount umount \
+      findmnt lsblk blkid udevadm partprobe sgdisk efibootmgr; do
+      command -v "$command" >/dev/null
+    done
+    cd /
+    /opt/omarchy-venv/bin/python -c "import installer.main"
   ' || install_rc=$?
 
   if [[ "$install_rc" -eq 0 ]]; then
-    chroot "$rootfs" /usr/bin/bash -lc 'systemctl enable NetworkManager.service >/dev/null 2>&1 || true' || true
+    chroot "$rootfs" /usr/bin/bash -lc 'systemctl enable NetworkManager.service'
   fi
 
-  if [[ "$cache_mounted" -eq 1 ]]; then
-    umount -R "$rootfs/var/cache/pacman/pkg" 2>/dev/null || umount -l "$rootfs/var/cache/pacman/pkg" 2>/dev/null || true
+  if ! cleanup_mounts; then
+    install_rc=1
   fi
-  umount -R "$rootfs/sys" 2>/dev/null || umount -l "$rootfs/sys" 2>/dev/null || true
-  umount -R "$rootfs/proc" 2>/dev/null || umount -l "$rootfs/proc" 2>/dev/null || true
-  umount -R "$rootfs/run" 2>/dev/null || umount -l "$rootfs/run" 2>/dev/null || true
-  umount -R "$rootfs/dev" 2>/dev/null || umount -l "$rootfs/dev" 2>/dev/null || true
 
   if [[ "$install_rc" -ne 0 ]]; then
-    echo "Warning: Failed to install NetworkManager in live rootfs. Continuing with iwctl fallback." >&2
-    return 0
+    echo "Error: failed to assemble or verify the live runtime." >&2
+    return "$install_rc"
   fi
 
-  if [[ ! -x "$rootfs/usr/bin/nmtui" ]]; then
-    echo "Warning: NetworkManager install completed but nmtui binary is missing. Continuing with iwctl fallback." >&2
-    return 0
-  fi
-
-  echo "  NetworkManager/nmtui installed successfully."
+  echo "  Signed packages, locked Python environment, and runtime commands verified."
 }
 
 # ── Repack the rootfs image ────────────────────────────────────────────────
@@ -341,7 +326,7 @@ if [[ "$ROOTFS_FORMAT" == "squashfs" ]]; then
   # Overlay staged files into the extracted rootfs
   rsync -rlt "$STAGING_DIR/" "$ROOTFS_DIR/"
 
-  ensure_nmtui_in_rootfs "$ROOTFS_DIR"
+  ensure_live_runtime "$ROOTFS_DIR"
 
   echo "  Repacking SquashFS rootfs..."
   mksquashfs "$ROOTFS_DIR" "$NEW_ROOTFS" -comp xz -b 1M -all-root -noappend >/dev/null
@@ -363,7 +348,7 @@ elif [[ "$ROOTFS_FORMAT" == "erofs" ]]; then
   # Overlay staged files into the extracted rootfs
   rsync -rlt "$STAGING_DIR/" "$ROOTFS_DIR/"
 
-  ensure_nmtui_in_rootfs "$ROOTFS_DIR"
+  ensure_live_runtime "$ROOTFS_DIR"
 
   echo "  Repacking EROFS rootfs..."
   mkfs.erofs -zlz4hc "$NEW_ROOTFS" "$ROOTFS_DIR" >/dev/null 2>&1

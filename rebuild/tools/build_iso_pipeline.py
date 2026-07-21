@@ -21,9 +21,10 @@ from pathlib import Path
 from typing import Any
 
 
-ARCH_MIRROR_DEFAULT = "https://geo.mirror.pkgbuild.com/iso/latest"
-ISO_PATTERN = re.compile(r"archlinux-(\d{4}\.\d{2}\.\d{2})-x86_64\.iso")
-LIVE_ENTRYPOINT = "python3 /opt/omarchy-installer/main.py"
+SUPPORTED_ARCH_ISO = "2026.07.01"
+SUPPORTED_ARCHINSTALL = "4.4-1"
+ARCH_MIRROR_DEFAULT = f"https://geo.mirror.pkgbuild.com/iso/{SUPPORTED_ARCH_ISO}"
+LIVE_ENTRYPOINT = "/opt/omarchy-venv/bin/python -m installer.main"
 
 
 @dataclass(slots=True)
@@ -51,14 +52,8 @@ def fetch_text(url: str) -> str:
         return response.read().decode("utf-8")
 
 
-def detect_latest_iso(mirror_url: str) -> tuple[str, str]:
-    listing = fetch_text(f"{mirror_url}/")
-    candidates = sorted(set(ISO_PATTERN.findall(listing)), reverse=True)
-    if not candidates:
-        raise RuntimeError(f"Unable to detect latest Arch ISO from {mirror_url}")
-    iso_date = candidates[0]
-    iso_name = f"archlinux-{iso_date}-x86_64.iso"
-    return iso_name, iso_date
+def pinned_iso() -> tuple[str, str]:
+    return f"archlinux-{SUPPORTED_ARCH_ISO}-x86_64.iso", SUPPORTED_ARCH_ISO
 
 
 def compute_sha256(path: Path) -> str:
@@ -109,6 +104,8 @@ def ensure_workspace_layout(workspace: Path) -> None:
         workspace / "build-custom-iso.sh",
         workspace / "rebuild" / "installer",
         workspace / "rebuild" / "requirements.txt",
+        workspace / "rebuild" / "requirements.lock",
+        workspace / "rebuild" / "pyproject.toml",
         workspace / "rebuild" / "assets" / "scripts" / "live-autostart.sh",
         workspace / "rebuild" / "assets" / "scripts" / "firstboot-wrapper.sh",
     ]
@@ -121,22 +118,10 @@ def write_setup_wrapper(path: Path) -> None:
     path.write_text(
         "#!/usr/bin/env bash\n"
         "set -Eeuo pipefail\n\n"
-        "mkdir -p /opt/omarchy-installer\n"
-        "ln -sfn /opt/omarchy-setup/main.py /opt/omarchy-installer/main.py\n"
-        "cd /opt/omarchy-setup\n"
         f"exec {LIVE_ENTRYPOINT} \"$@\"\n",
         encoding="utf-8",
     )
     path.chmod(0o755)
-
-
-def write_live_entrypoint(path: Path) -> None:
-    path.write_text(
-        "from installer.main import main\n\n\n"
-        "if __name__ == '__main__':\n"
-        "    raise SystemExit(main())\n",
-        encoding="utf-8",
-    )
 
 
 def prepare_payload(
@@ -144,6 +129,8 @@ def prepare_payload(
     payload_dir: Path,
     iso: IsoDescriptor,
     commit_sha: str,
+    release_version: str,
+    release_tag: str,
 ) -> dict[str, Any]:
     if payload_dir.exists():
         shutil.rmtree(payload_dir)
@@ -159,7 +146,10 @@ def prepare_payload(
 
     for src_rel, dst_rel in [
         ("rebuild/requirements.txt", "requirements.txt"),
+        ("rebuild/requirements.lock", "requirements.lock"),
         ("rebuild/requirements-dev.txt", "requirements-dev.txt"),
+        ("rebuild/pyproject.toml", "pyproject.toml"),
+        ("rebuild/README.md", "README.md"),
         ("rebuild/assets/scripts/live-autostart.sh", "hooks/live-autostart.sh"),
         ("rebuild/assets/scripts/firstboot-wrapper.sh", "hooks/firstboot-wrapper.sh"),
     ]:
@@ -170,14 +160,19 @@ def prepare_payload(
 
     setup_wrapper = payload_dir / "setup.sh"
     write_setup_wrapper(setup_wrapper)
-    write_live_entrypoint(payload_dir / "main.py")
 
     runtime_packages = payload_dir / "runtime-packages.txt"
     runtime_packages.write_text(
         "python\n"
+        "python-pip\n"
         "networkmanager\n"
         "archinstall\n"
         "gptfdisk\n"
+        "cryptsetup\n"
+        "btrfs-progs\n"
+        "util-linux\n"
+        "systemd\n"
+        "efibootmgr\n"
         "git\n"
         "curl\n",
         encoding="utf-8",
@@ -187,6 +182,8 @@ def prepare_payload(
         "schema_version": "1.0.0",
         "generated_at_utc": utc_now(),
         "git_commit": commit_sha,
+        "release_version": release_version,
+        "release_tag": release_tag,
         "base_iso": {
             "name": iso.name,
             "date": iso.date,
@@ -196,15 +193,34 @@ def prepare_payload(
         "runtime": {
             "entrypoint": LIVE_ENTRYPOINT,
             "setup_wrapper": "/opt/omarchy-setup/setup.sh",
-            "entrypoint_compat_alias": "python3 /opt/omarchy-setup/main.py",
             "installer_package_root": "/opt/omarchy-setup/installer",
-            "python_requirements_file": "/opt/omarchy-setup/requirements.txt",
+            "python_requirements_file": "/opt/omarchy-setup/requirements.lock",
+            "python_requirements_sha256": compute_sha256(payload_dir / "requirements.lock"),
+            "python_venv": "/opt/omarchy-venv",
+            "archinstall_version": SUPPORTED_ARCHINSTALL,
             "required_system_packages_file": "/opt/omarchy-setup/runtime-packages.txt",
-            "required_runtime_binaries": ["python3", "nmcli", "archinstall", "sgdisk"],
+            "required_system_packages_sha256": compute_sha256(runtime_packages),
+            "required_runtime_binaries": [
+                "python3",
+                "nmcli",
+                "archinstall",
+                "cryptsetup",
+                "mkfs.btrfs",
+                "mount",
+                "umount",
+                "findmnt",
+                "lsblk",
+                "blkid",
+                "udevadm",
+                "partprobe",
+                "sgdisk",
+                "efibootmgr",
+            ],
         },
         "startup_hooks": {
             "live_tty_hook": "/usr/local/bin/omarchy-live-autostart",
             "payload_hook_reference": "/opt/omarchy-setup/hooks/live-autostart.sh",
+            "payload_hook_sha256": compute_sha256(payload_dir / "hooks" / "live-autostart.sh"),
         },
     }
     metadata_path = payload_dir / "build-metadata.json"
@@ -253,9 +269,10 @@ def run_pipeline(args: argparse.Namespace) -> int:
     commit_sha = detect_git_commit(workspace)
 
     if args.dry_run:
+        iso_name, iso_date = pinned_iso()
         iso = IsoDescriptor(
-            name="archlinux-1970.01.01-x86_64.iso",
-            date="1970.01.01",
+            name=iso_name,
+            date=iso_date,
             iso_url="dry-run://archlinux",
             sha_url="dry-run://sha256sums",
             expected_sha256="dry-run",
@@ -263,7 +280,7 @@ def run_pipeline(args: argparse.Namespace) -> int:
         source_iso_path = work_dir / iso.name
         source_iso_path.write_text("dry-run", encoding="utf-8")
     else:
-        iso_name, iso_date = detect_latest_iso(args.mirror_url)
+        iso_name, iso_date = pinned_iso()
         iso = IsoDescriptor(
             name=iso_name,
             date=iso_date,
@@ -282,7 +299,9 @@ def run_pipeline(args: argparse.Namespace) -> int:
         iso.expected_sha256 = expected
 
     payload_dir = work_dir / "payload"
-    runtime_metadata = prepare_payload(workspace, payload_dir, iso, commit_sha)
+    runtime_metadata = prepare_payload(
+        workspace, payload_dir, iso, commit_sha, args.release_version, args.release_tag
+    )
 
     output_iso = output_dir / f"{args.artifact_prefix}-{iso.date}-x86_64-omarchy-auto.iso"
     if not args.dry_run:
@@ -357,7 +376,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--mirror-url",
         default=ARCH_MIRROR_DEFAULT,
-        help="Arch mirror URL used for source ISO discovery.",
+        help="Arch mirror directory for the pinned supported source ISO.",
     )
     parser.add_argument(
         "--release-version",

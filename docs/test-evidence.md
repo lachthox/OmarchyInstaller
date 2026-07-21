@@ -91,3 +91,18 @@ Date: 2026-07-21
   `actions/attest@v4` contract and runs before optional publication.
 - Authenticode remains externally blocked because no certificate/key service or
   CI signing-secret contract is available.
+
+## Phase 8 evidence
+
+- Full Python suite: 78 passed; full Ruff: passed.
+- Full mypy retains only the pre-existing Phase 16 task-orchestrator import.
+- ISO dry-run produces the pinned `2026.07.01` source identity, release
+  version/tag/commit, `archinstall 4.4-1`, canonical venv module entrypoint,
+  complete runtime command list, and no compatibility aliases.
+- `test_iso_packaging.py` verifies the dated mirror, hash lock, signature-safe
+  pacman contract, exact archinstall check, cwd-independent package import,
+  runtime binary verification, and cleanup trap.
+- The official Arch release and package indexes establish that ISO 2026.07.01
+  is available and archinstall `4.4-1` was published for that ISO cycle.
+- Real rootfs assembly, OVMF boot, and offline TUI startup are blocked because
+  this host has no Linux distribution, Docker, QEMU, or OVMF.

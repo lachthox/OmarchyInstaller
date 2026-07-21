@@ -17,10 +17,13 @@ test success as installation success.
 - Windows preflight, backup, and partition stages execute in Textual workers;
   simulation, failure, blocking, stale-state invalidation, and cancellation have
   Pilot coverage at 80x24.
+- The ISO contract is pinned to Arch `2026.07.01`/archinstall `4.4-1`; signed
+  dated packages, a hash-locked Python venv, one canonical entrypoint, complete
+  live command verification, and mount cleanup are implemented.
 
 ## Active work
 
-- Phase 5: Windows identity, backup, and contiguous shrink planning.
+- Phase 9: authenticated Linux handoff discovery and disk identity matching.
 
 ## Known blockers
 
@@ -28,8 +31,8 @@ test success as installation success.
   refreshed manually.
 - Docker/QEMU/OVMF are unavailable on the current host, so ISO boot, disposable
   install, reboot, and recovery gates remain open.
-- Exact external archinstall and Omarchy contracts still require pinned-version
-  verification before installation-engine work.
+- The archinstall version is pinned, but its exact generated configuration and
+  credential contract still require Phase 12 compatibility fixtures.
 
 ## Readiness
 
