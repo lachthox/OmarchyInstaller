@@ -20,10 +20,13 @@ test success as installation success.
 - The ISO contract is pinned to Arch `2026.07.01`/archinstall `4.4-1`; signed
   dated packages, a hash-locked Python venv, one canonical entrypoint, complete
   live command verification, and mount cleanup are implemented.
+- Target finalization deploys and validates runtime, wrappers, units, actual
+  machine state, boot assets, and protected directories before activation or
+  atomic completion markers are permitted.
 
 ## Active work
 
-- Phase 13: target finalization and installed-system asset deployment.
+- Phase 14: normal-user interactive Omarchy first-login flow.
 
 ## Known blockers
 
@@ -31,8 +34,8 @@ test success as installation success.
   refreshed manually.
 - Docker/QEMU/OVMF are unavailable on the current host, so ISO boot, disposable
   install, reboot, and recovery gates remain open.
-- The archinstall version is pinned, but its exact generated configuration and
-  credential contract still require Phase 12 compatibility fixtures.
+- Exact rootfs assembly and installed-system validation still require the
+  destructive Linux VM acceptance environment.
 
 ## Readiness
 

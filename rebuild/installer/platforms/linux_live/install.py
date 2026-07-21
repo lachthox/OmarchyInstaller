@@ -363,6 +363,7 @@ def execute_install_plan(
     crypt_mapper_name: str = DEFAULT_CRYPT_MAPPER_NAME,
     mount_root: str = DEFAULT_MOUNT_ROOT,
     cleanup_after_success: bool = False,
+    finalize_target: bool = True,
     runner: CommandRunner | None = None,
 ) -> LiveInstallExecutionResult:
     """Orchestrate Linux partition + encrypted layout + archinstall execution."""
@@ -523,6 +524,44 @@ def execute_install_plan(
                         elif command and command[0] == "mount":
                             mounted_targets.append(command[-1])
                         install_log_lines.append(f"EXECUTED: {' '.join(command)}")
+                    if finalize_target:
+                        from ..installed_system.target_finalize import (
+                            TargetMachineState,
+                            finalize_target_system,
+                        )
+                        luks_uuid = _run_checked(
+                            active_runner,
+                            ["blkid", "-s", "UUID", "-o", "value", target_partition_path],
+                        ).strip()
+                        root_fs_uuid = _run_checked(
+                            active_runner,
+                            ["blkid", "-s", "UUID", "-o", "value", f"/dev/mapper/{crypt_mapper_name}"],
+                        ).strip()
+                        if not luks_uuid or not root_fs_uuid:
+                            raise LiveInstallError("Unable to resolve target LUKS/Btrfs UUIDs for finalization.")
+                        crypttab = (
+                            f"{crypt_mapper_name} UUID={luks_uuid} none luks\n"
+                        )
+                        crypttab_path = Path(mount_root) / "etc" / "crypttab.initramfs"
+                        crypttab_path.parent.mkdir(parents=True, exist_ok=True)
+                        crypttab_path.write_text(crypttab, encoding="utf-8")
+                        _run_checked(active_runner, ["arch-chroot", mount_root, "mkinitcpio", "-P"])
+                        finalization = finalize_target_system(
+                            mount_root,
+                            TargetMachineState(
+                                username=plan_contract.user_choices.username,
+                                disk_guid=plan_contract.disk_identity.gpt_disk_guid,
+                                root_partuuid=target_partition_guid,
+                                root_fs_uuid=root_fs_uuid,
+                                luks_uuid=luks_uuid,
+                                mapper_name=crypt_mapper_name,
+                                efi_mount=plan_contract.user_choices.filesystem.esp_mountpoint,
+                            ),
+                            runner=active_runner,
+                        )
+                        install_log_lines.append(
+                            f"target finalization: {finalization.status}; marker={finalization.success_marker}"
+                        )
                     for mounted in reversed(mounted_targets):
                         _run_checked(active_runner, ["umount", mounted])
                         install_log_lines.append(f"CLEANUP: umount {mounted}")

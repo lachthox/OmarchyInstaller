@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PYTHON_BIN="${PYTHON_BIN:-python3}"
+PYTHON_BIN="${PYTHON_BIN:-/usr/bin/python}"
+RUNTIME_ROOT="${OMARCHY_RUNTIME_ROOT:-/opt/omarchy-installer}"
+export PYTHONPATH="$RUNTIME_ROOT${PYTHONPATH:+:$PYTHONPATH}"
 MODE="check"
 
 script_name="$(basename "$0")"

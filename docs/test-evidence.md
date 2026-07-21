@@ -155,3 +155,16 @@ Date: 2026-07-21
   reverse unmount, mapper close, and credential deletion occur in order.
 - Exact pinned-package parsing and disposable VM installation are blocked on
   this host and remain explicitly open acceptance gates.
+
+## Phase 13 evidence
+
+- `test_target_finalization.py` proves deployment of the installed Python
+  package, first-login and guardian wrappers, systemd units, machine-specific
+  GUID/UUID state, protected state/log/diagnostic directories, and help command.
+- Target validation fails closed on kernel/initramfs, Btrfs/ESP fstab entries,
+  LUKS crypttab and initramfs hooks, user/wheel/sudo state, NetworkManager,
+  Limine and preserved Windows EFI assets, Python compilation/import, wrapper
+  permissions, unit references, and expected-state schema/machine identity.
+- Chroot imports and `systemd-analyze verify` precede service activation. Base
+  and target-finalization markers and the success marker are atomic; later
+  Omarchy, boot-policy, and overall markers are not claimed early.

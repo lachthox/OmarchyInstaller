@@ -25,6 +25,14 @@ from .post_install import (
     evaluate_bootstrap_health,
     normalize_boot_policy,
 )
+from .target_finalize import (
+    TargetFinalizationError,
+    TargetFinalizationResult,
+    TargetMachineState,
+    deploy_target_assets,
+    finalize_target_system,
+    validate_target_root,
+)
 
 
 def __getattr__(name: str):
@@ -56,4 +64,10 @@ __all__ = [
     "PostInstallNormalizationError",
     "PostInstallNormalizationResult",
     "run_firstboot_handoff",
+    "TargetFinalizationError",
+    "TargetFinalizationResult",
+    "TargetMachineState",
+    "deploy_target_assets",
+    "finalize_target_system",
+    "validate_target_root",
 ]

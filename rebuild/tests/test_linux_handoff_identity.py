@@ -262,6 +262,7 @@ def test_extent_rechecked_and_actual_aligned_geometry_replaces_requested(tmp_pat
         user_password_hash="$6$test$abcdefghijklmnopqrstuvwxyz0123456789",
         efi_partition_path="/dev/nvme0n1p1",
         cleanup_after_success=False,
+        finalize_target=False,
         runner=runner,
     )
     assert result.target_partition_start_sector == 943720448

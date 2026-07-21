@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-OMARCHY_SETUP_ROOT="${OMARCHY_SETUP_ROOT:-/opt/omarchy-setup}"
-PYTHON_BIN="${PYTHON_BIN:-python3}"
+OMARCHY_SETUP_ROOT="${OMARCHY_SETUP_ROOT:-/opt/omarchy-installer}"
+PYTHON_BIN="${PYTHON_BIN:-/usr/bin/python}"
 
 if [[ -d "$OMARCHY_SETUP_ROOT" ]]; then
   if [[ -n "${PYTHONPATH:-}" ]]; then

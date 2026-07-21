@@ -7,7 +7,7 @@ ConditionPathExists=!/var/lib/omarchy/firstboot/completed.json
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/omarchy-firstboot-wrapper.sh
+ExecStart=/usr/local/bin/omarchy-firstboot
 Restart=on-failure
 RestartSec=30
 StandardOutput=journal
