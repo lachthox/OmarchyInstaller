@@ -64,6 +64,23 @@ These are preserved as architectural invariants while implementation details are
 5. Keep install-time responsibilities separate from post-install responsibilities.
 6. Keep build/release logic separate from runtime logic.
 
+## Command and transaction framework
+
+All new platform operations use the shared framework in
+`installer/shared/execution.py`, `atomic_io.py`, and `transactions.py`:
+
+- commands are argv sequences, never shell strings;
+- captured and inherited-terminal modes are explicit;
+- allowlists, stable error codes, timeouts, pre-start cancellation, redacted
+  progress events, and simulated state are first-class;
+- simulation is not a succeeded execution;
+- state is written through temporary files, file fsync, atomic replacement, and
+  directory fsync where supported;
+- disk, mount, and release transactions maintain durable journals and LIFO
+  cleanup stacks;
+- cleanup failure is an explicit failed state;
+- unsafe cancellation boundaries are durable journal events.
+
 ## Runtime Boundaries
 
 - Omarchy is post-install only and must never run from Windows preparation or Arch live install phases.

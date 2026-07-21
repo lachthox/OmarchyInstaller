@@ -37,3 +37,12 @@ Date: 2026-07-21
   templates, GPT-only identity, inclusive sector arithmetic, UUID namespace
   separation, strict extra-field rejection, fail-closed legacy schema handling,
   cross-contract sector-size consistency, and standards-compliant prereleases.
+
+## Phase 3 evidence
+
+- `pytest -q rebuild/tests/test_execution_transactions.py`: 13 passed.
+- Focused Ruff and mypy for all shared framework modules: passed.
+- Evidence covers atomic replacement, temporary-file cleanup after simulated
+  replace failure, cleanup on success/handled failure/exception/cancellation,
+  cleanup failure, interrupted-journal recovery, simulation state, allowlists,
+  secret redaction, inherited-terminal enforcement, and pre-start cancellation.

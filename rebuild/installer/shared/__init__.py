@@ -22,6 +22,28 @@ from .models import (
 )
 from .validation import validate_compatibility_contract, validate_plan_contract
 from .versioning import compare_versions, is_version_at_least, normalize_version, parse_version
+from .atomic_io import atomic_write_bytes, atomic_write_json, atomic_write_text
+from .execution import (
+    CommandMode,
+    CommandRequest,
+    CommandResult,
+    CommandState,
+    ExecutionError,
+    InteractiveCommandRunner,
+    LinuxCommandRunner,
+    ProgressEvent,
+    WindowsCommandRunner,
+    require_success,
+)
+from .transactions import (
+    CleanupStack,
+    DiskTransaction,
+    MountTransaction,
+    ReleaseTransaction,
+    TransactionCancelled,
+    TransactionError,
+    TransactionJournal,
+)
 
 __all__ = [
     "PLAN_SCHEMA_VERSION",
@@ -42,12 +64,32 @@ __all__ = [
     "TargetFreeSpacePolicy",
     "UserChoices",
     "VersionedMeta",
+    "CleanupStack",
+    "CommandMode",
+    "CommandRequest",
+    "CommandResult",
+    "CommandState",
+    "DiskTransaction",
+    "ExecutionError",
+    "InteractiveCommandRunner",
+    "LinuxCommandRunner",
+    "MountTransaction",
+    "ProgressEvent",
+    "ReleaseTransaction",
+    "TransactionCancelled",
+    "TransactionError",
+    "TransactionJournal",
+    "WindowsCommandRunner",
+    "atomic_write_bytes",
+    "atomic_write_json",
+    "atomic_write_text",
     "assert_runtime_compatibility",
     "compare_versions",
     "evaluate_runtime_compatibility",
     "is_version_at_least",
     "normalize_version",
     "parse_version",
+    "require_success",
     "validate_compatibility_contract",
     "validate_plan_contract",
 ]
