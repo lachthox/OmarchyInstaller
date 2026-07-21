@@ -86,6 +86,18 @@ Supporting docs:
 - `.github/workflows/rebuild-windows-exe.yml` invokes `rebuild/tools/build_windows_exe.py` to package `OmarchyInstaller.exe` with PyInstaller and emit executable build manifest metadata.
 - `.github/workflows/rebuild-release.yml` invokes `rebuild/tools/publish_release.py` to produce `release_manifest.json`, `compatibility_manifest.json`, consolidated checksums, and optional GitHub Release publication.
 
+## Mandatory release graph
+
+There is one publishing workflow. Its publish job depends on successful Python
+Ruff/mypy/pytest, ShellCheck/Bats, pinned upstream archinstall contracts,
+normal-user PTY, ISO build, Windows EXE build/test, and disposable VM
+install-and-reboot jobs. GitHub Actions cannot schedule publication if any need
+fails or is skipped. The former legacy `build-iso.yml` publisher is deleted.
+
+Dry-run artifacts are never inputs to the release workflow. The publisher still
+revalidates unique ISO/EXE manifests, exact commit/tag/version/run/ref pairing,
+non-dry-run state, and every artifact hash immediately before publication.
+
 ## Coordination note
 
 This document is the release-process companion to the stage briefs and the dependency map. It should be kept aligned with the current build/release issue hierarchy.

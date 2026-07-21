@@ -1,0 +1,65 @@
+name: Python Rebuild CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, "fix/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  python-quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -r rebuild/requirements.txt -r rebuild/requirements-dev.txt
+      - run: python -m ruff check rebuild
+      - run: python -m mypy rebuild
+      - run: python -m pytest rebuild/tests -q
+
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: sudo apt-get update -qq && sudo apt-get install -y shellcheck bats
+      - run: shellcheck -s bash rebuild/assets/scripts/*.sh build-custom-iso.sh
+      - run: bats Tests/01-unit Tests/02-component
+
+  pinned-contracts:
+    runs-on: ubuntu-latest
+    container: archlinux:base
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install pinned consumer and test runtime
+        run: |
+          pacman -Syu --noconfirm python python-pip curl archlinux-keyring
+          curl -fLO https://archive.archlinux.org/packages/a/archinstall/archinstall-4.4-1-any.pkg.tar.zst
+          curl -fLO https://archive.archlinux.org/packages/a/archinstall/archinstall-4.4-1-any.pkg.tar.zst.sig
+          pacman-key --init
+          pacman-key --populate archlinux
+          pacman -U --noconfirm archinstall-4.4-1-any.pkg.tar.zst
+          test "$(pacman -Q archinstall)" = "archinstall 4.4-1"
+          python -m pip install --break-system-packages -r rebuild/requirements.txt -r rebuild/requirements-dev.txt
+      - run: python -m pytest rebuild/tests/test_archinstall_contract.py rebuild/tests/test_shared_contracts.py rebuild/tests/test_release_provenance.py -q
+
+  windows-package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -r rebuild/requirements.txt -r rebuild/requirements-dev.txt pyinstaller
+      - run: python -m pytest rebuild/tests/test_windows_launcher.py rebuild/tests/test_windows_flow.py rebuild/tests/test_windows_disk_safety.py rebuild/tests/test_windows_handoff.py -q
+      - shell: pwsh
+        run: python rebuild/tools/build_windows_exe.py --workspace "$env:GITHUB_WORKSPACE" --output-dir rebuild/dist/ci-exe --work-dir rebuild/dist/ci-exe-work --release-version 0.0.0 --release-tag ci-${{ github.sha }}
+      - shell: pwsh
+        run: |
+          if (Select-String -Path rebuild/dist/ci-exe/windows-exe-build-manifest.json -Pattern 'windows-prep\.ps1|powershell.*fallback') { throw 'legacy PowerShell payload detected' }
+          if (-not (Test-Path rebuild/dist/ci-exe/OmarchyInstaller.exe)) { throw 'packaged EXE missing' }

@@ -35,10 +35,13 @@ test success as installation success.
 - Obsolete self-validating archinstall Bats assertions are retired. The full
   Python suite, Ruff, and mypy are clean, with Linux CI owning the pinned
   upstream-parser and pseudo-terminal integration skips.
+- CI now covers Python, shell, pinned contracts, Windows packaging, ISO, PTY,
+  and a mandatory disposable install/reboot gate. The sole publish job cannot
+  run unless every one succeeds; the legacy publisher is deleted.
 
 ## Active work
 
-- Phase 18: end-to-end CI and release gates.
+- Phase 19: final legacy retirement and repository cleanup.
 
 ## Known blockers
 

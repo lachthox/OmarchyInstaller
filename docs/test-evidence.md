@@ -233,3 +233,20 @@ Date: 2026-07-21
 - Full local results: 129 passed, 2 skipped; Ruff passes; mypy reports no issues
   in 98 source files. Skips are the Unix PTY integration and upstream archinstall
   parser, both intentionally required on the Phase 18 Linux CI runners.
+
+## Phase 18 evidence
+
+- Added PR/push CI for pytest, Ruff, mypy, ShellCheck, remaining Bats, exact
+  archived archinstall `4.4-1` parsing, Windows tests, PyInstaller packaging, and
+  legacy payload scanning.
+- The release workflow separately requires quality, shell, pinned contracts,
+  Linux first-login PTY, a real ISO build, Windows EXE build/tests, and an
+  OVMF disposable install/reboot job. Publication lists every gate in `needs`.
+- Removed `.github/workflows/build-iso.yml`, the only conflicting legacy path
+  that could directly publish a different setup.sh-only product.
+- `test_workflow_gates.py` proves the legacy publisher is absent, all required
+  jobs are publish dependencies, install/reboot flags are mandatory, and the CI
+  matrix contains the required commands.
+- This Windows host cannot execute the newly required Linux/OVMF jobs. Their
+  workflow and fail-closed dependency graph are implemented; Phase 20 owns the
+  harness and exact destructive VM evidence.
