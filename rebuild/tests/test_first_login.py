@@ -17,6 +17,7 @@ from rebuild.installer.platforms.installed_system.first_login import (
 
 
 SCRIPT = b"#!/usr/bin/env bash\nset -euo pipefail\nprintf 'interactive upstream output\\n'\n"
+GET_EUID = getattr(os, "geteuid", lambda: -1)
 
 
 class StaticDownloader:
@@ -148,10 +149,10 @@ def test_hash_mismatch_records_failure_without_execution(tmp_path: Path) -> None
     assert runner.commands == []
 
 
-@pytest.mark.skipif(os.name == "nt" or shutil.which("script") is None or (hasattr(os, "geteuid") and os.geteuid() == 0), reason="requires a non-root Unix PTY host")
+@pytest.mark.skipif(os.name == "nt" or shutil.which("script") is None or GET_EUID() == 0, reason="requires a non-root Unix PTY host")
 def test_pseudo_terminal_preserves_installer_output(tmp_path: Path) -> None:
     result = run_first_login(
-        pairing_path=pairing(tmp_path / "pairing.json"), context=context(uid=os.geteuid()),
+        pairing_path=pairing(tmp_path / "pairing.json"), context=context(uid=GET_EUID()),
         downloader=StaticDownloader(), runner=PtyThenMarkerRunner(),
         env={"HOME": str(tmp_path), "USER": os.environ.get("USER", "tester")},
         input_func=lambda _prompt: "RUN OMARCHY",

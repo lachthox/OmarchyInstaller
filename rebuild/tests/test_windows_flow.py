@@ -2,10 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-try:
-    from rebuild.installer.platforms.windows.flow import WindowsMigrationFlow
-except ModuleNotFoundError:  # pragma: no cover - fallback for package-local test runs
-    from installer.platforms.windows.flow import WindowsMigrationFlow
+from rebuild.installer.platforms.windows.flow import WindowsMigrationFlow
 
 
 class _BackupStub:

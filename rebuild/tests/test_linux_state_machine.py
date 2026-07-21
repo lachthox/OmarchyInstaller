@@ -78,10 +78,10 @@ def test_failure_writes_redacted_diagnostic(tmp_path: Path) -> None:
     secret = "do-not-log-this"
     path = tmp_path / "diagnostic.json"
     backend = RecordingBackend(fail_stage="network")
-    backend.run_stage = lambda stage, plan, dry_run: (  # type: ignore[method-assign]
-        False,
-        secret,
-    ) if stage == "network" else (True, "ok")
+    def run_stage(stage: str, plan: object, *, dry_run: bool) -> tuple[bool, str]:
+        return (False, secret) if stage == "network" else (True, "ok")
+
+    backend.run_stage = run_stage  # type: ignore[method-assign]
     with pytest.raises(LiveStateError, match="redacted"):
         LiveInstallStateMachine(backend).run(
             plan_payload(), dry_run=True, diagnostic_path=path, secrets=(secret,)

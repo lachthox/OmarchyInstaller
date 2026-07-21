@@ -61,7 +61,7 @@ be marked complete until run in a capable environment.
 | HIGH-29 | High | Guardian defaults when expected state absent | 13, 15 | guardian | Removed built-in fallback; machine-specific state and exact mounted ESP UUID/PARTUUID are mandatory | missing state, unmounted directory, UUID identity, ambiguity, repair failure, and remeasurement tests | Resolved | | |
 | HIGH-30 | High | Tracker lock survives crashed process | 16 | task orchestrator | Replaced exclusive lock-file existence with OS locking, in-process serialization, and owner/start metadata | killed subprocess, stale metadata, and concurrent claimant tests | Resolved | | |
 | HIGH-31 | High | Tracker/state writes are non-atomic | 3, 16 | task orchestrator/state | Atomic fsync/replace writes, locked lease purge, and replayable tracker/state transaction journal | interruption recovery, corruption, lease expiry, malformed record, and concurrency tests | Resolved | | |
-| HIGH-32 | High | No install or boot CI test | 17, 18 | CI/vmtest | Pending | Pending | Open | | |
+| HIGH-32 | High | No install or boot CI test | 17, 18 | CI/vmtest | Unit/contract/Pilot/transaction/PTY/guardian suites are authoritative; end-to-end install/boot jobs proceed in Phase 18 | 129 passed, Ruff clean, full mypy clean; two environment skips | Open | | Phase 18 VM workflow remains |
 | HIGH-33 | High | Omarchy bootstrap mutable and unlogged | 14 | first-login | Downloads HTTPS source to a file, verifies release-paired SHA256, records retrieval/version/commit/provenance, displays identity, and uses an output-only PTY transcript | hash mismatch, metadata, transcript, confirmation, and completion-marker tests | Resolved | | Upstream execution remains an external acceptance gate |
 | MED-01 | Medium | Safety-critical plan fields untyped | 2 | shared models | Added strict nested user, locale, free-space, encryption, filesystem, boot, Omarchy, and provenance models | `test_shipped_plan_template_passes_production_validator`; strict-extra test | Resolved | | |
 | MED-02 | Medium | Sector range size not cross-validated | 2 | shared models | Added inclusive range arithmetic and cross-plan logical-sector validation | sector mismatch and cross-sector tests | Resolved | | |
@@ -76,8 +76,8 @@ be marked complete until run in a capable environment.
 | MED-11 | Medium | Prompt responses logged | 3, 10 | command/logging | Prompt-bearing commands inherit terminal I/O and are never captured; structured diagnostics contain booleans only | secret not in argv/captured command tests | Resolved | | |
 | MED-12 | Medium | Release template incompatible | 2, 7 | models/templates | Template and publisher both validate with `ReleaseManifestContract` schema 1.0.0 | template and valid release-pair tests | Resolved | | |
 | MED-13 | Medium | README/status materially stale | 1, 19 | documentation | Pending | Pending | Open | | |
-| MED-14 | Medium | Tests enforce obsolete archinstall shape | 12, 17, 19 | Bats/contracts | Tests now require 4.4 `pre_mounted_config`, separate credentials, and current CLI | strict config/credentials contract suite | Resolved | | Legacy Bats replacement continues Phase 17 |
-| MED-15 | Medium | Tests mock away production failures | 17, 18 | integration/VM tests | Pending | Pending | Open | | |
+| MED-14 | Medium | Tests enforce obsolete archinstall shape | 12, 17, 19 | Bats/contracts | Removed obsolete shell-config Bats; strict models and a Linux gate feed generated files to the pinned upstream 4.4 parser | local strict tests plus upstream-consumer validator | Resolved | | Upstream parser test skips when package is unavailable |
+| MED-15 | Medium | Tests mock away production failures | 17, 18 | integration/VM tests | Added negative Pydantic, atomic, disk, GPT, Ventoy, handoff, packaging, first-login, mounted-guardian, cleanup, and artifact pairing coverage | full suite and external-consumer gate | Open | | Destructive VM/reboot coverage remains Phase 18 |
 
 ## Baseline evidence
 

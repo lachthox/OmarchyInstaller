@@ -15,23 +15,10 @@
 
 | ID | Phase | Area | Priority | Status | Description | Script |
 |---|---|---|---|---|---|---|
-| T01-CFG-001 | 01 | config | P1 | active | generate_archinstall_config writes a file | `01-unit/T01-config-001-json-generation.bats` |
-| T01-CFG-002 | 01 | config | P1 | active | generated JSON contains correct disk path | `01-unit/T01-config-001-json-generation.bats` |
-| T01-CFG-003 | 01 | config | P1 | active | generated JSON contains correct EFI partition | `01-unit/T01-config-001-json-generation.bats` |
-| T01-CFG-004 | 01 | config | P1 | active | generated JSON contains correct root partition | `01-unit/T01-config-001-json-generation.bats` |
-| T01-CFG-005 | 01 | config | P1 | active | EFI partition mountpoint is /boot | `01-unit/T01-config-001-json-generation.bats` |
-| T01-CFG-006 | 01 | config | P1 | active | root partition fs_type is btrfs | `01-unit/T01-config-001-json-generation.bats` |
-| T01-CFG-007 | 01 | config | P1 | active | all five btrfs subvolumes present | `01-unit/T01-config-001-json-generation.bats` |
-| T01-CFG-008 | 01 | config | P1 | active | root partition has encrypted=true, encryption_type=luks2 | `01-unit/T01-config-001-json-generation.bats` |
-| T01-CFG-009 | 01 | config | P1 | active | base package list is complete | `01-unit/T01-config-001-json-generation.bats` |
-| T01-CFG-010 | 01 | config | P1 | active | ucode package included when ucode_pkg arg is non-empty | `01-unit/T01-config-001-json-generation.bats` |
-| T01-CFG-011 | 01 | config | P2 | active | no ucode package when ucode_pkg arg is empty | `01-unit/T01-config-001-json-generation.bats` |
-| T01-CFG-012 | 01 | config | P1 | active | hostname written correctly | `01-unit/T01-config-001-json-generation.bats` |
-| T01-CFG-013 | 01 | config | P1 | active | username in users array with is_superuser=true | `01-unit/T01-config-001-json-generation.bats` |
-| T01-CFG-014 | 01 | config | P1 | active | timezone written correctly | `01-unit/T01-config-001-json-generation.bats` |
-| T01-CFG-015 | 01 | config | P1 | active | bootloader written correctly | `01-unit/T01-config-001-json-generation.bats` |
-| T01-CFG-016 | 01 | config | P1 | active | output passes JSON parse (python3 json.load) | `01-unit/T01-config-001-json-generation.bats` |
-| T01-CFG-017 | 01 | config | P2 | active | special chars in values produce valid JSON | `01-unit/T01-config-001-json-generation.bats` |
+The obsolete shell-generated archinstall configuration suite was retired. Its
+replacement is `rebuild/tests/test_archinstall_contract.py`, with the generated
+files additionally consumed by the pinned upstream parser through
+`rebuild/tools/validate_archinstall_upstream.py` in Linux CI.
 | T01-STR-001 | 01 | string | P1 | active | normalize_hostname: uppercase lowercased | `01-unit/T01-string-001-pure-functions.bats` |
 | T01-STR-002 | 01 | string | P1 | active | normalize_hostname: spaces become hyphens | `01-unit/T01-string-001-pure-functions.bats` |
 | T01-STR-003 | 01 | string | P1 | active | normalize_hostname: dots replaced with hyphens | `01-unit/T01-string-001-pure-functions.bats` |

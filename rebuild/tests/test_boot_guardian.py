@@ -6,24 +6,16 @@ import subprocess
 
 import pytest
 
-try:
-    from rebuild.installer.platforms.installed_system.boot_guardian import (
-        run_boot_guardian_check,
-        run_boot_guardian_repair,
-        record_boot_policy_completion,
-    )
-    from rebuild.installer.platforms.installed_system.boot_guardian_state import BootGuardianExpectedState
-    from rebuild.installer.platforms.installed_system.boot_guardian_state import BootGuardianStateError
-    from rebuild.installer.platforms.linux_live.boot_policy import summarize_preinstall_preservation
-except ModuleNotFoundError:  # pragma: no cover - fallback for package-local test runs
-    from installer.platforms.installed_system.boot_guardian import (
-        run_boot_guardian_check,
-        run_boot_guardian_repair,
-        record_boot_policy_completion,
-    )
-    from installer.platforms.installed_system.boot_guardian_state import BootGuardianExpectedState
-    from installer.platforms.installed_system.boot_guardian_state import BootGuardianStateError
-    from installer.platforms.linux_live.boot_policy import summarize_preinstall_preservation
+from rebuild.installer.platforms.installed_system.boot_guardian import (
+    record_boot_policy_completion,
+    run_boot_guardian_check,
+    run_boot_guardian_repair,
+)
+from rebuild.installer.platforms.installed_system.boot_guardian_state import (
+    BootGuardianExpectedState,
+    BootGuardianStateError,
+)
+from rebuild.installer.platforms.linux_live.boot_policy import summarize_preinstall_preservation
 
 
 class BootPolicyRunner:

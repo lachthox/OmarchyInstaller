@@ -4,28 +4,16 @@ import json
 from pathlib import Path
 import subprocess
 
-try:
-    from rebuild.installer.platforms.installed_system.firstboot import (
-        FirstBootRuntimeContext,
-        evaluate_firstboot_timing_policy,
-        run_firstboot_handoff,
-    )
-    from rebuild.installer.platforms.installed_system.post_install import (
-        build_bootstrap_contract,
-        evaluate_bootstrap_health,
-        normalize_boot_policy,
-    )
-except ModuleNotFoundError:  # pragma: no cover - fallback for package-local test runs
-    from installer.platforms.installed_system.firstboot import (
-        FirstBootRuntimeContext,
-        evaluate_firstboot_timing_policy,
-        run_firstboot_handoff,
-    )
-    from installer.platforms.installed_system.post_install import (
-        build_bootstrap_contract,
-        evaluate_bootstrap_health,
-        normalize_boot_policy,
-    )
+from rebuild.installer.platforms.installed_system.firstboot import (
+    FirstBootRuntimeContext,
+    evaluate_firstboot_timing_policy,
+    run_firstboot_handoff,
+)
+from rebuild.installer.platforms.installed_system.post_install import (
+    build_bootstrap_contract,
+    evaluate_bootstrap_health,
+    normalize_boot_policy,
+)
 
 
 class InstalledSystemRunner:

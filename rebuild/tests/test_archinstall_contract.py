@@ -14,12 +14,14 @@ from rebuild.installer.platforms.linux_live.archinstall_contract import (
     validate_archinstall_files,
 )
 from rebuild.installer.shared import validate_plan_contract
+from rebuild.installer.shared.models import PlanContract
+from rebuild.tools.validate_archinstall_upstream import validate_with_upstream
 
 
 WORKSPACE = Path(__file__).resolve().parents[2]
 
 
-def plan():
+def plan() -> PlanContract:
     payload = json.loads(
         (WORKSPACE / "rebuild" / "assets" / "templates" / "plan.template.json").read_text()
     )
@@ -77,3 +79,24 @@ def test_serialized_files_pass_same_semantic_models(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     validate_archinstall_files(config_path, credentials_path)
+
+
+def test_generated_files_are_consumed_by_pinned_upstream_parser(tmp_path: Path) -> None:
+    pytest.importorskip("archinstall")
+    config_path = tmp_path / "config.json"
+    credentials_path = tmp_path / "credentials.json"
+    config_path.write_text(build_archinstall_config(plan()).model_dump_json(by_alias=True), encoding="utf-8")
+    credentials_path.write_text(
+        build_archinstall_credentials(
+            plan(), user_password_hash="$6$test$abcdefghijklmnopqrstuvwxyz0123456789"
+        ).model_dump_json(),
+        encoding="utf-8",
+    )
+    result = validate_with_upstream(config_path, credentials_path)
+    assert result == {
+        "archinstall_version": "4.4",
+        "config_type": "pre_mounted_config",
+        "mountpoint": "/mnt/archinstall",
+        "username": "omarchy",
+        "sudo": True,
+    }

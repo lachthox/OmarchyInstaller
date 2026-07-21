@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Literal
 import sys
 import threading
 
@@ -90,7 +91,7 @@ class _does_not_raise:
     def __enter__(self) -> None:
         return None
 
-    def __exit__(self, *_args: object) -> bool:
+    def __exit__(self, *_args: object) -> Literal[False]:
         return False
 
 

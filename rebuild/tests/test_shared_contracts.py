@@ -50,7 +50,7 @@ def test_gpt_is_the_only_supported_partition_style() -> None:
             disk_size_bytes=1024,
             logical_sector_size=512,
             runtime_disk_number=0,
-            partition_style="MBR",
+            partition_style="MBR",  # type: ignore[arg-type]
         )
 
 

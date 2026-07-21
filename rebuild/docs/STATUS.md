@@ -32,10 +32,13 @@ test success as installation success.
 - Task orchestration now uses crash-released OS locks, inspectable owner
   metadata, atomic writes, locked lease purges, strict record validation, and a
   replayable journal for tracker/state transactions.
+- Obsolete self-validating archinstall Bats assertions are retired. The full
+  Python suite, Ruff, and mypy are clean, with Linux CI owning the pinned
+  upstream-parser and pseudo-terminal integration skips.
 
 ## Active work
 
-- Phase 17: replace obsolete tests and make the full test gate authoritative.
+- Phase 18: end-to-end CI and release gates.
 
 ## Known blockers
 

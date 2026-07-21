@@ -1,6 +1,9 @@
 # OmarchyInstaller Test Suite
 
-Bats-based tests for `setup.sh`. Run inside an Arch-Linux-based container with `bats` installed.
+Bats-based tests retained only for useful shell helper behavior. The obsolete
+`generate_archinstall_config` Bats suite was removed: the Python engine's strict
+contract tests plus `rebuild/tools/validate_archinstall_upstream.py` now feed the
+generated config and credentials through the pinned archinstall 4.4 parser.
 
 ## Quick-start
 

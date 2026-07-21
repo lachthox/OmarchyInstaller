@@ -217,3 +217,19 @@ Date: 2026-07-21
 - Full suite: 129 passed, 1 Windows-side PTY skip. Full-tree mypy now reaches
   Phase 17 test typing and reports test-only fallback/negative-fixture issues;
   production orchestrator mypy is clean.
+
+## Phase 17 evidence
+
+- Removed `T01-config-001-json-generation.bats`, which asserted the obsolete
+  shell generator's own invalid archinstall shape. The Bats inventory now points
+  to strict Python contract tests and the upstream-consumer validation gate.
+- `validate_archinstall_upstream.py` requires exactly archinstall 4.4 and feeds
+  the generated config plus separate credentials to upstream `ArchConfig`, then
+  checks the parsed pre-mounted layout and hashed sudo user.
+- The suite covers Pydantic/templates, command ordering, atomic writes, Textual
+  Pilot, Windows disk layouts, GPT bounds, wrong Ventoy disk, authenticated
+  handoff, ISO dependencies/imports, first-login PTY behavior, mounted guardian,
+  cleanup, and release pairing.
+- Full local results: 129 passed, 2 skipped; Ruff passes; mypy reports no issues
+  in 98 source files. Skips are the Unix PTY integration and upstream archinstall
+  parser, both intentionally required on the Phase 18 Linux CI runners.
