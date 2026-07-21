@@ -23,6 +23,7 @@ This map exists to prevent overlapping active work.
 | `.github/workflows/**`                            | Build and release automation      | Mixed               | Human Review      | Keep runtime logic out of YAML where possible                                                                |
 | `.github/ISSUE_TEMPLATE/**`                       | Docs and coordination             | Copilot Scaffold    | Mixed             | Structured issue intake only                                                                                 |
 | `.github/PULL_REQUEST_TEMPLATE.md`                | Docs and coordination             | Copilot Scaffold    | Mixed             | Review discipline for rebuild PRs                                                                            |
+| `legacy/unsupported/**`                           | Historical archive                | Human Review        | Human Review      | Inert `.txt` records only; never executable or packaged                                                       |
 
 ## Collision management
 
@@ -30,3 +31,4 @@ This map exists to prevent overlapping active work.
 - Build and release work must not be bundled with runtime implementation unless the issue explicitly owns both boundaries.
 - Boot guardian work must stay separate from install-time bootloader changes.
 - Artifact lifecycle is bucketed as live ISO only, Ventoy USB only, temp staging, or final-system required; temp staging must stay under one directory and be removed after successful install.
+- Disposable VM harnesses own only generated fixtures under their explicit work directory and must reject real block devices.

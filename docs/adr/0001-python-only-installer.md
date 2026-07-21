@@ -75,8 +75,9 @@ must be pinned from current official sources before Phase 12. Until that researc
 is recorded here with contract-test evidence, installation-engine changes are
 blocked by design.
 
-## Legacy retirement
+## Retired implementation archive
 
-`windows-prep.ps1`, `setup.sh`, and `.github/workflows/build-iso.yml` are
-unsupported forensic references during remediation. They may be moved to
-`legacy/unsupported/` only after Python parity and end-to-end VM gates pass.
+The superseded shell and PowerShell entrypoints are stored only as inert `.txt`
+records in `legacy/unsupported/`. No executable alias, fallback, package input,
+or workflow remains. This retirement is independent of release approval: the
+Python product remains blocked until every VM acceptance gate passes.

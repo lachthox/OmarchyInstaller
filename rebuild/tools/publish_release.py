@@ -191,7 +191,7 @@ def build_release_payload(
         ],
         "bootstrap_expectations": {
             "live_entrypoint": "/opt/omarchy-venv/bin/python -m installer.main",
-            "firstboot_wrapper_target": "/usr/local/bin/omarchy-firstboot-wrapper.sh",
+            "first_login_launcher_target": "/usr/local/bin/omarchy-first-login",
             "omarchy_timing_contract": "post-install-only",
         },
         "transport_contract": {

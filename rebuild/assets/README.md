@@ -12,7 +12,7 @@ Planned examples:
 Current scaffolded paths:
 
 - `templates/`: plan and release manifest template JSON files
-- `services/`: systemd unit templates for first-boot handoff and boot guardian
-- `scripts/`: helper shell wrappers for live autostart and first-boot flow
+- `systemd/`: systemd unit templates for normal-user first-login and boot guardian
+- `scripts/`: minimal launchers for live autostart and first-login flow
 - `iso_payload/`: ISO payload asset area
 - `startup/`: installed-system startup asset area

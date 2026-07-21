@@ -14,9 +14,8 @@ Runtime boundaries:
 - `tools/`: packaging, release, and repository automation;
 - `assets/`: packaged scripts, services, templates, and ISO assets.
 
-The packaged product must never invoke `windows-prep.ps1` or `setup.sh`. Those
-legacy files remain outside this tree only for forensic comparison until the
-final archive gate.
+No compatibility launcher exists. Inert historical source is isolated under
+`../legacy/unsupported/` and is excluded from all runtime and packaging paths.
 
 See `../docs/remediation-status.md` for finding-level status and
 `../docs/adr/0001-python-only-installer.md` for the target architecture.

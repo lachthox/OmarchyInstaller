@@ -1,4 +1,8 @@
-﻿[CmdletBinding()]
+﻿<# ARCHIVED - UNSUPPORTED - NON-EXECUTABLE
+Historical PowerShell flow retained only for forensic comparison.
+Do not package, execute, or restore it to a production path. #>
+
+[CmdletBinding()]
 param(
   [switch]$EnableDebugLog,
   [switch]$DisableDebugLog,

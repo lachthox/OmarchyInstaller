@@ -33,6 +33,7 @@ jobs:
       - run: python -m ruff check rebuild
       - run: python -m mypy rebuild
       - run: python -m pytest rebuild/tests -q
+      - run: python rebuild/tools/check_no_legacy_production_refs.py
 
   shell:
     runs-on: ubuntu-latest
@@ -40,7 +41,7 @@ jobs:
       - uses: actions/checkout@v6
       - run: sudo apt-get update -qq && sudo apt-get install -y shellcheck bats
       - run: shellcheck -s bash rebuild/assets/scripts/*.sh build-custom-iso.sh
-      - run: bats Tests/01-unit Tests/02-component
+      - run: bats rebuild/tests-shell
 
   contracts:
     runs-on: ubuntu-latest

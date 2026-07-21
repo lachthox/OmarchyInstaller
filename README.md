@@ -30,12 +30,12 @@ The only intended live entrypoint is the installed Python package:
 That packaged runtime and the complete installation flow are still undergoing
 acceptance work. There is currently no approved real-hardware quick start.
 
-## Legacy status
+## Retired implementations
 
-`windows-prep.ps1`, `setup.sh`, and `.github/workflows/build-iso.yml` are retained
-temporarily for forensic comparison only. They are unsupported, must not be
-packaged or launched by the Python product, and will be archived only after the
-Python parity and VM gates pass.
+The former shell and PowerShell entrypoints are inert `.txt` records under
+`legacy/unsupported/`. They are not executable, imported, packaged, launched,
+or accepted as compatibility paths. CI enforces one Python journey, one CI
+workflow, and one gated release workflow.
 
 ## Development
 
@@ -49,9 +49,8 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m mypy rebuild\installer rebuild\tools
 ```
 
-Shell/Bats and VM test instructions are in `vmtest/README.md` in the parent
-workspace when that harness is available. Never point installer tests at a real
-disk, ESP, USB device, or firmware store.
+See `docs/installation-guide.md` and `docs/recovery-guide.md`. Never point
+installer tests at a real disk, ESP, USB device, or firmware store.
 
 ## Project status
 

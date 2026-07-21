@@ -250,3 +250,16 @@ Date: 2026-07-21
 - This Windows host cannot execute the newly required Linux/OVMF jobs. Their
   workflow and fail-closed dependency graph are implemented; Phase 20 owns the
   harness and exact destructive VM evidence.
+# Phase 19 legacy retirement evidence
+
+- Removed executable historical entrypoints and stored inert `.txt` records
+  under `legacy/unsupported/` with an explicit non-execution notice.
+- Removed obsolete shell tests, duplicate installed-system bootstrap modules,
+  duplicate workflows, and compatibility wrapper naming.
+- ISO dry-run payload includes the complete target asset tree and uses only
+  `/opt/omarchy-installer` plus the isolated Python virtual environment.
+- `python rebuild/tools/check_no_legacy_production_refs.py`: passed.
+- `python -m pytest rebuild/tests -q`: 128 passed, 2 skipped (Linux-only pinned
+  upstream parser and pseudo-terminal integration).
+- `python -m ruff check rebuild`: passed.
+- `python -m mypy rebuild`: passed across 98 source files.

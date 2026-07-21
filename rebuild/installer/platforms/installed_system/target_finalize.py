@@ -119,7 +119,7 @@ def deploy_target_assets(
         path.chmod(0o755)
 
     mappings = {
-        assets / "scripts" / "firstboot-wrapper.sh": ("/usr/local/bin/omarchy-first-login", True),
+        assets / "scripts" / "first-login.sh": ("/usr/local/bin/omarchy-first-login", True),
         assets / "scripts" / "first-login-profile.sh": ("/etc/profile.d/omarchy-first-login.sh", False),
         assets / "scripts" / "stage-marker.sh": ("/usr/local/bin/omarchy-stage-marker", True),
         assets / "scripts" / "boot-guardian.sh": ("/usr/local/bin/omarchy-boot-guardian", True),
@@ -139,7 +139,7 @@ def deploy_target_assets(
         "#!/usr/bin/env bash\nset -euo pipefail\n"
         "printf '%s\\n' 'Omarchy install status:'\n"
         "for f in /var/lib/omarchy/install/install-success.json "
-        "/var/lib/omarchy/firstboot/state.json /var/lib/omarchy/boot/expected-state.json; do\n"
+        "/var/lib/omarchy/first-login/state.json /var/lib/omarchy/boot/expected-state.json; do\n"
         "  [[ -r \"$f\" ]] && { printf '\\n%s\\n' \"$f\"; sed -n '1,160p' \"$f\"; }\n"
         "done\n",
         encoding="utf-8",
@@ -149,7 +149,7 @@ def deploy_target_assets(
 
     for relative in (
         "var/lib/omarchy/install",
-        "var/lib/omarchy/firstboot",
+        "var/lib/omarchy/first-login",
         "var/lib/omarchy/boot",
         "var/log/omarchy",
         "var/lib/omarchy/diagnostics",
@@ -174,7 +174,7 @@ def deploy_target_assets(
         "release_tag": machine.release_tag,
         "build_commit": machine.build_commit,
     }
-    pairing_path = _target(root, "/var/lib/omarchy/firstboot/release-pairing.json")
+    pairing_path = _target(root, "/var/lib/omarchy/first-login/release-pairing.json")
     _write_atomic(pairing_path, pairing, mode=0o644)
     deployed.append(str(pairing_path))
     return tuple(deployed)
@@ -240,7 +240,7 @@ def validate_target_root(target_root: str | Path, machine: TargetMachineState) -
     ))
     _require(all(_is_executable(path) for path in executable_paths), "Installed wrappers are missing or not executable", validated, "executables")
     _require(_target(root, "/etc/profile.d/omarchy-first-login.sh").is_file(), "First-login shell hook is missing", validated, "first-login-hook")
-    pairing_path = _target(root, "/var/lib/omarchy/firstboot/release-pairing.json")
+    pairing_path = _target(root, "/var/lib/omarchy/first-login/release-pairing.json")
     try:
         pairing = json.loads(pairing_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:

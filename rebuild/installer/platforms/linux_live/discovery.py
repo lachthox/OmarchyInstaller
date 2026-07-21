@@ -17,7 +17,7 @@ from ...shared import PLAN_SCHEMA_VERSION, PlanContract, assert_runtime_compatib
 
 DEFAULT_HANDOFF_RELATIVE_PATH = "omarchy/plan.json"
 DEFAULT_MOUNT_BASES = (Path("/run/media"), Path("/media"), Path("/mnt"))
-DEFAULT_RUNTIME_METADATA_PATH = Path("/opt/omarchy-setup/build-metadata.json")
+DEFAULT_RUNTIME_METADATA_PATH = Path("/opt/omarchy-installer/build-metadata.json")
 DEFAULT_HANDOFF_MANIFEST_RELATIVE_PATH = "omarchy/handoff-manifest.json"
 DEFAULT_CONTROLLED_MOUNT = Path("/run/omarchy/handoff")
 

@@ -107,14 +107,14 @@ def ensure_workspace_layout(workspace: Path) -> None:
         workspace / "rebuild" / "requirements.lock",
         workspace / "rebuild" / "pyproject.toml",
         workspace / "rebuild" / "assets" / "scripts" / "live-autostart.sh",
-        workspace / "rebuild" / "assets" / "scripts" / "firstboot-wrapper.sh",
+        workspace / "rebuild" / "assets" / "scripts" / "first-login.sh",
     ]
     missing = [str(path) for path in required_paths if not path.exists()]
     if missing:
         raise RuntimeError(f"Workspace is missing required paths: {missing}")
 
 
-def write_setup_wrapper(path: Path) -> None:
+def write_live_launcher(path: Path) -> None:
     path.write_text(
         "#!/usr/bin/env bash\n"
         "set -Eeuo pipefail\n\n"
@@ -143,6 +143,7 @@ def prepare_payload(
         installer_dest,
         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
     )
+    shutil.copytree(workspace / "rebuild" / "assets", payload_dir / "assets")
 
     for src_rel, dst_rel in [
         ("rebuild/requirements.txt", "requirements.txt"),
@@ -151,15 +152,14 @@ def prepare_payload(
         ("rebuild/pyproject.toml", "pyproject.toml"),
         ("rebuild/README.md", "README.md"),
         ("rebuild/assets/scripts/live-autostart.sh", "hooks/live-autostart.sh"),
-        ("rebuild/assets/scripts/firstboot-wrapper.sh", "hooks/firstboot-wrapper.sh"),
     ]:
         src = workspace / src_rel
         dst = payload_dir / dst_rel
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
 
-    setup_wrapper = payload_dir / "setup.sh"
-    write_setup_wrapper(setup_wrapper)
+    live_launcher = payload_dir / "launch-installer"
+    write_live_launcher(live_launcher)
 
     runtime_packages = payload_dir / "runtime-packages.txt"
     runtime_packages.write_text(
@@ -192,13 +192,13 @@ def prepare_payload(
         },
         "runtime": {
             "entrypoint": LIVE_ENTRYPOINT,
-            "setup_wrapper": "/opt/omarchy-setup/setup.sh",
-            "installer_package_root": "/opt/omarchy-setup/installer",
-            "python_requirements_file": "/opt/omarchy-setup/requirements.lock",
+            "live_launcher": "/opt/omarchy-installer/launch-installer",
+            "installer_package_root": "/opt/omarchy-installer/installer",
+            "python_requirements_file": "/opt/omarchy-installer/requirements.lock",
             "python_requirements_sha256": compute_sha256(payload_dir / "requirements.lock"),
             "python_venv": "/opt/omarchy-venv",
             "archinstall_version": SUPPORTED_ARCHINSTALL,
-            "required_system_packages_file": "/opt/omarchy-setup/runtime-packages.txt",
+            "required_system_packages_file": "/opt/omarchy-installer/runtime-packages.txt",
             "required_system_packages_sha256": compute_sha256(runtime_packages),
             "required_runtime_binaries": [
                 "python3",
@@ -219,7 +219,7 @@ def prepare_payload(
         },
         "startup_hooks": {
             "live_tty_hook": "/usr/local/bin/omarchy-live-autostart",
-            "payload_hook_reference": "/opt/omarchy-setup/hooks/live-autostart.sh",
+            "payload_hook_reference": "/opt/omarchy-installer/hooks/live-autostart.sh",
             "payload_hook_sha256": compute_sha256(payload_dir / "hooks" / "live-autostart.sh"),
         },
     }

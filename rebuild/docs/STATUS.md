@@ -41,7 +41,7 @@ test success as installation success.
 
 ## Active work
 
-- Phase 19: final legacy retirement and repository cleanup.
+- Phase 20: isolated end-to-end acceptance and final release decision.
 
 ## Known blockers
 
@@ -51,6 +51,8 @@ test success as installation success.
   install, reboot, and recovery gates remain open.
 - Exact rootfs assembly and installed-system validation still require the
   destructive Linux VM acceptance environment.
+- The archived implementations are inert text and no longer have production,
+  packaging, test, or workflow consumers.
 
 ## Readiness
 

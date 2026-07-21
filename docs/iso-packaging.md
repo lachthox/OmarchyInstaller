@@ -22,7 +22,7 @@ signature-disabled fallback.
 
 `rebuild/requirements.lock` pins every Python transitive dependency and includes
 artifact SHA-256 hashes. The ISO build creates `/opt/omarchy-venv`, installs that
-lock with `pip --require-hashes`, and adds only `/opt/omarchy-setup` to the
+lock with `pip --require-hashes`, and adds only `/opt/omarchy-installer` to the
 environment's import path. The one canonical launch command is:
 
 ```text

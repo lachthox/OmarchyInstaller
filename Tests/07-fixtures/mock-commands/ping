@@ -1,7 +1,0 @@
-#!/usr/bin/env bash
-# ping stub — succeeds by default to simulate internet connectivity.
-#
-# Environment variables:
-#   MOCK_EXIT_CODE   exit code (default 0 = reachable)
-
-exit "${MOCK_EXIT_CODE:-0}"

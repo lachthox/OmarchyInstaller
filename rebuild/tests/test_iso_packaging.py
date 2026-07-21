@@ -42,11 +42,14 @@ def test_payload_has_one_cwd_independent_entrypoint(tmp_path: Path) -> None:
     assert runtime["python_requirements_file"].endswith("requirements.lock")
     assert runtime["archinstall_version"] == SUPPORTED_ARCHINSTALL
     assert (tmp_path / "payload" / "main.py").exists() is False
-    assert LIVE_ENTRYPOINT in (tmp_path / "payload" / "setup.sh").read_text(encoding="utf-8")
+    assert LIVE_ENTRYPOINT in (tmp_path / "payload" / "launch-installer").read_text(
+        encoding="utf-8"
+    )
+    assert (tmp_path / "payload" / "assets" / "scripts" / "first-login-profile.sh").is_file()
 
     serialized = json.dumps(metadata)
-    assert "/opt/omarchy-installer" not in serialized
-    assert "/opt/omarchy-setup/main.py" not in serialized
+    assert "/opt/omarchy-installer" in serialized
+    assert "/opt/omarchy-setup" not in serialized
 
 
 def test_iso_build_keeps_signatures_and_verifies_runtime() -> None:

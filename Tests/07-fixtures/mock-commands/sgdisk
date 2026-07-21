@@ -1,9 +1,0 @@
-#!/usr/bin/env bash
-# sgdisk stub
-#
-# Environment variables:
-#   MOCK_SGDISK_OUTPUT   stdout (default empty)
-#   MOCK_EXIT_CODE       exit code (default 0)
-
-printf '%s\n' "${MOCK_SGDISK_OUTPUT:-}"
-exit "${MOCK_EXIT_CODE:-0}"

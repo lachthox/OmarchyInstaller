@@ -6,14 +6,14 @@ It is the source of truth for:
 
 - layer boundaries
 - ownership boundaries
-- preserved proven concepts from the legacy system
+- preserved transport and safety concepts
 - core design and runtime rules
 - target repository structure
 
 ## Scope
 
-- Applies to rebuild work under `rebuild/` and coordination files tied to rebuild execution.
-- Does not authorize direct runtime feature rewrites in legacy entrypoints (`setup.sh`, `windows-prep.ps1`, `build-custom-iso.sh`) during containment.
+- Applies to the supported Python product, its assets, build tooling, and workflows.
+- Archived source under `legacy/unsupported/` is outside the executable architecture.
 
 ## Four-Layer Model
 
@@ -22,7 +22,7 @@ It is the source of truth for:
 | Layer 0 | Build/Release | Build, package, and publish artifacts and metadata | Repo source, build scripts, templates | ISO/EXE artifacts, checksums, release metadata, compatibility metadata | Embed runtime installer behavior in workflow YAML |
 | Layer 1 | Windows Preparation | Validate Windows state and prepare transport + handoff payload | User intent, system checks, shared schema contracts, release metadata | Deterministic handoff package and bootable transport | Perform Linux install operations |
 | Layer 2 | Arch Live Installer | Execute install from live environment using validated handoff | Handoff payload, disk model contracts, compatibility contract | Installed system, boot configuration, persisted first-boot inputs | Launch Omarchy directly from live install phase |
-| Layer 3 | Installed-System Protections | Run first boot wrapper, Omarchy handoff, and post-install boot safety checks | Installed-system first-boot markers, expected boot state | Controlled Omarchy bootstrap and ongoing boot health guardrails | Re-run install-time partitioning or Windows preparation steps |
+| Layer 3 | Installed-System Protections | Run normal-user first-login and post-install boot safety checks | Release pairing, install markers, expected boot state | Controlled Omarchy bootstrap and ongoing boot health guardrails | Re-run install-time partitioning or Windows preparation steps |
 
 ## Ownership Boundaries
 
@@ -31,7 +31,7 @@ It is the source of truth for:
 | `rebuild/installer/shared/**` | Shared | Shared schema, models, validation contracts, compatibility checks |
 | `rebuild/installer/platforms/windows/**` | Windows Preparation | Windows checks, backups, partition prep, Ventoy + handoff generation |
 | `rebuild/installer/platforms/linux_live/**` | Arch Live Installer | Live handoff validation, install orchestration, bootloader policy enforcement |
-| `rebuild/installer/platforms/installed_system/**` | Omarchy Handoff + Boot Guardian | First-boot launcher flow, Omarchy timing control, boot drift detection |
+| `rebuild/installer/platforms/installed_system/**` | Omarchy Handoff + Boot Guardian | First-login flow, Omarchy timing control, boot drift detection |
 | `rebuild/installer/ui/**` | UI Flow | User interaction flow and UX contracts only |
 | `rebuild/tools/**` | Build/Release Automation | Build, packaging, release metadata, CI-invoked tooling |
 | `rebuild/assets/**` | Shared Assets | Templates, service/unit assets, payload static files |
@@ -42,7 +42,6 @@ Authoritative coordination rules remain in:
 
 - `rebuild/docs/ownership-map.md`
 - `rebuild/docs/coordination-rules.md`
-- `rebuild/docs/containment-boundary.md`
 
 ## Preserved Proven Concepts
 
@@ -51,7 +50,7 @@ The rebuild must preserve the following proven behaviors:
 1. GitHub ISO model: release artifacts are built and published from repository automation.
 2. Ventoy transport model: Windows preparation uses Ventoy flow to carry the ISO and handoff.
 3. Live auto-start concept: the live environment auto-starts installer orchestration instead of manual shell sequencing.
-4. Post-reboot Omarchy timing: Omarchy bootstrap occurs only after install completion and first-boot guardrails.
+4. Post-reboot Omarchy timing: Omarchy bootstrap occurs only after install completion and normal-user login.
 
 These are preserved as architectural invariants while implementation details are rebuilt in Python modules.
 

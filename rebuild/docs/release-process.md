@@ -49,7 +49,7 @@ The workflow trigger matrix keeps the release artifacts fresh without depending 
 | Change area                                                                                                    | Workflow result                                            |
 | -------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
 | `build-custom-iso.sh`, `rebuild/installer/**`, `rebuild/assets/**`, or rebuild dependency files                | Rebuild the ISO artifact                                   |
-| `windows-prep.ps1`, `rebuild/tools/build_windows_exe.py`, `rebuild/tools/windows/**`, or shared contract files | Rebuild the Windows EXE artifact                           |
+| `rebuild/tools/build_windows_exe.py`, `rebuild/tools/windows/**`, or shared contract files | Rebuild the Windows EXE artifact                           |
 | Any ISO, EXE, or shared contract change                                                                        | Rebuild the release bundle and regenerate release metadata |
 
 ## Freshness policy
@@ -80,11 +80,12 @@ Supporting docs:
 - `rebuild/docs/github-project-setup.md`
 - `rebuild/docs/STATUS.md`
 
-## Current implementation note
+## Current implementation
 
-- `.github/workflows/rebuild-iso.yml` invokes `rebuild/tools/build_iso_pipeline.py` to build the customized Arch ISO artifact and emit build manifest metadata.
-- `.github/workflows/rebuild-windows-exe.yml` invokes `rebuild/tools/build_windows_exe.py` to package `OmarchyInstaller.exe` with PyInstaller and emit executable build manifest metadata.
-- `.github/workflows/rebuild-release.yml` invokes `rebuild/tools/publish_release.py` to produce `release_manifest.json`, `compatibility_manifest.json`, consolidated checksums, and optional GitHub Release publication.
+- `.github/workflows/rebuild-ci.yml` is the sole continuous validation graph.
+- `.github/workflows/rebuild-release.yml` is the sole artifact build and publish graph.
+- Python tools build the ISO and EXE, run the VM gate, and construct the paired
+  manifests; workflow YAML only orchestrates those tools.
 
 ## Mandatory release graph
 
@@ -92,7 +93,7 @@ There is one publishing workflow. Its publish job depends on successful Python
 Ruff/mypy/pytest, ShellCheck/Bats, pinned upstream archinstall contracts,
 normal-user PTY, ISO build, Windows EXE build/test, and disposable VM
 install-and-reboot jobs. GitHub Actions cannot schedule publication if any need
-fails or is skipped. The former legacy `build-iso.yml` publisher is deleted.
+fails or is skipped. No independent artifact publisher exists.
 
 Dry-run artifacts are never inputs to the release workflow. The publisher still
 revalidates unique ISO/EXE manifests, exact commit/tag/version/run/ref pairing,

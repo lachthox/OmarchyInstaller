@@ -604,6 +604,6 @@ def build_handoff_manifest() -> dict[str, str]:
         "handoff_plan_path": "omarchy/plan.json",
         "handoff_manifest_path": "omarchy/handoff-manifest.json",
         "network_credentials": "interactive-only",
-        "firstboot_log_path": "omarchy/install.log",
+        "first_login_log_path": "omarchy/install.log",
         "backup_metadata_path": "omarchy/windows-backup-info.json",
     }

@@ -1,3 +1,7 @@
+ARCHIVED - UNSUPPORTED - NON-EXECUTABLE
+Historical Bash installer retained only for forensic comparison.
+Do not source, package, execute, or restore it to a production path.
+
 #!/usr/bin/env bash
 # Omarchy portable installer assistant for Arch live ISO.
 # Guides users with a TUI (whiptail) and generates an archinstall config

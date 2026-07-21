@@ -1,9 +1,0 @@
-processor	: 0
-vendor_id	: AuthenticAMD
-cpu family	: 25
-model		: 80
-model name	: AMD Ryzen 7 5700U with Radeon Graphics
-stepping	: 0
-microcode	: 0xa50000c
-cpu MHz		: 1400.000
-cache size	: 512 KB

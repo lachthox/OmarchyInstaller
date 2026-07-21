@@ -15,7 +15,7 @@ from typing import Callable, Mapping, Protocol
 from urllib.request import Request, urlopen
 
 
-DEFAULT_PAIRING_PATH = Path("/var/lib/omarchy/firstboot/release-pairing.json")
+DEFAULT_PAIRING_PATH = Path("/var/lib/omarchy/first-login/release-pairing.json")
 DEFAULT_INSTALL_MARKER = Path("/var/lib/omarchy/install/install-success.json")
 
 

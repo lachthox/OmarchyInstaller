@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# build-custom-iso.sh — Build a customized Arch ISO with omarchy-setup baked in.
+# build-custom-iso.sh — Build the customized Arch ISO with the Python installer baked in.
 #
 # This script runs natively on Linux (e.g. in CI or on any workstation).
-# It injects the omarchy-setup directory into the Arch live rootfs image and
-# installs a login hook that auto-prompts to run setup.sh on first boot.
+# It injects the installer payload into the Arch live rootfs image and installs
+# a login hook that launches the Python TUI on the first live-console login.
 #
 # Supports both modern EROFS-based ISOs (Arch 2022+) and legacy SquashFS ISOs.
 #
 # Usage:
-#   ./build-custom-iso.sh <source-iso> <setup-dir> <output-iso>
+#   ./build-custom-iso.sh <source-iso> <payload-dir> <output-iso>
 #
 # Requirements: xorriso, rsync, and either erofs-utils (mkfs.erofs/fsck.erofs)
 #               or squashfs-tools (mksquashfs/unsquashfs) depending on ISO format.
@@ -16,7 +16,7 @@
 # Example:
 #   ./build-custom-iso.sh \
 #       archlinux-2026.02.01-x86_64.iso \
-#       ./omarchy-setup \
+#       ./payload \
 #       archlinux-2026.02.01-x86_64-omarchy-auto.iso
 
 set -Eeuo pipefail
@@ -24,12 +24,12 @@ set -Eeuo pipefail
 # ── Argument parsing ────────────────────────────────────────────────────────
 
 if [[ $# -lt 3 ]]; then
-  echo "Usage: $0 <source-iso> <setup-dir> <output-iso>" >&2
+  echo "Usage: $0 <source-iso> <payload-dir> <output-iso>" >&2
   exit 1
 fi
 
 SRC_ISO="$1"
-SETUP_DIR="$2"
+PAYLOAD_DIR="$2"
 OUT_ISO="$3"
 
 if [[ ! -f "$SRC_ISO" ]]; then
@@ -37,8 +37,8 @@ if [[ ! -f "$SRC_ISO" ]]; then
   exit 1
 fi
 
-if [[ ! -d "$SETUP_DIR" ]]; then
-  echo "Error: Setup directory not found: $SETUP_DIR" >&2
+if [[ ! -d "$PAYLOAD_DIR" ]]; then
+  echo "Error: Installer payload directory not found: $PAYLOAD_DIR" >&2
   exit 1
 fi
 
@@ -179,18 +179,18 @@ fi
 echo "[3/6] Preparing Omarchy payload..."
 
 STAGING_DIR="$WORK_DIR/staging"
-mkdir -p "$STAGING_DIR/opt/omarchy-setup"
-rsync -rlt --delete "$SETUP_DIR/" "$STAGING_DIR/opt/omarchy-setup/"
+mkdir -p "$STAGING_DIR/opt/omarchy-installer"
+rsync -rlt --delete "$PAYLOAD_DIR/" "$STAGING_DIR/opt/omarchy-installer/"
 
 # Strip Windows CRLF line endings from all shell scripts to avoid
 # invisible \r bytes leaking into generated config files at runtime.
-find "$STAGING_DIR/opt/omarchy-setup" -type f -name '*.sh' -exec sed -i 's/\r$//' {} +
+find "$STAGING_DIR/opt/omarchy-installer" -type f -name '*.sh' -exec sed -i 's/\r$//' {} +
 
 # ── Create the live-shell autostart hook ────────────────────────────────────
 
 mkdir -p "$STAGING_DIR/usr/local/bin"
 install -m 0755 \
-  "$SETUP_DIR/hooks/live-autostart.sh" \
+  "$PAYLOAD_DIR/hooks/live-autostart.sh" \
   "$STAGING_DIR/usr/local/bin/omarchy-live-autostart"
 
 mkdir -p "$STAGING_DIR/root"
@@ -220,7 +220,7 @@ PROFILE
 # ── Set correct permissions on staging files ────────────────────────────────
 
 chmod 0755 "$STAGING_DIR/usr/local/bin/omarchy-live-autostart"
-chmod 0755 "$STAGING_DIR/opt/omarchy-setup/setup.sh" 2>/dev/null || true
+chmod 0755 "$STAGING_DIR/opt/omarchy-installer/launch-installer"
 
 ensure_live_runtime() {
   local rootfs="$1"
@@ -282,9 +282,9 @@ ensure_live_runtime() {
     [[ "$(pacman -Q archinstall | awk "{print \$2}")" == "4.4-1" ]]
     python -m venv /opt/omarchy-venv
     /opt/omarchy-venv/bin/python -m pip install \
-      --require-hashes -r /opt/omarchy-setup/requirements.lock
+      --require-hashes -r /opt/omarchy-installer/requirements.lock
     site_packages="$(/opt/omarchy-venv/bin/python -c "import site; print(site.getsitepackages()[0])")"
-    printf "/opt/omarchy-setup\n" > "$site_packages/omarchy-setup.pth"
+    printf "/opt/omarchy-installer\n" > "$site_packages/omarchy-installer.pth"
 
     for command in python3 nmcli archinstall cryptsetup mkfs.btrfs mount umount \
       findmnt lsblk blkid udevadm partprobe sgdisk efibootmgr; do
