@@ -143,3 +143,15 @@ Date: 2026-07-21
   continues accepting navigation. The old snapshot probe no longer calls an
   empty install plan or treats it as success, and Limine is no longer a
   pre-install prerequisite.
+
+## Phase 12 evidence
+
+- Full local gate includes strict archinstall 4.4 config/credentials models,
+  pre-mounted `/mnt/archinstall`, separate mode-0600 credentials, no internal
+  plan fields, and current `--config/--creds/--silent/--mountpoint` CLI shape.
+- Fake real-mode execution proves semantic validation and a GPT backup precede
+  partition creation; actual geometry replaces requested geometry; LUKS2,
+  Btrfs, subvolumes, root/ESP mounts, archinstall, `sd-encrypt` initramfs,
+  reverse unmount, mapper close, and credential deletion occur in order.
+- Exact pinned-package parsing and disposable VM installation are blocked on
+  this host and remain explicitly open acceptance gates.

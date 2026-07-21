@@ -23,7 +23,7 @@ test success as installation success.
 
 ## Active work
 
-- Phase 12: pinned pre-mounted archinstall engine and credential contract.
+- Phase 13: target finalization and installed-system asset deployment.
 
 ## Known blockers
 

@@ -216,6 +216,9 @@ class InstallRunner:
                 "",
             )
         if command[0] == "sgdisk":
+            if command[1].startswith("--backup="):
+                Path(command[1].split("=", 1)[1]).write_bytes(b"gpt-backup")
+                return subprocess.CompletedProcess(command, 0, "", "")
             self.created = True
             return subprocess.CompletedProcess(command, 0, "", "")
         if command[0] == "lsblk":
@@ -256,14 +259,30 @@ def test_extent_rechecked_and_actual_aligned_geometry_replaces_requested(tmp_pat
         stage_root=tmp_path,
         dry_run=False,
         encryption_passphrase="not-a-real-secret",
+        user_password_hash="$6$test$abcdefghijklmnopqrstuvwxyz0123456789",
+        efi_partition_path="/dev/nvme0n1p1",
         cleanup_after_success=False,
         runner=runner,
     )
     assert result.target_partition_start_sector == 943720448
     assert result.target_partition_guid.endswith("0099")
     config = json.loads((Path(result.stage_root) / "runtime" / "archinstall-config.json").read_text())
-    assert config["target"]["partition_start_sector"] == 943720448
+    assert config["disk_config"] == {
+        "config_type": "pre_mounted_config",
+        "mountpoint": "/mnt/archinstall",
+    }
+    assert "target" not in config
     assert runner.commands[0][:2] == ["sgdisk", "--print"]
+    backup_index = next(i for i, cmd in enumerate(runner.commands) if cmd[0] == "sgdisk" and cmd[1].startswith("--backup="))
+    create_index = next(i for i, cmd in enumerate(runner.commands) if cmd[0] == "sgdisk" and cmd[1].startswith("--new="))
+    assert backup_index < create_index
+    assert any(cmd[:3] == ["btrfs", "subvolume", "create"] for cmd in runner.commands)
+    archinstall = next(cmd for cmd in runner.commands if cmd[0] == "archinstall")
+    assert archinstall[-3:] == ["--silent", "--mountpoint", "/mnt/archinstall"]
+    assert "--creds" in archinstall and "--config" in archinstall
+    assert any("sd-encrypt" in " ".join(cmd) for cmd in runner.commands)
+    assert ["arch-chroot", "/mnt/archinstall", "mkinitcpio", "-P"] in runner.commands
+    assert not (Path(result.stage_root) / "runtime" / "archinstall-credentials.json").exists()
 
 
 def test_stale_extent_blocks_before_partition_command(tmp_path: Path) -> None:
@@ -275,6 +294,24 @@ def test_stale_extent_blocks_before_partition_command(tmp_path: Path) -> None:
             stage_root=tmp_path,
             dry_run=False,
             encryption_passphrase="not-a-real-secret",
+            user_password_hash="$6$test$abcdefghijklmnopqrstuvwxyz0123456789",
+            efi_partition_path="/dev/nvme0n1p1",
             runner=runner,
         )
     assert not any(command[0] == "sgdisk" and command[1].startswith("--new") for command in runner.commands)
+
+
+def test_invalid_credentials_fail_semantically_before_any_command(tmp_path: Path) -> None:
+    runner = InstallRunner()
+    with pytest.raises(ValueError):
+        execute_install_plan(
+            plan_payload(),
+            target_disk_path="/dev/nvme0n1",
+            stage_root=tmp_path,
+            dry_run=False,
+            encryption_passphrase="not-a-real-secret",
+            user_password_hash="plaintext-password-is-not-a-hash",
+            efi_partition_path="/dev/nvme0n1p1",
+            runner=runner,
+        )
+    assert runner.commands == []

@@ -13,11 +13,17 @@ from typing import Any, Protocol
 from uuid import uuid4
 
 from ...shared import PlanContract, validate_plan_contract
+from .archinstall_contract import (
+    ARCHINSTALL_MOUNTPOINT,
+    build_archinstall_config,
+    build_archinstall_credentials,
+    validate_archinstall_files,
+)
 
 
 DEFAULT_LIVE_STAGE_ROOT = Path(gettempdir()) / "omarchy-live-install"
 DEFAULT_CRYPT_MAPPER_NAME = "omarchy-cryptroot"
-DEFAULT_MOUNT_ROOT = "/mnt"
+DEFAULT_MOUNT_ROOT = ARCHINSTALL_MOUNTPOINT
 
 
 class LiveInstallError(RuntimeError):
@@ -229,7 +235,7 @@ def _assert_planned_extent_is_still_free(
     start_sector: int,
     end_sector: int,
     logical_sector_size: int,
-) -> None:
+) -> dict[str, Any]:
     gpt = _run_checked(runner, ["sgdisk", "--print", disk_path])
     match = re.search(
         r"First usable sector is\s+(\d+), last usable sector is\s+(\d+)", gpt, re.IGNORECASE
@@ -255,50 +261,20 @@ def _assert_planned_extent_is_still_free(
         part_end = part_start + part_sectors - 1
         if not (end_sector < part_start or start_sector > part_end):
             raise LiveInstallError("Planned free-space extent is no longer free.")
+    return {
+        "disk_path": disk_path,
+        "planned_start_sector": start_sector,
+        "planned_end_sector": end_sector,
+        "logical_sector_size": logical_sector_size,
+        "sgdisk_print": gpt,
+        "lsblk": payload,
+    }
 
 
 def _build_archinstall_config(
     plan: PlanContract,
-    *,
-    target_disk_path: str,
-    target_partition_path: str,
-    crypt_mapper_name: str,
-    mount_root: str,
-    partition_start_sector: int | None = None,
-    partition_end_sector: int | None = None,
-    partition_size_bytes: int | None = None,
 ) -> dict[str, Any]:
-    return {
-        "schema_version": "1.0.0",
-        "source": "omarchy-live-orchestrator",
-        "hostname": plan.user_choices.hostname,
-        "username": plan.user_choices.username,
-        "timezone": plan.user_choices.timezone,
-        "locale": plan.user_choices.locale,
-        "target": {
-            "disk_path": target_disk_path,
-            "partition_path": target_partition_path,
-            "partition_start_sector": partition_start_sector
-            if partition_start_sector is not None
-            else plan.prepared_free_space_range.start_sector,
-            "partition_end_sector": partition_end_sector
-            if partition_end_sector is not None
-            else plan.prepared_free_space_range.end_sector,
-            "partition_size_bytes": partition_size_bytes
-            if partition_size_bytes is not None
-            else plan.prepared_free_space_range.size_bytes,
-        },
-        "layout": {
-            "encryption": {
-                "required": True,
-                "luks_type": "luks2",
-                "mapper_name": crypt_mapper_name,
-            },
-            "filesystem": "btrfs",
-            "mount_root": mount_root,
-            "bootloader_policy": "limine",
-        },
-    }
+    return build_archinstall_config(plan).model_dump(mode="json", by_alias=True)
 
 
 def _build_install_command_plan(
@@ -310,9 +286,14 @@ def _build_install_command_plan(
     crypt_mapper_name: str,
     mount_root: str,
     archinstall_config_path: Path,
+    archinstall_credentials_path: Path,
+    efi_partition_path: str,
+    subvolumes: tuple[tuple[str, str, tuple[str, ...]], ...],
+    gpt_backup_path: Path,
 ) -> list[list[str]]:
     mapper_path = f"/dev/mapper/{crypt_mapper_name}"
-    return [
+    commands = [
+        ["sgdisk", f"--backup={gpt_backup_path}", target_disk_path],
         [
             "sgdisk",
             f"--new=0:{start_sector}:{end_sector}",
@@ -325,9 +306,49 @@ def _build_install_command_plan(
         ["cryptsetup", "luksFormat", "--type", "luks2", "--batch-mode", "--key-file", "-", target_partition_path],
         ["cryptsetup", "open", "--key-file", "-", target_partition_path, crypt_mapper_name],
         ["mkfs.btrfs", "-f", mapper_path],
+        ["mkdir", "-p", mount_root],
         ["mount", mapper_path, mount_root],
-        ["archinstall", "--config", str(archinstall_config_path)],
     ]
+    commands.extend(["btrfs", "subvolume", "create", f"{mount_root}/{name}"] for name, _, _ in subvolumes)
+    commands.append(["umount", mount_root])
+    root = next(item for item in subvolumes if item[1] == "/")
+    commands.append(["mount", "-o", ",".join((f"subvol={root[0]}", *root[2])), mapper_path, mount_root])
+    for name, relative_mount, options in subvolumes:
+        if relative_mount == "/":
+            continue
+        target = f"{mount_root}{relative_mount}"
+        commands.append(["mkdir", "-p", target])
+        commands.append(["mount", "-o", ",".join((f"subvol={name}", *options)), mapper_path, target])
+    esp_target = f"{mount_root}/boot"
+    commands.extend(
+        [
+            ["mkdir", "-p", esp_target],
+            ["mount", "-o", "umask=0077", efi_partition_path, esp_target],
+            [
+                "archinstall",
+                "--config",
+                str(archinstall_config_path),
+                "--creds",
+                str(archinstall_credentials_path),
+                "--silent",
+                "--mountpoint",
+                mount_root,
+            ],
+            [
+                "arch-chroot",
+                mount_root,
+                "/usr/bin/bash",
+                "-c",
+                "mkdir -p /etc/mkinitcpio.conf.d && printf '%s\\n' "
+                "'MODULES=(btrfs)' "
+                "'HOOKS=(base systemd autodetect microcode modconf kms keyboard "
+                "sd-vconsole block sd-encrypt filesystems fsck)' "
+                "> /etc/mkinitcpio.conf.d/omarchy.conf",
+            ],
+            ["arch-chroot", mount_root, "mkinitcpio", "-P"],
+        ]
+    )
+    return commands
 
 
 def execute_install_plan(
@@ -337,24 +358,25 @@ def execute_install_plan(
     stage_root: str | Path | None = None,
     dry_run: bool = True,
     encryption_passphrase: str = "",
+    user_password_hash: str = "",
+    efi_partition_path: str = "",
     crypt_mapper_name: str = DEFAULT_CRYPT_MAPPER_NAME,
     mount_root: str = DEFAULT_MOUNT_ROOT,
-    cleanup_after_success: bool = True,
+    cleanup_after_success: bool = False,
     runner: CommandRunner | None = None,
 ) -> LiveInstallExecutionResult:
     """Orchestrate Linux partition + encrypted layout + archinstall execution."""
+    if plan_payload is None:
+        raise LiveInstallError("A validated plan_payload is required.")
     active_runner = runner or SubprocessCommandRunner()
     root = resolve_live_stage_root(stage_root)
     root.mkdir(parents=True, exist_ok=True)
 
     staged_files: list[str] = []
     commands: list[str] = []
-    plan_contract: PlanContract | None = None
-
-    if plan_payload is not None:
-        plan_contract = plan_payload if isinstance(plan_payload, PlanContract) else validate_plan_contract(plan_payload)
-        plan_file = stage_live_runtime_artifact(root, "runtime/plan.json", plan_contract.model_dump(mode="json"))
-        staged_files.append(str(plan_file))
+    plan_contract = plan_payload if isinstance(plan_payload, PlanContract) else validate_plan_contract(plan_payload)
+    plan_file = stage_live_runtime_artifact(root, "runtime/plan.json", plan_contract.model_dump(mode="json"))
+    staged_files.append(str(plan_file))
 
     install_log_lines: list[str] = ["live install orchestration initialized"]
     target_partition_path = ""
@@ -376,10 +398,6 @@ def execute_install_plan(
             target_partition_path = f"{target_disk_path}-planned-partition"
             archinstall_config = _build_archinstall_config(
                 plan_contract,
-                target_disk_path=target_disk_path,
-                target_partition_path=target_partition_path,
-                crypt_mapper_name=crypt_mapper_name,
-                mount_root=mount_root,
             )
             archinstall_config_path = stage_live_runtime_artifact(
                 root,
@@ -387,6 +405,29 @@ def execute_install_plan(
                 archinstall_config,
             )
             staged_files.append(str(archinstall_config_path))
+            if not user_password_hash:
+                user_password_hash = "$6$simulation$not-a-real-password-hash" if dry_run else ""
+            if not user_password_hash:
+                raise LiveInstallError("A crypt-format user_password_hash is required for real installation.")
+            credentials = build_archinstall_credentials(
+                plan_contract, user_password_hash=user_password_hash
+            ).model_dump(mode="json")
+            credentials_path = stage_live_runtime_artifact(
+                root, "runtime/archinstall-credentials.json", credentials
+            )
+            credentials_path.chmod(0o600)
+            staged_files.append(str(credentials_path))
+            validate_archinstall_files(archinstall_config_path, credentials_path)
+            if not efi_partition_path:
+                efi_partition_path = "/dev/planned-esp" if dry_run else ""
+            if not efi_partition_path:
+                raise LiveInstallError("efi_partition_path is required for real installation.")
+
+            subvolumes = tuple(
+                (item.name, item.mountpoint, item.mount_options)
+                for item in plan_contract.user_choices.filesystem.subvolumes
+            )
+            gpt_backup_path = root / "runtime" / "gpt-before.bin"
 
             command_plan = _build_install_command_plan(
                 target_disk_path=target_disk_path,
@@ -396,6 +437,10 @@ def execute_install_plan(
                 crypt_mapper_name=crypt_mapper_name,
                 mount_root=mount_root,
                 archinstall_config_path=archinstall_config_path,
+                archinstall_credentials_path=credentials_path,
+                efi_partition_path=efi_partition_path,
+                subvolumes=subvolumes,
+                gpt_backup_path=gpt_backup_path,
             )
             commands = [" ".join(command) for command in command_plan]
 
@@ -408,19 +453,28 @@ def execute_install_plan(
                     raise LiveInstallError("encryption_passphrase is required when dry_run is False.")
 
                 mapper_opened = False
-                mounted_target = False
+                mounted_targets: list[str] = []
                 try:
-                    _assert_planned_extent_is_still_free(
+                    pre_partition_snapshot = _assert_planned_extent_is_still_free(
                         active_runner,
                         disk_path=target_disk_path,
                         start_sector=start_sector,
                         end_sector=end_sector,
                         logical_sector_size=plan_contract.disk_identity.logical_sector_size,
                     )
+                    snapshot_path = stage_live_runtime_artifact(
+                        root,
+                        "runtime/pre-partition-snapshot.json",
+                        pre_partition_snapshot,
+                    )
+                    staged_files.append(str(snapshot_path))
                     # Execute partition creation first, then resolve created partition path exactly.
-                    for command in command_plan[:3]:
+                    for command in command_plan[:4]:
                         _run_checked(active_runner, command)
                         install_log_lines.append(f"EXECUTED: {' '.join(command)}")
+                    if not gpt_backup_path.exists() or gpt_backup_path.stat().st_size == 0:
+                        raise LiveInstallError("sgdisk GPT backup was not created before partition changes.")
+                    staged_files.append(str(gpt_backup_path))
 
                     created_partition = _discover_partition(
                         active_runner,
@@ -442,13 +496,6 @@ def execute_install_plan(
                     # Rebuild archinstall config and command plan with concrete partition path.
                     archinstall_config = _build_archinstall_config(
                         plan_contract,
-                        target_disk_path=target_disk_path,
-                        target_partition_path=target_partition_path,
-                        crypt_mapper_name=crypt_mapper_name,
-                        mount_root=mount_root,
-                        partition_start_sector=target_partition_start_sector,
-                        partition_end_sector=target_partition_end_sector,
-                        partition_size_bytes=target_partition_size_bytes,
                     )
                     stage_live_runtime_artifact(root, "runtime/archinstall-config.json", archinstall_config)
                     command_plan = _build_install_command_plan(
@@ -459,22 +506,32 @@ def execute_install_plan(
                         crypt_mapper_name=crypt_mapper_name,
                         mount_root=mount_root,
                         archinstall_config_path=archinstall_config_path,
+                        archinstall_credentials_path=credentials_path,
+                        efi_partition_path=efi_partition_path,
+                        subvolumes=subvolumes,
+                        gpt_backup_path=gpt_backup_path,
                     )
                     commands = [" ".join(command) for command in command_plan]
 
-                    for index, command in enumerate(command_plan[3:], start=4):
-                        if index in (4, 5):
+                    for command in command_plan[4:]:
+                        if command[:2] in (["cryptsetup", "luksFormat"], ["cryptsetup", "open"]):
                             _run_checked(active_runner, command, input_text=encryption_passphrase + "\n")
                         else:
                             _run_checked(active_runner, command)
-                        if index == 5:
+                        if command[:2] == ["cryptsetup", "open"]:
                             mapper_opened = True
-                        elif index == 7:
-                            mounted_target = True
+                        elif command and command[0] == "mount":
+                            mounted_targets.append(command[-1])
                         install_log_lines.append(f"EXECUTED: {' '.join(command)}")
+                    for mounted in reversed(mounted_targets):
+                        _run_checked(active_runner, ["umount", mounted])
+                        install_log_lines.append(f"CLEANUP: umount {mounted}")
+                    mounted_targets.clear()
+                    _run_checked(active_runner, ["cryptsetup", "close", crypt_mapper_name])
+                    mapper_opened = False
                 except Exception as exc:
-                    if mounted_target:
-                        _run_cleanup_best_effort(active_runner, ["umount", mount_root], install_log_lines)
+                    for mounted in reversed(mounted_targets):
+                        _run_cleanup_best_effort(active_runner, ["umount", mounted], install_log_lines)
                     if mapper_opened:
                         _run_cleanup_best_effort(active_runner, ["cryptsetup", "close", crypt_mapper_name], install_log_lines)
                     install_log_lines.append(f"ERROR: {exc}")
@@ -485,6 +542,9 @@ def execute_install_plan(
         status = "failed"
         raise
     finally:
+        credentials_candidate = root / "runtime" / "archinstall-credentials.json"
+        if credentials_candidate.exists():
+            credentials_candidate.unlink()
         install_log = stage_live_runtime_artifact(root, "runtime/install.log", "\n".join(install_log_lines) + "\n")
         install_log_path = str(install_log)
         if install_log_path not in staged_files:

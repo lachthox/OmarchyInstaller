@@ -17,11 +17,11 @@ be marked complete until run in a capable environment.
 
 | Finding ID | Severity | Title | Implementation phase | Affected files | Fix summary | Tests/evidence | Status | Commit | Notes |
 |---|---|---|---:|---|---|---|---|---|---|
-| CRIT-01 | Critical | Legacy archinstall config incompatible | 2, 12, 17, 19 | `setup.sh`, install engine | Pending | Pending | Open | | |
-| CRIT-02 | Critical | Partitioning precedes semantic validation | 3, 12 | install engine | Pending | Pending | Open | | |
+| CRIT-01 | Critical | Legacy archinstall config incompatible | 2, 12, 17, 19 | `setup.sh`, install engine | Replaced placeholder with strict archinstall 4.4 pre-mounted config/credentials contract | local semantic/shape tests pass; exact package and VM gate blocked | Verification blocked | | Linux/QEMU required |
+| CRIT-02 | Critical | Partitioning precedes semantic validation | 3, 12 | install engine | Internal plan, archinstall config, and credentials validate before free-space recheck or any destructive command | invalid credentials execute zero runner commands; ordered backend tests | Resolved | | |
 | CRIT-03 | Critical | Linux TUI never performs a real install | 4, 11 | live TUI | Ordered real/simulated state machine and confirmation boundary implemented; production stage backend lands in Phases 12-15 | ordered fake backend and Pilot tests | Open | | Partial until real engine/finalization backend is connected |
-| CRIT-04 | Critical | Internal plan passed to archinstall | 2, 12 | install engine | Pending | Pending | Open | | |
-| CRIT-05 | Critical | Incomplete target layout preparation | 9, 11, 12, 13 | install engine | Pending | Pending | Open | | |
+| CRIT-04 | Critical | Internal plan passed to archinstall | 2, 12 | install engine | Separate strict pre-mounted config and mode-0600 credentials; internal fields excluded | config negative assertions and exact CLI test | Resolved | | |
+| CRIT-05 | Critical | Incomplete target layout preparation | 9, 11, 12, 13 | install engine | LUKS2, Btrfs, configured subvolumes, root tree, verified ESP, initramfs and archinstall flow implemented | complete fake backend command/postcondition order; VM blocked | Verification blocked | | Phase 13 target assets and VM remain |
 | CRIT-06 | Critical | ISO omits Python dependency installation | 8 | ISO pipeline | Hash-locked dependency set installed into `/opt/omarchy-venv` during rootfs assembly | payload/lock/static build tests pass; OVMF offline startup blocked locally | Verification blocked | | QEMU/OVMF gate remains open |
 | CRIT-07 | Critical | Live package import path is broken | 8 | startup assets | Canonical cwd-independent `python -m installer.main` entrypoint with venv `.pth` package root | payload rejects legacy aliases; chroot import is a build-failing check | Verification blocked | | ISO boot gate remains open |
 | CRIT-08 | Critical | Target markers and assets not deployed | 13 | finalization | Pending | Pending | Open | | |
@@ -47,13 +47,13 @@ be marked complete until run in a capable environment.
 | HIGH-15 | High | nmtui lacks inherited terminal | 10 | network | `nmtui` and interactive nmcli use a non-capturing inherited-terminal runner | captured-vs-interactive runner test | Resolved | | |
 | HIGH-16 | High | Link state mistaken for internet readiness | 10 | network | Independent link, IP, DNS, TLS, HTTP, mirror, bootstrap, and captive-portal states; any failure blocks | connected-with-failed-DNS plus every layer/captive tests | Resolved | | |
 | HIGH-17 | High | Partial firstboot automatically retries | 14 | first-login service | Pending | Pending | Open | | |
-| HIGH-18 | High | EFI mount contracts conflict | 12, 13, 15 | install/guardian | Pending | Pending | Open | | |
+| HIGH-18 | High | EFI mount contracts conflict | 12, 13, 15 | install/guardian | Engine uses the sole plan contract `/boot` beneath `/mnt/archinstall`; guardian/finalizer convergence remains | command plan asserts canonical ESP mount | Open | | Partial until Phase 15 |
 | HIGH-19 | High | Failure evidence is deleted | 3, 11, 12 | diagnostics | Failed state-machine runs atomically preserve redacted stage diagnostics; failed install staging is retained | secret redaction and diagnostic persistence test | Resolved | | |
 | HIGH-20 | High | Conflicting release products | 1, 7, 18, 19 | workflows | Pending | Pending | Open | | |
 | HIGH-21 | High | Publisher can pair unrelated artifacts | 7, 18 | release tooling | Requires unique artifacts and matching commit/tag/version/run/ref/schema/name/hash/non-dry-run manifests | provenance pairing negative tests | Resolved | | VM release gate remains Phase 18 |
 | HIGH-22 | High | Provenance failures can fail open | 7, 18 | release/Windows | Missing, ambiguous, dry-run, mismatched, or tampered provenance now hard-fails | provenance negative tests | Resolved | | |
 | HIGH-23 | High | Interrupted ISO builds leak mounts | 3, 8 | ISO build | EXIT/INT/TERM cleanup tracks mounts and unmounts them in reverse order before worktree removal | static trap regression passes; interruption integration needs Linux runner | Verification blocked | | QEMU/Linux gate remains open |
-| HIGH-24 | High | Successful install leaves mounts/LUKS open | 3, 12 | install transactions | Pending | Pending | Open | | |
+| HIGH-24 | High | Successful install leaves mounts/LUKS open | 3, 12 | install transactions | Tracks every mount, unmounts reverse-order, and closes mapper on success/failure | fake real-mode cleanup order test | Resolved | | |
 | HIGH-25 | High | Runtime dependency manifest incomplete | 8, 13 | ISO/finalization | Live manifest and rootfs verification cover disk, crypto, Btrfs, udev, boot, network, and installer tools | Phase 8 static coverage passes; installed-target Phase 13 remains | Open | | Partial implementation |
 | HIGH-26 | High | Startup metadata disagrees with runtime | 8, 19 | ISO assets | Metadata and hook use the sole venv module entrypoint and record exact base/runtime provenance | payload regression passes; Phase 19 end-to-end verification remains | Open | | Partial implementation |
 | HIGH-27 | High | Launcher silently falls back to PowerShell | 1, 4, 19 | Windows launcher, Windows TUI, EXE builder | Removed fallback/bypass and legacy payload; Python startup now fails visibly | `pytest -q rebuild/tests/test_windows_launcher.py rebuild/tests/test_windows_flow.py` (6 passed); focused Ruff passed | Resolved | | Final legacy archive remains tracked separately by Phase 19 |
@@ -76,7 +76,7 @@ be marked complete until run in a capable environment.
 | MED-11 | Medium | Prompt responses logged | 3, 10 | command/logging | Prompt-bearing commands inherit terminal I/O and are never captured; structured diagnostics contain booleans only | secret not in argv/captured command tests | Resolved | | |
 | MED-12 | Medium | Release template incompatible | 2, 7 | models/templates | Template and publisher both validate with `ReleaseManifestContract` schema 1.0.0 | template and valid release-pair tests | Resolved | | |
 | MED-13 | Medium | README/status materially stale | 1, 19 | documentation | Pending | Pending | Open | | |
-| MED-14 | Medium | Tests enforce obsolete archinstall shape | 12, 17, 19 | Bats/contracts | Pending | Pending | Open | | |
+| MED-14 | Medium | Tests enforce obsolete archinstall shape | 12, 17, 19 | Bats/contracts | Tests now require 4.4 `pre_mounted_config`, separate credentials, and current CLI | strict config/credentials contract suite | Resolved | | Legacy Bats replacement continues Phase 17 |
 | MED-15 | Medium | Tests mock away production failures | 17, 18 | integration/VM tests | Pending | Pending | Open | | |
 
 ## Baseline evidence
