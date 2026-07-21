@@ -126,7 +126,7 @@ def test_timing_policy_blocks_wsl_and_live_iso() -> None:
     assert "live ISO environment detected" in blockers
 
 
-def test_firstboot_blocks_without_login() -> None:
+def test_firstboot_blocks_without_login(tmp_path: Path) -> None:
     context = FirstBootRuntimeContext(
         platform="linux",
         is_linux=True,
@@ -138,7 +138,11 @@ def test_firstboot_blocks_without_login() -> None:
         install_marker_exists=True,
         completion_marker_exists=False,
     )
-    result = run_firstboot_handoff(context=context, runner=InstalledSystemRunner())
+    result = run_firstboot_handoff(
+        context=context,
+        runner=InstalledSystemRunner(),
+        attempt_log_path=tmp_path / "attempt.log.jsonl",
+    )
     assert result.status == "blocked"
     assert result.exit_code == 3
     assert "no logged-in non-root user session detected" in result.blockers

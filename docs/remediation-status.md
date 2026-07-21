@@ -27,7 +27,7 @@ be marked complete until run in a capable environment.
 | CRIT-08 | Critical | Target markers and assets not deployed | 13 | finalization | Pending | Pending | Open | | |
 | CRIT-09 | Critical | Firstboot runs interactive install as root | 14 | first-login | Pending | Pending | Open | | |
 | CRIT-10 | Critical | GPT free-space includes reserved sectors | 5, 9 | disk geometry | Pending | Pending | Open | | |
-| CRIT-11 | Critical | Plan template fails production contract | 2 | shared models/templates | Pending | Pending | Open | | |
+| CRIT-11 | Critical | Plan template fails production contract | 2 | shared models/templates | Replaced with complete schema 1.0.0 artifact accepted by `PlanContract` | `test_shipped_plan_template_passes_production_validator` | Resolved | | |
 | CRIT-12 | Critical | Ventoy write precedes USB validation | 6 | Windows handoff | Pending | Pending | Open | | |
 | CRIT-13 | Critical | ISO build can disable signature checks | 8 | ISO build | Pending | Pending | Open | | |
 | HIGH-01 | High | TUIs block their event loops | 3, 4, 11 | Textual apps | Pending | Pending | Open | | |
@@ -63,10 +63,10 @@ be marked complete until run in a capable environment.
 | HIGH-31 | High | Tracker/state writes are non-atomic | 3, 16 | task orchestrator/state | Pending | Pending | Open | | |
 | HIGH-32 | High | No install or boot CI test | 17, 18 | CI/vmtest | Pending | Pending | Open | | |
 | HIGH-33 | High | Omarchy bootstrap mutable and unlogged | 14 | first-login | Pending | Pending | Open | | |
-| MED-01 | Medium | Safety-critical plan fields untyped | 2 | shared models | Pending | Pending | Open | | |
-| MED-02 | Medium | Sector range size not cross-validated | 2 | shared models | Pending | Pending | Open | | |
-| MED-03 | Medium | MBR permitted by GPT-only design | 2 | shared models | Pending | Pending | Open | | |
-| MED-04 | Medium | Version comparison mishandles prereleases | 2 | versioning | Pending | Pending | Open | | |
+| MED-01 | Medium | Safety-critical plan fields untyped | 2 | shared models | Added strict nested user, locale, free-space, encryption, filesystem, boot, Omarchy, and provenance models | `test_shipped_plan_template_passes_production_validator`; strict-extra test | Resolved | | |
+| MED-02 | Medium | Sector range size not cross-validated | 2 | shared models | Added inclusive range arithmetic and cross-plan logical-sector validation | sector mismatch and cross-sector tests | Resolved | | |
+| MED-03 | Medium | MBR permitted by GPT-only design | 2 | shared models | `DiskIdentity` now accepts GPT only | `test_gpt_is_the_only_supported_partition_style` | Resolved | | |
+| MED-04 | Medium | Version comparison mishandles prereleases | 2 | versioning | Replaced parser with `packaging.version.Version` | `test_version_comparison_uses_standard_prerelease_ordering` | Resolved | | |
 | MED-05 | Medium | Windows preflight parsing locale-dependent | 4, 5 | Windows checks | Pending | Pending | Open | | |
 | MED-06 | Medium | Disk number used when serial absent | 2, 5, 9 | identity | Pending | Pending | Open | | |
 | MED-07 | Medium | Copied ISO hash not verified | 6 | handoff | Pending | Pending | Open | | |

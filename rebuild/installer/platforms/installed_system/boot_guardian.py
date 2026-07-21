@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import subprocess
 import sys
-from typing import Any, Literal, Protocol
+from typing import Literal, Protocol
 
 from ..linux_live.boot_policy import (
     BootEntry,
@@ -268,7 +268,7 @@ def evaluate_boot_guardian(
     repair_actions: tuple[str, ...] = (),
 ) -> BootGuardianResult:
     findings = _build_findings(expected, observed)
-    severity = "healthy"
+    severity: Literal["healthy", "warning", "critical"] = "healthy"
     if any(finding.severity == "critical" for finding in findings):
         severity = "critical"
     elif any(finding.severity == "warning" for finding in findings):

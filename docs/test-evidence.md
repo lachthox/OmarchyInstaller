@@ -25,3 +25,15 @@ Date: 2026-07-21
 - Focused Ruff check for the launcher, Windows app, EXE builder, and test: passed.
 - Focused mypy reached one pre-existing transitive disk-model error; no new
   launcher/app/build errors were reported.
+
+## Phase 2 evidence
+
+- `pytest -q rebuild/tests`: 26 passed.
+- `ruff check rebuild`: passed.
+- `mypy rebuild/installer rebuild/tools`: one remaining pre-existing error, the
+  Phase 16 task-orchestrator script import; all shared-contract and consumer
+  modules passed.
+- `test_shared_contracts.py` verifies production loading of both shipped JSON
+  templates, GPT-only identity, inclusive sector arithmetic, UUID namespace
+  separation, strict extra-field rejection, fail-closed legacy schema handling,
+  cross-contract sector-size consistency, and standards-compliant prereleases.

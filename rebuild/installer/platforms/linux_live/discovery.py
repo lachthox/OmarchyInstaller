@@ -168,7 +168,7 @@ def _apply_anti_stale_validation(
             )
 
     if context.max_plan_age_hours is not None:
-        generated_at = _parse_utc(plan.meta.generated_at_utc)
+        generated_at = plan.meta.generated_at_utc
         age = datetime.now(UTC) - generated_at
         if age > timedelta(hours=context.max_plan_age_hours):
             raise HandoffDiscoveryError(

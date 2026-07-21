@@ -17,18 +17,23 @@ This document defines the `plan.json` handoff contract used by the Windows prepa
 A valid plan must explicitly include the following information:
 
 - `meta`
+- `provenance`
 - `disk_identity`
 - `efi_identity`
 - `windows_partition_identity`
 - `prepared_free_space_range`
 - `user_choices`
-- `network` when applicable
+- `network`
 - `omarchy_assumptions`
+- `compatibility`
 
 ## Versioning rules
 
-- The schema must be versioned.
-- Producers and consumers must reject incompatible versions.
+- The current schema is `1.0.0`.
+- Producers and consumers reject incompatible versions.
+- Safety-critical `0.1.0` plans are not auto-migrated. They must be regenerated
+  by a current Windows producer so missing identity, geometry, and provenance
+  fields are measured rather than guessed.
 - Compatibility decisions must be explicit, not inferred from field presence alone.
 
 ## Validation rules
@@ -37,6 +42,17 @@ A valid plan must explicitly include the following information:
 - Field types must be deterministic and strict.
 - Unknown compatibility assumptions must fail closed.
 - The consumer must validate the plan before using it for disk or boot operations.
+- GPT is mandatory and the GPT disk GUID is the primary cross-boot identity.
+- GPT partition GUID/PARTUUID and filesystem UUID occupy distinct fields.
+- Every partition/free-space range carries its logical sector size and its byte
+  size must equal the inclusive sector span.
+- Disk and range sector sizes must agree.
+- `user_choices` is a strict model covering hostname, username, locale, timezone,
+  keyboard layout, free-space policy, LUKS2, Btrfs subvolumes, and boot policy.
+- `omarchy_assumptions` permits only a pinned, normal-user interactive handoff
+  with an expected bootstrap SHA256 and no automatic retry.
+- Artifact provenance binds release tag, commit, workflow run, producer, ISO, and
+  release-manifest hashes.
 
 ## Ownership
 
@@ -58,7 +74,7 @@ Consumer boundary:
 - Disk and partition probe data
 - Backup destination metadata
 - Ventoy and ISO placement data
-- Optional Wi-Fi handoff data
+- Network mode and non-secret Wi-Fi metadata; plaintext credentials are forbidden
 
 ## Outputs
 
@@ -71,7 +87,8 @@ Consumer boundary:
 - `rebuild/installer/shared/models.py`: strict Pydantic models for meta, disk identity, EFI identity, Windows partition identity, free-space range, user choices, network, and compatibility blocks.
 - `rebuild/installer/shared/validation.py`: strict `PlanContract` and `CompatibilityContract` validators used by producer and consumer layers.
 - `rebuild/installer/shared/compatibility.py`: compatibility evaluation and fail-closed enforcement helpers.
-- `rebuild/installer/shared/versioning.py`: normalized version parsing and minimum-version comparisons.
+- `rebuild/installer/shared/versioning.py`: PEP 440 parsing and comparison through
+  `packaging.version.Version`.
 
 ## Rules
 

@@ -208,10 +208,10 @@ def _build_archinstall_config(
     return {
         "schema_version": "1.0.0",
         "source": "omarchy-live-orchestrator",
-        "hostname": str(plan.user_choices.get("hostname", "")).strip(),
-        "username": str(plan.user_choices.get("username", "")).strip(),
-        "timezone": str(plan.user_choices.get("timezone", "")).strip(),
-        "locale": str(plan.user_choices.get("locale", "")).strip(),
+        "hostname": plan.user_choices.hostname,
+        "username": plan.user_choices.username,
+        "timezone": plan.user_choices.timezone,
+        "locale": plan.user_choices.locale,
         "target": {
             "disk_path": target_disk_path,
             "partition_path": target_partition_path,
@@ -330,8 +330,8 @@ def execute_install_plan(
 
             if dry_run:
                 install_log_lines.append("dry-run enabled; no destructive commands executed")
-                for command in commands:
-                    install_log_lines.append(f"DRY-RUN: {command}")
+                for display_command in commands:
+                    install_log_lines.append(f"DRY-RUN: {display_command}")
             else:
                 if not encryption_passphrase:
                     raise LiveInstallError("encryption_passphrase is required when dry_run is False.")

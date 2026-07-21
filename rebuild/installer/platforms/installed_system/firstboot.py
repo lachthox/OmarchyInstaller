@@ -14,7 +14,6 @@ from typing import Mapping, Protocol
 
 from .post_install import (
     BootstrapHealthResult,
-    BootstrapContract,
     PostInstallNormalizationResult,
     build_bootstrap_contract,
     evaluate_bootstrap_health,

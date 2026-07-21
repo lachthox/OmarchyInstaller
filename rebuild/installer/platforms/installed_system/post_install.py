@@ -9,7 +9,6 @@ import subprocess
 from typing import Any, Protocol
 
 from ..linux_live.boot_policy import (
-    BootPolicyError,
     BootPolicySummary,
     discover_boot_entries,
     discover_boot_order,

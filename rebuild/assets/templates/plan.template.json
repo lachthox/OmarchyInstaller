@@ -1,16 +1,106 @@
 {
-  "schema_version": "0.1.0",
-  "plan_id": "plan-template",
-  "windows": {
-    "source_device": "",
-    "backup_path": ""
+  "meta": {
+    "schema_version": "1.0.0",
+    "plan_id": "00000000-0000-4000-8000-000000000001",
+    "producer_version": "1.0.0",
+    "generated_at_utc": "2026-07-21T00:00:00Z",
+    "build_commit": "0000000000000000000000000000000000000000",
+    "release_tag": "v1.0.0"
   },
-  "linux_live": {
-    "target_disk": "",
-    "boot_policy": "preserve-windows"
+  "provenance": {
+    "release_tag": "v1.0.0",
+    "build_commit": "0000000000000000000000000000000000000000",
+    "workflow_run_id": "template",
+    "producer_version": "1.0.0",
+    "iso_name": "omarchy-installer-v1.0.0.iso",
+    "iso_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "release_manifest_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   },
-  "installed_system": {
-    "firstboot_profile": "default"
+  "disk_identity": {
+    "gpt_disk_guid": "00000000-0000-4000-8000-000000000010",
+    "disk_size_bytes": 549755813888,
+    "logical_sector_size": 512,
+    "disk_model": "Template GPT disk",
+    "disk_serial": "",
+    "partition_style": "GPT"
+  },
+  "efi_identity": {
+    "start_sector": 2048,
+    "end_sector": 1050623,
+    "logical_sector_size": 512,
+    "size_bytes": 536870912,
+    "partition_guid": "00000000-0000-4000-8000-000000000011",
+    "partuuid": "00000000-0000-4000-8000-000000000011",
+    "filesystem_uuid": "ESP-FS-UUID",
+    "filesystem_type": "vfat"
+  },
+  "windows_partition_identity": {
+    "start_sector": 1050624,
+    "end_sector": 943718399,
+    "logical_sector_size": 512,
+    "size_bytes": 482645901312,
+    "partition_guid": "00000000-0000-4000-8000-000000000012",
+    "partuuid": "00000000-0000-4000-8000-000000000012",
+    "filesystem_uuid": "WINDOWS-FS-UUID",
+    "filesystem_type": "ntfs"
+  },
+  "prepared_free_space_range": {
+    "start_sector": 943718400,
+    "end_sector": 1027604479,
+    "logical_sector_size": 512,
+    "size_bytes": 42949672960
+  },
+  "user_choices": {
+    "hostname": "omarchy-pc",
+    "username": "omarchy",
+    "locale": "en_AU.UTF-8",
+    "timezone": "Australia/Brisbane",
+    "keyboard_layout": "us",
+    "target_free_space": {
+      "minimum_bytes": 42949672960,
+      "alignment_bytes": 1048576
+    },
+    "encryption": {
+      "enabled": true,
+      "format": "luks2",
+      "mapper_name": "omarchy-root",
+      "allow_discard": false
+    },
+    "filesystem": {
+      "filesystem": "btrfs",
+      "root_mountpoint": "/mnt/archinstall",
+      "esp_mountpoint": "/boot",
+      "subvolumes": [
+        {"name": "@", "mountpoint": "/", "mount_options": ["compress=zstd", "noatime"]},
+        {"name": "@home", "mountpoint": "/home", "mount_options": ["compress=zstd", "noatime"]}
+      ]
+    },
+    "boot_policy": {
+      "mode": "preserve-windows-limine",
+      "preserve_windows_loader": true,
+      "allow_automatic_order_repair": false
+    }
+  },
+  "network": {
+    "mode": "interactive",
+    "ssid": "",
+    "wifi_security": "",
+    "interface_name": "",
+    "credentials_on_removable_media": false
+  },
+  "omarchy_assumptions": {
+    "handoff_mode": "normal-user-interactive",
+    "bootstrap_url": "https://omarchy.org/install",
+    "upstream_version": "pinned-by-release",
+    "expected_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "automatic_retry": false
+  },
+  "compatibility": {
+    "schema_version": "1.0.0",
+    "minimum_windows_prep_version": "1.0.0",
+    "minimum_live_runtime_version": "1.0.0",
+    "required_plan_schema_version": "1.0.0",
+    "bootstrap_expectation": "post-install-only",
+    "ventoy_handoff_path": "omarchy/plan.json"
   }
 }
-

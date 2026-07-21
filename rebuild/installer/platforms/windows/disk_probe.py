@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import json
 import re
 import subprocess
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol, cast
 
 from ...shared.models import DiskIdentity, FreeSpaceRange, PartitionIdentity
 
@@ -131,12 +131,11 @@ def _normalize_guid(value: str) -> str:
     return normalized
 
 
-def _partition_guid_or_fallback(record: dict[str, Any], disk_number: int) -> str:
+def _partition_guid(record: dict[str, Any]) -> str:
     guid = _normalize_guid(str(record.get("guid", "")))
-    if guid:
-        return guid
-    part_number = int(record.get("partition_number", 0))
-    return f"disk{disk_number}-part{part_number}"
+    if not guid:
+        raise DiskProbeError("GPT partition did not report a partition GUID.")
+    return guid
 
 
 def _build_partition_identity(record: dict[str, Any], *, disk_number: int, sector_size: int) -> PartitionIdentity:
@@ -149,14 +148,16 @@ def _build_partition_identity(record: dict[str, Any], *, disk_number: int, secto
     if end_sector < start_sector:
         end_sector = start_sector
 
-    partition_guid = _partition_guid_or_fallback(record, disk_number)
+    partition_guid = _partition_guid(record)
     filesystem = str(record.get("filesystem", "")).strip()
     return PartitionIdentity(
         partition_guid=partition_guid,
         partuuid=partition_guid,
-        filesystem=filesystem,
+        filesystem_uuid=str(record.get("filesystem_uuid", "")).strip(),
+        filesystem_type=filesystem,
         start_sector=start_sector,
         end_sector=end_sector,
+        logical_sector_size=sector_size,
         size_bytes=size_bytes,
     )
 
@@ -172,11 +173,6 @@ def _find_efi_partition(records: list[dict[str, Any]]) -> dict[str, Any]:
     for record in records:
         gpt_type = _normalize_guid(str(record.get("gpt_type", "")))
         if gpt_type == EFI_SYSTEM_PARTITION_GPT_TYPE:
-            return record
-
-    for record in records:
-        filesystem = str(record.get("filesystem", "")).strip().upper()
-        if filesystem == "FAT32":
             return record
 
     raise DiskProbeError("Could not locate EFI system partition.")
@@ -219,6 +215,7 @@ def _compute_largest_free_range(
     return FreeSpaceRange(
         start_sector=start_sector,
         end_sector=end_sector,
+        logical_sector_size=sector_size,
         size_bytes=size_bytes,
     )
 
@@ -234,8 +231,8 @@ def collect_disk_probe_snapshot(
     payload = active_probe.collect_layout(normalized_drive)
 
     partition_style = str(payload.get("partition_style", "")).strip().upper()
-    if partition_style not in {"GPT", "MBR"}:
-        raise DiskProbeError(f"Unsupported partition style reported: {partition_style!r}")
+    if partition_style != "GPT":
+        raise DiskProbeError(f"GPT is required; reported partition style: {partition_style!r}")
 
     disk_number = int(payload.get("disk_number", 0))
     disk_size_bytes = int(payload.get("size_bytes", 0))
@@ -247,12 +244,10 @@ def collect_disk_probe_snapshot(
         sector_size = 512
 
     model = str(payload.get("model", "")).strip() or f"Disk {disk_number}"
-    serial = str(payload.get("serial", "")).strip() or f"disk-{disk_number}"
+    serial = str(payload.get("serial", "")).strip()
     gpt_disk_guid = _normalize_guid(str(payload.get("gpt_disk_guid", "")))
-    if partition_style == "GPT" and not gpt_disk_guid:
-        raise DiskProbeError("GPT disk did not report a disk GUID.")
     if not gpt_disk_guid:
-        gpt_disk_guid = f"disk-{disk_number}"
+        raise DiskProbeError("GPT disk did not report a disk GUID.")
 
     raw_partitions = payload.get("partitions", [])
     if not isinstance(raw_partitions, list) or not raw_partitions:
@@ -285,8 +280,9 @@ def collect_disk_probe_snapshot(
         disk_serial=serial,
         disk_model=model,
         disk_size_bytes=disk_size_bytes,
+        logical_sector_size=sector_size,
         gpt_disk_guid=gpt_disk_guid,
-        partition_style=partition_style,
+        partition_style=cast(Literal["GPT"], partition_style),
     )
 
     return DiskProbeSnapshot(

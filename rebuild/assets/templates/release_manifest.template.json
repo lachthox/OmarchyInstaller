@@ -1,18 +1,31 @@
 {
-  "schema_version": "0.1.0",
+  "schema_version": "1.0.0",
+  "generated_at_utc": "2026-07-21T00:00:00Z",
+  "tag": "v1.0.0",
   "build": {
-    "git_commit": "",
-    "build_id": "",
-    "built_at_utc": ""
+    "git_commit": "0000000000000000000000000000000000000000",
+    "github_run_id": "template",
+    "github_ref": "refs/tags/v1.0.0"
   },
   "artifacts": {
-    "iso_name": "",
-    "exe_name": "",
-    "checksums_file": ""
+    "iso": {
+      "name": "omarchy-installer-v1.0.0.iso",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "size_bytes": 1
+    },
+    "exe": {
+      "name": "OmarchyInstaller.exe",
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "size_bytes": 1
+    },
+    "checksums_file": "sha256sums.txt",
+    "release_manifest_file": "release_manifest.json",
+    "compatibility_manifest_file": "compatibility_manifest.json"
   },
-  "compatibility": {
-    "minimum_windows_prep_version": "",
-    "minimum_live_runtime_version": ""
+  "contracts": {
+    "plan_schema_version": "1.0.0",
+    "compatibility_schema_version": "1.0.0",
+    "iso_pipeline_manifest_schema": "1.0.0",
+    "exe_pipeline_manifest_schema": "1.0.0"
   }
 }
-
