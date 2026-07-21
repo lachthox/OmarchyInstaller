@@ -36,12 +36,12 @@ be marked complete until run in a capable environment.
 | HIGH-04 | High | Handoff lacks authenticated integrity | 6, 9 | handoff/discovery | Pending | Pending | Open | | |
 | HIGH-05 | High | Linux ignores GPT disk GUID | 2, 9 | identity | Pending | Pending | Open | | |
 | HIGH-06 | High | PARTUUID and filesystem UUID conflated | 2, 9 | models/identity | Pending | Pending | Open | | |
-| HIGH-07 | High | Shrink planning merges unrelated extents | 5 | Windows partitioning | Pending | Pending | Open | | |
+| HIGH-07 | High | Shrink planning merges unrelated extents | 5 | Windows partitioning | Counts only aligned extent immediately after C:; exact missing bytes plus 16 MiB margin | adjacent/non-adjacent/recovery fixtures | Resolved | | |
 | HIGH-08 | High | Legacy path over-shrinks Windows | 5, 19 | legacy Windows | Pending | Pending | Open | | |
-| HIGH-09 | High | Shrink lacks durable recovery journal | 3, 5 | transactions/partitioning | Pending | Pending | Open | | |
-| HIGH-10 | High | EFI fallback accepts arbitrary FAT32 | 5 | Windows identity | Pending | Pending | Open | | |
-| HIGH-11 | High | EFI backup is not verifiable | 5 | Windows backup | Pending | Pending | Open | | |
-| HIGH-12 | High | Backup may mount wrong ESP | 5 | Windows backup | Pending | Pending | Open | | |
+| HIGH-09 | High | Shrink lacks durable recovery journal | 3, 5 | transactions/partitioning | Requires verified identity-bound backup and atomic before/after journal; reports applied-validation failure distinctly | resize success/failure/identity tests | Resolved | | No automatic rollback is claimed |
+| HIGH-10 | High | EFI fallback accepts arbitrary FAT32 | 5 | Windows identity | Removed FAT32 fallback; GPT ESP type required | FAT32-decoy and missing-ESP tests | Resolved | | |
+| HIGH-11 | High | EFI backup is not verifiable | 5 | Windows backup | Added per-file SHA256, deterministic aggregate, and read-back verification | `test_backup_verifies_selected_esp_and_per_file_manifest` | Resolved | | |
+| HIGH-12 | High | Backup may mount wrong ESP | 5 | Windows backup | Mounts exact disk/partition selected by system-partition probe and records identities | selected-ESP fixture and source manifest assertions | Resolved | | |
 | HIGH-13 | High | USB may contain plaintext Wi-Fi secret | 6, 10 | handoff/network | Pending | Pending | Open | | |
 | HIGH-14 | High | Wi-Fi password exposed in argv | 10 | network | Pending | Pending | Open | | |
 | HIGH-15 | High | nmtui lacks inherited terminal | 10 | network | Pending | Pending | Open | | |

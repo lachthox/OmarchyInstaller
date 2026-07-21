@@ -39,6 +39,8 @@ class WindowsMigrationFlow:
     target_free_gib: int = 120
     backup_destination: str | None = None
     backup_fallback_destination: str | None = None
+    _verified_backup_manifest: str | None = None
+    _backup_root: str | None = None
 
     def _resolve_backup_destination(self) -> str:
         if self.backup_destination and self.backup_destination.strip():
@@ -63,6 +65,8 @@ class WindowsMigrationFlow:
             )
 
         artifact_count = len(result.artifacts)
+        self._backup_root = result.backup_root
+        self._verified_backup_manifest = result.manifest_path if result.verified else None
         mode = "APPLY" if self.apply_changes else "DRY-RUN"
         return FlowStepResult(
             name="backup",
@@ -81,7 +85,16 @@ class WindowsMigrationFlow:
             dry_run=not self.apply_changes,
         )
         try:
-            result: PartitionPrepResult = prepare_unallocated_space(policy=policy)
+            if self.apply_changes and not self._verified_backup_manifest:
+                raise PartitionPrepError("Apply mode requires a verified backup from this session.")
+            journal_path = (
+                str(Path(self._backup_root) / "resize-journal.json") if self._backup_root else None
+            )
+            result: PartitionPrepResult = prepare_unallocated_space(
+                policy=policy,
+                verified_backup_manifest=self._verified_backup_manifest,
+                journal_path=journal_path,
+            )
         except (PartitionPrepError, OSError, ValueError) as exc:
             return FlowStepResult(
                 name="partition_prep",

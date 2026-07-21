@@ -38,6 +38,7 @@ class DiskIdentity(ContractBaseModel):
     logical_sector_size: int
     disk_model: str = Field(default="", max_length=256)
     disk_serial: str = Field(default="", max_length=256)
+    runtime_disk_number: int = Field(ge=0)
     partition_style: Literal["GPT"] = "GPT"
 
     @field_validator("logical_sector_size")
@@ -52,10 +53,14 @@ class SectorRange(ContractBaseModel):
     start_sector: int = Field(ge=0)
     end_sector: int = Field(ge=0)
     logical_sector_size: int
-    size_bytes: int = Field(gt=0)
+    size_bytes: int = Field(ge=0)
 
     @model_validator(mode="after")
     def validate_geometry(self) -> "SectorRange":
+        if self.size_bytes == 0:
+            if self.end_sector + 1 != self.start_sector:
+                raise ValueError("an empty sector range must have end_sector + 1 == start_sector")
+            return self
         if self.end_sector < self.start_sector:
             raise ValueError("end_sector must be greater than or equal to start_sector")
         if self.logical_sector_size not in {512, 4096}:
@@ -71,9 +76,12 @@ class PartitionIdentity(SectorRange):
     partuuid: str = Field(min_length=1, description="Linux PARTUUID namespace")
     filesystem_uuid: str = Field(default="", description="Filesystem UUID namespace")
     filesystem_type: str = Field(default="", max_length=32)
+    partition_number: int = Field(gt=0)
 
     @model_validator(mode="after")
     def validate_gpt_namespaces(self) -> "PartitionIdentity":
+        if self.size_bytes == 0:
+            raise ValueError("partitions cannot have an empty sector range")
         if self.partition_guid.casefold() != self.partuuid.casefold():
             raise ValueError("GPT partition_guid and PARTUUID must identify the same partition")
         return self

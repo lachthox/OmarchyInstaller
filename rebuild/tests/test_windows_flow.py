@@ -12,6 +12,8 @@ class _BackupStub:
     def __init__(self) -> None:
         self.artifacts = ("a", "b")
         self.backup_root = "D:/media/omarchy/windows-backup/ts"
+        self.manifest_path = "D:/media/omarchy/windows-backup/ts/backup-manifest.json"
+        self.verified = True
 
     def to_dict(self) -> dict[str, str]:
         return {"backup_root": self.backup_root}
@@ -54,6 +56,8 @@ def test_run_partition_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(f"{flow_module}.prepare_unallocated_space", _raise_partition)
 
     flow = WindowsMigrationFlow(apply_changes=True, target_free_gib=200)
+    flow._verified_backup_manifest = "D:/backup/backup-manifest.json"
+    flow._backup_root = "D:/backup"
     result = flow.run_partition_prep()
 
     assert result.ok is False
@@ -69,6 +73,8 @@ def test_run_partition_success(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(f"{flow_module}.prepare_unallocated_space", _fake_partition)
 
     flow = WindowsMigrationFlow(apply_changes=True, target_free_gib=120)
+    flow._verified_backup_manifest = "D:/backup/backup-manifest.json"
+    flow._backup_root = "D:/backup"
     result = flow.run_partition_prep()
 
     assert result.ok is True

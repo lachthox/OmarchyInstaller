@@ -55,3 +55,17 @@ Date: 2026-07-21
   worker-backed refresh, fail-closed disk snapshot errors, a deliberately blocked
   long-running backup while the UI continues handling keys, stale-result
   invalidation, and cancellation reported as `cancelled` rather than success.
+
+## Phase 5 evidence
+
+- Full Python suite: 57 passed.
+- Full Ruff: passed.
+- Mypy: only the pre-existing Phase 16 task-orchestrator import remains.
+- `test_windows_disk_safety.py` covers empty adjacency, a true adjacent gap, a
+  larger non-adjacent gap, recovery partitions, misleading FAT32 partitions,
+  missing ESP, absent serial, 512/4096-byte sectors, exact shrink plus 16 MiB
+  margin, insufficient supported shrink, mismatched backup identity, successful
+  validation, and identity drift after an applied resize.
+- `test_windows_backup.py` verifies selected-ESP per-file hashing, aggregate
+  hashing, source identity binding, raw GPT artifacts, and simulated-not-verified
+  dry runs.

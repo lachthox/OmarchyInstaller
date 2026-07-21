@@ -81,6 +81,7 @@ $partitionPayload = foreach ($partition in $partitions) {{
     offset_bytes = [int64]$partition.Offset
     size_bytes = [int64]$partition.Size
     filesystem = if ($volume -and $volume.FileSystem) {{ [string]$volume.FileSystem }} else {{ '' }}
+    filesystem_uuid = if ($volume -and $volume.UniqueId) {{ [string]$volume.UniqueId }} else {{ '' }}
   }}
 }}
 
@@ -155,6 +156,7 @@ def _build_partition_identity(record: dict[str, Any], *, disk_number: int, secto
         partuuid=partition_guid,
         filesystem_uuid=str(record.get("filesystem_uuid", "")).strip(),
         filesystem_type=filesystem,
+        partition_number=int(record.get("partition_number", 0)),
         start_sector=start_sector,
         end_sector=end_sector,
         logical_sector_size=sector_size,
@@ -178,8 +180,13 @@ def _find_efi_partition(records: list[dict[str, Any]]) -> dict[str, Any]:
     raise DiskProbeError("Could not locate EFI system partition.")
 
 
-def _compute_largest_free_range(
+def _align_up(value: int, alignment: int) -> int:
+    return ((value + alignment - 1) // alignment) * alignment
+
+
+def _compute_adjacent_free_range(
     *,
+    windows_partition: PartitionIdentity,
     partitions: tuple[PartitionIdentity, ...],
     disk_size_bytes: int,
     sector_size: int,
@@ -187,30 +194,26 @@ def _compute_largest_free_range(
     if disk_size_bytes <= 0:
         raise DiskProbeError("Disk size must be positive.")
 
-    total_sectors = max(1, disk_size_bytes // sector_size)
-    max_sector = total_sectors - 1
-    occupied = sorted(
-        (
-            max(0, partition.start_sector),
-            min(max_sector, partition.end_sector),
-        )
+    alignment_sectors = max(1, (1024**2) // sector_size)
+    start_sector = _align_up(windows_partition.end_sector + 1, alignment_sectors)
+    following = sorted(
+        partition.start_sector
         for partition in partitions
+        if partition.start_sector > windows_partition.end_sector
     )
-
-    gaps: list[tuple[int, int]] = []
-    cursor = 0
-    for start_sector, end_sector in occupied:
-        if start_sector > cursor:
-            gaps.append((cursor, start_sector - 1))
-        cursor = max(cursor, end_sector + 1)
-
-    if cursor <= max_sector:
-        gaps.append((cursor, max_sector))
-
-    if not gaps:
-        raise DiskProbeError("No unallocated free-space region found on target disk.")
-
-    start_sector, end_sector = max(gaps, key=lambda item: item[1] - item[0] + 1)
+    if following:
+        end_sector = following[0] - 1
+    else:
+        total_sectors = disk_size_bytes // sector_size
+        conservative_gpt_tail = alignment_sectors
+        end_sector = total_sectors - conservative_gpt_tail - 1
+    if end_sector < start_sector:
+        return FreeSpaceRange(
+            start_sector=start_sector,
+            end_sector=start_sector - 1,
+            logical_sector_size=sector_size,
+            size_bytes=0,
+        )
     size_bytes = (end_sector - start_sector + 1) * sector_size
     return FreeSpaceRange(
         start_sector=start_sector,
@@ -270,7 +273,8 @@ def collect_disk_probe_snapshot(
         disk_number=disk_number,
         sector_size=sector_size,
     )
-    prepared_free_space_range = _compute_largest_free_range(
+    prepared_free_space_range = _compute_adjacent_free_range(
+        windows_partition=windows_partition_identity,
         partitions=partition_identities,
         disk_size_bytes=disk_size_bytes,
         sector_size=sector_size,
@@ -278,6 +282,7 @@ def collect_disk_probe_snapshot(
 
     disk_identity = DiskIdentity(
         disk_serial=serial,
+        runtime_disk_number=disk_number,
         disk_model=model,
         disk_size_bytes=disk_size_bytes,
         logical_sector_size=sector_size,

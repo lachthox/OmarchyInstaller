@@ -49,6 +49,7 @@ def test_gpt_is_the_only_supported_partition_style() -> None:
             gpt_disk_guid="disk-guid",
             disk_size_bytes=1024,
             logical_sector_size=512,
+            runtime_disk_number=0,
             partition_style="MBR",
         )
 
@@ -70,6 +71,7 @@ def test_partition_uuid_namespaces_are_not_interchangeable() -> None:
             partuuid="different-partuuid",
             filesystem_uuid="filesystem-uuid",
             filesystem_type="vfat",
+            partition_number=1,
             start_sector=1,
             end_sector=1,
             logical_sector_size=512,
