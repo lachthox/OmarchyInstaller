@@ -18,7 +18,7 @@ Owns Ventoy handoff discovery, plan validation, disk matching, networking, parti
 
 ### Omarchy Handoff
 
-Owns first-boot wrapper logic, Omarchy bootstrap health checks, Omarchy launch control, and post-Omarchy normalization.
+Owns normal-user first-login logic, verified Omarchy launch control, and post-Omarchy completion.
 
 ### Boot Guardian
 

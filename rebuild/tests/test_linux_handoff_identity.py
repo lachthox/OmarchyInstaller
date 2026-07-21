@@ -72,6 +72,7 @@ def test_tampered_and_stale_handoffs_fail_closed(tmp_path: Path) -> None:
     stale_root = make_bundle(tmp_path / "STALE", stale)
     with pytest.raises(HandoffDiscoveryError, match="older"):
         discover_and_validate_handoff_plan(context(max_age=1), search_roots=[stale_root])
+    assert discover_and_validate_handoff_plan(context(), search_roots=[stale_root]).plan.meta.plan_id
 
 
 def test_multiple_valid_handoffs_are_ambiguous(tmp_path: Path) -> None:

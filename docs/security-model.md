@@ -1,6 +1,7 @@
 # Security model
 
-Status: implementation in progress; real-hardware use prohibited.
+Status: implemented with synthetic tests; real-hardware use prohibited pending
+isolated VM and recovery acceptance.
 
 ## Device safety
 
@@ -19,8 +20,10 @@ second time immediately before the write. Any mismatch blocks.
   workflow run, producer/schema versions, and GPT disk/partition identities.
 - The manifest has an HMAC-SHA256 made with a one-time key of at least 256 bits.
   The key is never written to the USB and must be entered/transported separately.
-- Linux-side verification remains a Phase 9 gate; creation alone is not release
-  approval.
+- The Windows TUI displays the generated key after verified staging; the user
+  enters its 64 hexadecimal characters into the concealed live-TUI field. Linux
+  mounts exactly one removable Ventoy data partition read-only, verifies the
+  HMAC and every bound identity/hash, then unmounts it.
 
 ## Secrets
 

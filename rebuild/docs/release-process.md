@@ -95,6 +95,11 @@ normal-user PTY, ISO build, Windows EXE build/test, and disposable VM
 install-and-reboot jobs. GitHub Actions cannot schedule publication if any need
 fails or is skipped. No independent artifact publisher exists.
 
+The install/reboot job delegates firmware and console control to the isolated
+runner's `OMARCHY_ISOLATED_VM_DRIVER`. The repository harness rejects absent,
+dry-run, hash-mismatched, or incomplete install/reboot/EFI/first-login/recovery
+evidence.
+
 Dry-run artifacts are never inputs to the release workflow. The publisher still
 revalidates unique ISO/EXE manifests, exact commit/tag/version/run/ref pairing,
 non-dry-run state, and every artifact hash immediately before publication.

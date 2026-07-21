@@ -24,6 +24,9 @@ Apply mode creates and verifies:
 - deterministic per-file ESP SHA256 entries and an aggregate hash;
 - artifact hashes, source identities, tool version, and restore warning.
 
+Apply mode requires an explicit backup destination off the Windows system disk;
+the simulation-only working-directory default cannot authorize a resize.
+
 The manifest is atomically written with `verification.status=verified`. A
 simulation is explicitly `simulated` and cannot authorize resize.
 
@@ -39,3 +42,17 @@ before geometry, intended size, and the fact that automatic rollback is not
 supported. The disk is re-probed afterward. Identity drift or insufficient final
 adjacent space is reported as `resize-applied-validation-failed`, not rollback or
 success.
+
+## Ventoy and handoff completion
+
+The same TUI requires local paths for the paired plan, ISO, and release manifest,
+plus an explicit USB disk number. It revalidates the target disk after shrink,
+checks the ISO and release-manifest hashes against plan provenance, then requires
+Ventoy's exact `ERASE <stable-id>` confirmation. Apply mode performs two USB
+identity checks around the write, validates the resulting data partition, copies
+and re-hashes the ISO, and writes the authenticated plan bundle.
+
+The TUI displays a newly generated 32-byte one-time key only after the handoff
+stage. Record its 64 hexadecimal characters and enter them in the live TUI using
+`H`; the key is never written to removable media. Network credentials are
+entered interactively only in the live environment.

@@ -252,6 +252,7 @@ ensure_live_runtime() {
     echo "Warning: could not mount tmpfs for pacman cache; continuing with directory cache." >&2
   fi
 
+  # shellcheck disable=SC2016 # Expansion belongs to the shell inside the chroot.
   chroot "$rootfs" /usr/bin/bash -lc '
     set -f
     mkdir -p /var/cache/pacman/pkg

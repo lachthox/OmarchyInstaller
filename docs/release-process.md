@@ -2,6 +2,10 @@
 
 Status: publication remains blocked by later VM gates and Windows code signing.
 
+The VM job also requires an isolated console-automation driver configured as
+`OMARCHY_ISOLATED_VM_DRIVER`. Its evidence is schema-checked and bound to the
+exact ISO hash; missing, dry-run, partial, or mismatched evidence blocks publish.
+
 ## Immutable paired build
 
 The canonical release workflow is `.github/workflows/rebuild-release.yml` and is

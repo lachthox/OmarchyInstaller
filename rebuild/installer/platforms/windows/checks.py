@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from enum import Enum
-import re
 import subprocess
 from typing import Protocol
 
@@ -132,18 +131,19 @@ class PowerShellProbe:
         return None
 
     def winre_enabled(self) -> bool | None:
-        completed = subprocess.run(
-            ["reagentc.exe", "/info"],
-            capture_output=True,
-            text=True,
-            check=False,
+        output = self._run_ps(
+            "$path = Join-Path $env:SystemRoot 'System32\\Recovery\\ReAgent.xml'; "
+            "if (-not (Test-Path -LiteralPath $path)) { 'unknown'; exit }; "
+            "try { $xml = [xml](Get-Content -LiteralPath $path -Raw -ErrorAction Stop); "
+            "$node = $xml.WindowsRE.WinreLocation; "
+            "if ($null -ne $node -and -not [string]::IsNullOrWhiteSpace([string]$node.path)) "
+            "{ 'true' } else { 'false' } } catch { 'unknown' }"
         )
-        if completed.returncode != 0:
-            return None
-        match = re.search(r"Windows RE status:\s*(Enabled|Disabled)", completed.stdout, re.IGNORECASE)
-        if not match:
-            return None
-        return match.group(1).lower() == "enabled"
+        if output.casefold() == "true":
+            return True
+        if output.casefold() == "false":
+            return False
+        return None
 
 
 def _check_admin(probe: WindowsProbe) -> CheckResult:
@@ -195,7 +195,7 @@ def _check_bitlocker(probe: WindowsProbe) -> CheckResult:
         return CheckResult("bitlocker", CheckStatus.PASS, "BitLocker protection is not active on system drive.", state)
     if normalized in {"on", "1", "protectionon"}:
         return CheckResult("bitlocker", CheckStatus.FAIL, "BitLocker is active; backup and handling flow required.", state)
-    return CheckResult("bitlocker", CheckStatus.WARN, "BitLocker state could not be reliably determined.", state)
+    return CheckResult("bitlocker", CheckStatus.FAIL, "BitLocker state could not be reliably determined.", state)
 
 
 def _check_fast_startup(probe: WindowsProbe) -> CheckResult:
@@ -204,7 +204,7 @@ def _check_fast_startup(probe: WindowsProbe) -> CheckResult:
         return CheckResult("fast_startup", CheckStatus.PASS, "Fast Startup is disabled.", "false")
     if enabled is True:
         return CheckResult("fast_startup", CheckStatus.FAIL, "Fast Startup must be disabled before proceeding.", "true")
-    return CheckResult("fast_startup", CheckStatus.WARN, "Fast Startup state could not be determined.", "unknown")
+    return CheckResult("fast_startup", CheckStatus.FAIL, "Fast Startup state could not be determined.", "unknown")
 
 
 def _check_winre(probe: WindowsProbe) -> CheckResult:
@@ -213,7 +213,7 @@ def _check_winre(probe: WindowsProbe) -> CheckResult:
         return CheckResult("winre", CheckStatus.PASS, "Windows RE is enabled.", "true")
     if enabled is False:
         return CheckResult("winre", CheckStatus.FAIL, "Windows RE is disabled; recovery contract not met.", "false")
-    return CheckResult("winre", CheckStatus.WARN, "Windows RE status could not be determined.", "unknown")
+    return CheckResult("winre", CheckStatus.FAIL, "Windows RE status could not be determined.", "unknown")
 
 
 def evaluate_windows_preflight(probe: WindowsProbe) -> WindowsPreflightReport:

@@ -1,10 +1,10 @@
 # Python TUI remediation status
 
 This is the durable traceability ledger for the 61 enumerated findings in
-`OmarchyInstaller-full-repository-audit.md`. A finding remains open until its
+`OmarchyInstaller-full-repository-audit.md`. A finding remains unresolved until its
 implementation, negative/failure tests, documentation, and acceptance evidence
-are complete. `Commit` is intentionally blank until a reviewed phase commit is
-created.
+are complete. The phase commit map below provides durable implementation
+provenance; acceptance-blocked rows remain blocked regardless of code completion.
 
 Baseline checkout: `08737764721d915921af4fa8a82015d3ea975fbd`
 
@@ -19,7 +19,7 @@ be marked complete until run in a capable environment.
 |---|---|---|---:|---|---|---|---|---|---|
 | CRIT-01 | Critical | Legacy archinstall config incompatible | 2, 12, 17, 19 | `setup.sh`, install engine | Replaced placeholder with strict archinstall 4.4 pre-mounted config/credentials contract | local semantic/shape tests pass; exact package and VM gate blocked | Verification blocked | | Linux/QEMU required |
 | CRIT-02 | Critical | Partitioning precedes semantic validation | 3, 12 | install engine | Internal plan, archinstall config, and credentials validate before free-space recheck or any destructive command | invalid credentials execute zero runner commands; ordered backend tests | Resolved | | |
-| CRIT-03 | Critical | Linux TUI never performs a real install | 4, 11 | live TUI | Ordered real/simulated state machine and confirmation boundary implemented; production stage backend lands in Phases 12-15 | ordered fake backend and Pilot tests | Open | | Partial until real engine/finalization backend is connected |
+| CRIT-03 | Critical | Linux TUI never performs a real install | 4, 11 | live TUI | Live Textual apply action re-identifies the machine, requires concealed credentials and disk-bound confirmation, then calls the production install/finalization engine in a worker | apply-action Pilot, ordered backend, and engine tests pass; destructive VM execution unavailable | Verification blocked | | Exact install/reboot evidence required |
 | CRIT-04 | Critical | Internal plan passed to archinstall | 2, 12 | install engine | Separate strict pre-mounted config and mode-0600 credentials; internal fields excluded | config negative assertions and exact CLI test | Resolved | | |
 | CRIT-05 | Critical | Incomplete target layout preparation | 9, 11, 12, 13 | install engine | LUKS2, Btrfs, configured subvolumes, root tree, verified ESP, initramfs, archinstall, and target finalization implemented | complete fake backend order plus target-root invariant tests; VM blocked | Verification blocked | | Destructive VM gate remains |
 | CRIT-06 | Critical | ISO omits Python dependency installation | 8 | ISO pipeline | Hash-locked dependency set installed into `/opt/omarchy-venv` during rootfs assembly | payload/lock/static build tests pass; OVMF offline startup blocked locally | Verification blocked | | QEMU/OVMF gate remains open |
@@ -49,14 +49,14 @@ be marked complete until run in a capable environment.
 | HIGH-17 | High | Partial firstboot automatically retries | 14 | first-login | User-owned atomic state blocks every partial attempt until prior state is displayed and `--retry` is explicit | no-retry and explicit-single-retry tests | Resolved | | No Restart policy or root service remains |
 | HIGH-18 | High | EFI mount contracts conflict | 12, 13, 15 | install/guardian | Engine, target finalizer, expected state, and guardian use the plan's sole `/boot` ESP; guardian verifies the actual findmnt target | mount-path, FAT, filesystem UUID, and PARTUUID tests | Resolved | | Reboot gate remains environmental |
 | HIGH-19 | High | Failure evidence is deleted | 3, 11, 12 | diagnostics | Failed state-machine runs atomically preserve redacted stage diagnostics; failed install staging is retained | secret redaction and diagnostic persistence test | Resolved | | |
-| HIGH-20 | High | Conflicting release products | 1, 7, 18, 19 | workflows | Deleted the legacy self-publishing ISO workflow; only the Python rebuild release graph has write permission | workflow regression proves no legacy publisher and one gated publish job | Resolved | | Remaining legacy files retire in Phase 19 |
+| HIGH-20 | High | Conflicting release products | 1, 7, 18, 19 | workflows | Only one CI workflow and one gated Python release workflow remain; archived programs are inert text | workflow and retired-path regressions | Resolved | | |
 | HIGH-21 | High | Publisher can pair unrelated artifacts | 7, 18 | release tooling | Unique exact-paired artifacts are revalidated after all build and VM needs and before attested publication | provenance negative tests plus release graph regression | Resolved | | |
 | HIGH-22 | High | Provenance failures can fail open | 7, 18 | release/Windows | Missing, ambiguous, dry-run, mismatched, or tampered provenance hard-fails and publication has no bypass job | negative contract and workflow graph tests | Resolved | | |
 | HIGH-23 | High | Interrupted ISO builds leak mounts | 3, 8 | ISO build | EXIT/INT/TERM cleanup tracks mounts and unmounts them in reverse order before worktree removal | static trap regression passes; interruption integration needs Linux runner | Verification blocked | | QEMU/Linux gate remains open |
 | HIGH-24 | High | Successful install leaves mounts/LUKS open | 3, 12 | install transactions | Tracks every mount, unmounts reverse-order, and closes mapper on success/failure | fake real-mode cleanup order test | Resolved | | |
 | HIGH-25 | High | Runtime dependency manifest incomplete | 8, 13 | ISO/finalization | Live dependencies are verified and the target gets a canonical Python runtime package with chroot import validation | ISO static tests and target import/compile contract tests | Resolved | | Exact VM execution remains an acceptance gate |
 | HIGH-26 | High | Startup metadata disagrees with runtime | 8, 19 | ISO assets | Metadata, live hook, launcher, venv import root, and packaged asset tree use one canonical Python runtime | payload regression and retired-path checker pass | Resolved | | ISO boot remains a separate acceptance gate |
-| HIGH-27 | High | Launcher silently falls back to PowerShell | 1, 4, 19 | Windows launcher, Windows TUI, EXE builder | Removed fallback/bypass and legacy payload; Python startup now fails visibly | `pytest -q rebuild/tests/test_windows_launcher.py rebuild/tests/test_windows_flow.py` (6 passed); focused Ruff passed | Resolved | | Final legacy archive remains tracked separately by Phase 19 |
+| HIGH-27 | High | Launcher silently falls back to PowerShell | 1, 4, 19 | Windows launcher, Windows TUI, EXE builder | Removed fallback/bypass and executable legacy payload; Python startup now fails visibly | launcher/flow tests and retired-path checker | Resolved | | |
 | HIGH-28 | High | Windows TUI bypasses and fake completion | 4, 11 | Windows TUI | Windows stage gates distinguish simulated/applied; Linux state machine rejects empty plans and distinguishes simulated/applied | Windows Pilot plus Linux state tests | Resolved | | |
 | HIGH-29 | High | Guardian defaults when expected state absent | 13, 15 | guardian | Removed built-in fallback; machine-specific state and exact mounted ESP UUID/PARTUUID are mandatory | missing state, unmounted directory, UUID identity, ambiguity, repair failure, and remeasurement tests | Resolved | | |
 | HIGH-30 | High | Tracker lock survives crashed process | 16 | task orchestrator | Replaced exclusive lock-file existence with OS locking, in-process serialization, and owner/start metadata | killed subprocess, stale metadata, and concurrent claimant tests | Resolved | | |
@@ -67,11 +67,11 @@ be marked complete until run in a capable environment.
 | MED-02 | Medium | Sector range size not cross-validated | 2 | shared models | Added inclusive range arithmetic and cross-plan logical-sector validation | sector mismatch and cross-sector tests | Resolved | | |
 | MED-03 | Medium | MBR permitted by GPT-only design | 2 | shared models | `DiskIdentity` now accepts GPT only | `test_gpt_is_the_only_supported_partition_style` | Resolved | | |
 | MED-04 | Medium | Version comparison mishandles prereleases | 2 | versioning | Replaced parser with `packaging.version.Version` | `test_version_comparison_uses_standard_prerelease_ordering` | Resolved | | |
-| MED-05 | Medium | Windows preflight parsing locale-dependent | 4, 5 | Windows checks | Pending | Pending | Open | | |
-| MED-06 | Medium | Disk number used when serial absent | 2, 5, 9 | identity | Pending | Pending | Open | | |
+| MED-05 | Medium | Windows preflight parsing locale-dependent | 4, 5 | Windows checks | Replaced localized `reagentc` text parsing with typed PowerShell inspection of `ReAgent.xml`; other probes emit invariant typed values | positive, negative, and unknown preflight probe tests | Resolved | | |
+| MED-06 | Medium | Disk number used when serial absent | 2, 5, 9 | identity | Cross-boot identity uses exact GPT disk GUID, size, sector size, model, and optional serial; runtime disk number is scoped to a freshly revalidated Windows operation only | missing-serial, wrong-GUID, ambiguous, and identity-change tests | Resolved | | |
 | MED-07 | Medium | Copied ISO hash not verified | 6 | handoff | Source/destination SHA256 compared; corrupt copy removed | ISO copy and corruption tests | Resolved | | |
 | MED-08 | Medium | FAT32 file-size limit unchecked | 6 | handoff | Rejects any FAT32 payload above 4 GiB minus one byte | sparse over-limit test | Resolved | | |
-| MED-09 | Medium | Arbitrary 72-hour plan freshness | 6, 9 | discovery/main | Pending | Pending | Open | | |
+| MED-09 | Medium | Arbitrary 72-hour plan freshness | 6, 9 | discovery/main | Removed implicit time expiry; immutable artifact/release/commit pairing is mandatory, with age limits only when explicitly configured | stale-policy and default-disabled contract tests | Resolved | | |
 | MED-10 | Medium | EXE version derived from commit digits | 7 | EXE build | Requires explicit semantic X.Y.Z and emits X.Y.Z.0 | strict VERSIONINFO test | Resolved | | |
 | MED-11 | Medium | Prompt responses logged | 3, 10 | command/logging | Prompt-bearing commands inherit terminal I/O and are never captured; structured diagnostics contain booleans only | secret not in argv/captured command tests | Resolved | | |
 | MED-12 | Medium | Release template incompatible | 2, 7 | models/templates | Template and publisher both validate with `ReleaseManifestContract` schema 1.0.0 | template and valid release-pair tests | Resolved | | |
@@ -88,3 +88,21 @@ be marked complete until run in a capable environment.
 - Docker/Compose baseline: unavailable on host.
 - WSL baseline: WSL 2 available.
 - Destructive disk, EFI, Ventoy, BitLocker, and boot-order commands were not run.
+
+## Reconciliation totals
+
+- Total audited findings: **61**
+- Resolved with repository evidence: **53**
+- Implementation complete but verification blocked on external acceptance: **8**
+- Unclassified or silently waived: **0**
+
+Blocked IDs: `CRIT-01`, `CRIT-03`, `CRIT-05`, `CRIT-06`, `CRIT-07`,
+`HIGH-23`, `HIGH-32`, and `MED-15`.
+
+## Phase commit map
+
+Phases 0–19 are represented by commits `1738cfa`, `a7c7851`, `0b5f0c2`,
+`faa1365`, `ec9f695`, `f53adc0`, `85bc2fb`, `8946dbb`, `e20ac8e`,
+`4d04b06`, `448b887`, `e283e99`, `e93d389`, `a75917d`, `96531cb`,
+`2ecb423`, `c117a6c`, `f2220b4`, and `d56b560`. Phase 20 evidence is
+recorded by the final verification commit on this branch.

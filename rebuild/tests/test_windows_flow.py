@@ -1,8 +1,17 @@
 from __future__ import annotations
 
+import hashlib
+import json
+from pathlib import Path
+
 import pytest
 
+from rebuild.installer.platforms.windows.disk_probe import DiskProbeSnapshot
 from rebuild.installer.platforms.windows.flow import WindowsMigrationFlow
+from rebuild.installer.shared import validate_plan_contract
+
+
+WORKSPACE = Path(__file__).resolve().parents[2]
 
 
 class _BackupStub:
@@ -20,6 +29,7 @@ class _PartitionStub:
     current_free_space_bytes = 80 * 1024**3
     final_free_space_bytes = 120 * 1024**3
     resized = True
+    after_snapshot = None
 
     def to_dict(self) -> dict[str, str]:
         return {"result": "ok"}
@@ -40,8 +50,18 @@ def test_run_backup_success(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert result.ok is True
     assert "DRY-RUN" in result.summary
-    assert calls["primary_destination"] == "E:/backup"
+    assert Path(str(calls["primary_destination"])) == Path("E:/backup")
     assert calls["dry_run"] is True
+
+
+def test_apply_backup_requires_explicit_off_system_disk(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SystemDrive", "C:")
+    assert WindowsMigrationFlow(apply_changes=True).run_backup().ok is False
+    result = WindowsMigrationFlow(
+        apply_changes=True, backup_destination="C:/same-disk-backup"
+    ).run_backup()
+    assert result.ok is False
+    assert "off the Windows system disk" in result.summary
 
 
 def test_run_partition_failure(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -77,3 +97,42 @@ def test_run_partition_success(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.ok is True
     assert "APPLY" in result.summary
     assert "80.0 GiB -> 120.0 GiB" in result.summary
+
+
+def test_dry_run_handoff_validates_pair_and_emits_out_of_band_key(tmp_path: Path) -> None:
+    payload = json.loads(
+        (WORKSPACE / "rebuild/assets/templates/plan.template.json").read_text(encoding="utf-8")
+    )
+    iso = tmp_path / "paired.iso"
+    release = tmp_path / "release_manifest.json"
+    iso.write_bytes(b"paired iso")
+    release.write_text('{"paired":true}\n', encoding="utf-8")
+    payload["provenance"]["iso_name"] = iso.name
+    payload["provenance"]["iso_sha256"] = hashlib.sha256(iso.read_bytes()).hexdigest()
+    payload["provenance"]["release_manifest_sha256"] = hashlib.sha256(
+        release.read_bytes()
+    ).hexdigest()
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(json.dumps(payload), encoding="utf-8")
+    plan = validate_plan_contract(payload)
+    snapshot = DiskProbeSnapshot(
+        disk_identity=plan.disk_identity,
+        efi_identity=plan.efi_identity,
+        windows_partition_identity=plan.windows_partition_identity,
+        prepared_free_space_range=plan.prepared_free_space_range,
+        partitions=(plan.efi_identity, plan.windows_partition_identity),
+    )
+    flow = WindowsMigrationFlow(apply_changes=False)
+    flow._prepared_snapshot = snapshot
+
+    result = flow.run_ventoy_handoff(
+        plan_path=str(plan_path),
+        iso_path=str(iso),
+        release_manifest_path=str(release),
+        usb_disk_number=7,
+        usb_confirmation="ERASE ignored-in-dry-run",
+    )
+
+    assert result.ok is True
+    assert result.payload is not None
+    assert len(str(result.payload["integrity_key_hex"])) == 64

@@ -1,2 +1,2 @@
-"""Omarchy Installer rebuild runtime package scaffold."""
+"""Omarchy Installer Python runtime package."""
 

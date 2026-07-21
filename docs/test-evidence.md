@@ -263,3 +263,31 @@ Date: 2026-07-21
   upstream parser and pseudo-terminal integration).
 - `python -m ruff check rebuild`: passed.
 - `python -m mypy rebuild`: passed across 98 source files.
+
+## Phase 20 final verification evidence
+
+- `python -m pytest rebuild/tests -q -rs`: **138 passed, 2 skipped**. The skips
+  are explicit: the installed `archinstall` package is absent on this Windows
+  host, and the first-login PTY test requires a non-root Unix host.
+- `python -m ruff check rebuild`: passed.
+- `python -m mypy --no-incremental rebuild`: passed across 101 source files.
+- `python rebuild/tools/check_no_legacy_production_refs.py`: passed.
+- `shellcheck -s bash <all rebuild/assets/scripts/*.sh plus build-custom-iso.sh>`:
+  passed after explicitly documenting intentional inner-chroot expansion.
+- `python -m compileall -q rebuild`: passed.
+- Dry-run ISO and EXE packaging produced manifests, checksums, and placeholder
+  artifacts for the same local tag. `publish_release` rejected them with
+  `ISO manifest is dry-run or missing an explicit false dry_run state`, proving
+  that simulated artifacts cannot be promoted.
+- VM prerequisite probe: `qemu-system-x86_64`, `qemu-img`, Docker, and Bats are
+  unavailable; WSL is installed but has no usable Linux distribution. There is
+  no non-dry-run ISO in `rebuild/dist/vm-input`.
+- `python -m rebuild.tools.vm_install_test --iso-glob
+  'rebuild/dist/vm-input/*-omarchy-auto.iso' --work-dir
+  rebuild/dist/vm-gate --require-install --require-reboot`: **blocked**, exactly
+  one ISO required and zero found. No VM pass is claimed.
+- Serena MCP was not exposed in this session, so its final memory update could
+  not be performed. Repository ledgers and reports are the durable handoff.
+- Independent ID reconciliation extracted 61 unique `CRIT`/`HIGH`/`MED` IDs
+  from the audit and 61 from the ledger; `Compare-Object` returned no mismatch.
+  Ledger totals are 53 resolved and 8 verification-blocked.

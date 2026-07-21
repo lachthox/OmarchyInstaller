@@ -49,7 +49,7 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m mypy rebuild\installer rebuild\tools
 ```
 
-See `docs/installation-guide.md` and `docs/recovery-guide.md`. Never point
+See `docs/installation-guide.md` and `docs/recovery.md`. Never point
 installer tests at a real disk, ESP, USB device, or firmware store.
 
 ## Project status

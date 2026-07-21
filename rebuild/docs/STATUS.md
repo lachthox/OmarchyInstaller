@@ -41,7 +41,9 @@ test success as installation success.
 
 ## Active work
 
-- Phase 20: isolated end-to-end acceptance and final release decision.
+- Repository remediation implementation and local verification are complete.
+- External Phase 20 acceptance remains blocked until the isolated UEFI runner
+  produces install, reboot, Windows-preservation, first-login, and recovery evidence.
 
 ## Known blockers
 

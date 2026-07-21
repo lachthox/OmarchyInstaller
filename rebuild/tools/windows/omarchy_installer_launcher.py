@@ -7,6 +7,7 @@ import json
 import sys
 import traceback
 from pathlib import Path
+from typing import Any
 
 EXIT_FATAL_STARTUP = 1
 
@@ -34,11 +35,6 @@ def build_parser() -> argparse.ArgumentParser:
         description="Omarchy Windows installer launcher.",
     )
     parser.add_argument(
-        "--python-preflight-only",
-        action="store_true",
-        help="Run Python preflight TUI without applying changes.",
-    )
-    parser.add_argument(
         "--python-preflight-json",
         action="store_true",
         help="Run Python preflight checks non-interactively and print JSON.",
@@ -64,19 +60,34 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help="Fallback backup destination path for Python backup step.",
     )
+    parser.add_argument("--plan", default="", help="Release-paired plan JSON path.")
+    parser.add_argument("--iso", default="", help="Release-paired customized ISO path.")
+    parser.add_argument("--release-manifest", default="", help="Paired release manifest path.")
+    parser.add_argument("--usb-disk-number", type=int, default=-1, help="Explicit Ventoy USB disk number.")
+    parser.add_argument("--usb-confirmation", default="", help="Exact ERASE <stable-id> confirmation.")
+    parser.add_argument(
+        "--allow-ventoy-install", action="store_true", help="Allow acquisition of Ventoy through winget."
+    )
     return parser
 
 
 def run_python_tui(
     *,
-    preflight_only: bool,
     apply_changes: bool,
     target_free_gib: int,
     backup_destination: str,
     backup_fallback_destination: str,
+    plan_path: str,
+    iso_path: str,
+    release_manifest_path: str,
+    usb_disk_number: int,
+    usb_confirmation: str,
+    allow_ventoy_install: bool,
 ) -> int:
     ensure_rebuild_on_syspath()
-    from installer.platforms.windows import run_windows_preflight_tui  # type: ignore[import-not-found]
+    from installer.platforms import windows as windows_platform  # type: ignore[import-not-found]
+
+    run_windows_preflight_tui: Any = windows_platform.run_windows_preflight_tui
 
     return int(
         run_windows_preflight_tui(
@@ -84,6 +95,12 @@ def run_python_tui(
         target_free_gib=target_free_gib,
         backup_destination=backup_destination or None,
         backup_fallback_destination=backup_fallback_destination or None,
+        plan_path=plan_path,
+        iso_path=iso_path,
+        release_manifest_path=release_manifest_path,
+        usb_disk_number=usb_disk_number,
+        usb_confirmation=usb_confirmation,
+        allow_ventoy_install=allow_ventoy_install,
         )
     )
 
@@ -106,11 +123,16 @@ def main() -> int:
 
     try:
         tui_result = run_python_tui(
-            preflight_only=args.python_preflight_only,
             apply_changes=args.python_apply,
             target_free_gib=max(40, int(args.python_target_free_gib)),
             backup_destination=args.python_backup_destination,
             backup_fallback_destination=args.python_backup_fallback_destination,
+            plan_path=args.plan,
+            iso_path=args.iso,
+            release_manifest_path=args.release_manifest,
+            usb_disk_number=args.usb_disk_number,
+            usb_confirmation=args.usb_confirmation,
+            allow_ventoy_install=args.allow_ventoy_install,
         )
     except Exception as exc:  # pragma: no cover - exercised by packaged runtime
         print("FATAL: OmarchyInstaller Python TUI could not start.", file=sys.stderr)

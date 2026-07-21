@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import threading
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 from textual.geometry import Size
@@ -149,3 +150,43 @@ def test_linux_tui_refresh_runs_in_worker_and_stays_responsive(monkeypatch: pyte
         asyncio.run(scenario())
     finally:
         release.set()
+
+
+def test_linux_tui_apply_action_reaches_production_worker(monkeypatch: pytest.MonkeyPatch) -> None:
+    from rebuild.installer.ui import screens
+
+    plan = payload_to_plan(plan_payload())
+    ready = screens.LiveRuntimeSnapshot(
+        generated_at_utc="2026-07-21T00:00:00Z",
+        dependencies_ok=True,
+        missing_dependencies=tuple(),
+        handoff_sources=("/mnt/ventoy",),
+        handoff_result=SimpleNamespace(plan=plan, plan_path="/mnt/ventoy/omarchy/plan.json"),  # type: ignore[arg-type]
+        handoff_error="",
+        network_result=SimpleNamespace(connected=True, requires_abort=False),  # type: ignore[arg-type]
+        network_error="",
+        install_result=None,
+        install_error="not started",
+        boot_policy_result=None,
+        boot_policy_error="not run",
+        identity_result=SimpleNamespace(disk=SimpleNamespace(path="/dev/vda")),  # type: ignore[arg-type]
+    )
+    monkeypatch.setattr(screens, "collect_live_runtime_snapshot", lambda **kwargs: ready)
+    called: list[tuple[bool, str, str, str]] = []
+
+    async def scenario() -> None:
+        app = screens.LiveInstallerApp()
+        app._install_worker = lambda *args: called.append(args)  # type: ignore[assignment]
+        async with app.run_test(size=Size(100, 32)):
+            await app.workers.wait_for_complete()
+            app.query_one("#install-confirmation", screens.Input).value = confirmation_token(plan)
+            app.query_one("#encryption-passphrase", screens.Input).value = "encryption-secret"
+            app.query_one("#user-password", screens.Input).value = "user-secret"
+            app.action_apply_install()
+            assert called == [
+                (False, confirmation_token(plan), "encryption-secret", "user-secret")
+            ]
+            assert app.query_one("#encryption-passphrase", screens.Input).value == ""
+            assert app.query_one("#user-password", screens.Input).value == ""
+
+    asyncio.run(scenario())

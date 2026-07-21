@@ -1,4 +1,4 @@
-"""Install orchestration scaffolding for live environment."""
+"""Production install orchestration for the Arch live environment."""
 
 from __future__ import annotations
 
@@ -63,6 +63,7 @@ class LiveInstallExecutionResult:
     target_partition_guid: str
     mount_root: str
     encryption_mapper: str
+    target_finalization_status: str
     dry_run: bool
 
     def to_dict(self) -> dict[str, str]:
@@ -387,6 +388,7 @@ def execute_install_plan(
     target_partition_guid = ""
     removed_paths: tuple[str, ...] = tuple()
     status = "staged"
+    target_finalization_status = "simulated" if dry_run else "not-run"
     failed = False
 
     try:
@@ -569,6 +571,7 @@ def execute_install_plan(
                         install_log_lines.append(
                             f"target finalization: {finalization.status}; marker={finalization.success_marker}"
                         )
+                        target_finalization_status = finalization.status
                     for mounted in reversed(mounted_targets):
                         _run_checked(active_runner, ["umount", mounted])
                         install_log_lines.append(f"CLEANUP: umount {mounted}")
@@ -615,5 +618,6 @@ def execute_install_plan(
         target_partition_guid=target_partition_guid,
         mount_root=mount_root,
         encryption_mapper=f"/dev/mapper/{crypt_mapper_name}",
+        target_finalization_status=target_finalization_status,
         dry_run=dry_run,
     )

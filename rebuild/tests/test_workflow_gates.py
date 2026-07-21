@@ -26,6 +26,8 @@ def test_release_publish_requires_every_safety_gate() -> None:
     assert "if: ${{ inputs.publish }}" in publish
     assert "--publish --publish-only" in publish
     assert "--require-install --require-reboot" in workflow
+    assert "python -m rebuild.tools.vm_install_test" in workflow
+    assert "runs-on: [self-hosted, linux, x64, omarchy-vm]" in workflow
 
 
 def test_ci_covers_quality_shell_contracts_and_windows_package() -> None:

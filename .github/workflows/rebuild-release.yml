@@ -93,15 +93,19 @@ jobs:
         with: {name: release-windows-exe-output, path: rebuild/dist/release-windows-exe, if-no-files-found: error}
 
   vm-install-reboot:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, omarchy-vm]
     needs: [build-iso]
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v6
       - uses: actions/download-artifact@v8
         with: {name: release-iso-output, path: rebuild/dist/vm-input}
-      - run: sudo apt-get update -qq && sudo apt-get install -y qemu-system-x86 ovmf
-      - run: python rebuild/tools/vm_install_test.py --iso-glob 'rebuild/dist/vm-input/*-omarchy-auto.iso' --work-dir rebuild/dist/vm-gate --require-install --require-reboot
+      - name: Verify isolated runner contract
+        run: |
+          command -v qemu-system-x86_64
+          command -v qemu-img
+          test -n "$OMARCHY_ISOLATED_VM_DRIVER"
+      - run: python -m rebuild.tools.vm_install_test --iso-glob 'rebuild/dist/vm-input/*-omarchy-auto.iso' --work-dir rebuild/dist/vm-gate --require-install --require-reboot
       - uses: actions/upload-artifact@v7
         if: always()
         with: {name: vm-install-evidence, path: rebuild/dist/vm-gate, if-no-files-found: error}

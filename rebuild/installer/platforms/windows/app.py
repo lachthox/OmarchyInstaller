@@ -57,6 +57,12 @@ class WindowsTuiConfig:
     target_free_gib: int = 120
     backup_destination: str | None = None
     backup_fallback_destination: str | None = None
+    plan_path: str = ""
+    iso_path: str = ""
+    release_manifest_path: str = ""
+    usb_disk_number: int = -1
+    usb_confirmation: str = ""
+    allow_ventoy_install: bool = False
 
 
 class WindowsPreflightApp(App[int]):
@@ -75,6 +81,7 @@ class WindowsPreflightApp(App[int]):
         Binding("r", "refresh", "Refresh"),
         Binding("b", "run_backup_step", "Backup"),
         Binding("p", "run_partition_step", "Partition"),
+        Binding("v", "run_ventoy_step", "Ventoy/Handoff"),
         Binding("c", "continue_flow", "Continue"),
         Binding("x", "cancel_operation", "Cancel"),
         Binding("j", "cursor_down", "Down", show=False),
@@ -95,10 +102,13 @@ class WindowsPreflightApp(App[int]):
         self._notes: list[str] = []
         self._backup_result: FlowStepResult | None = None
         self._partition_result: FlowStepResult | None = None
+        self._handoff_result: FlowStepResult | None = None
+        self._handoff_key = ""
         self.stage_states: dict[str, StageState] = {
             "preflight": StageState.IDLE,
             "backup": StageState.IDLE,
             "partition": StageState.IDLE,
+            "handoff": StageState.IDLE,
         }
         self._flow = WindowsMigrationFlow(
             apply_changes=self._config.apply_changes,
@@ -114,7 +124,7 @@ class WindowsPreflightApp(App[int]):
             yield DataTable(id="checks")
             yield Static("", id="summary")
             yield Static(
-                "R refresh · B backup · P partition · C continue · X cancel simulation · ↑/↓ or j/k navigate · Esc/Q quit",
+                "R refresh · B backup · P partition · V Ventoy/handoff · C finish · X cancel · ↑/↓ or j/k navigate · Esc/Q quit",
                 id="hints",
             )
         yield Footer()
@@ -148,6 +158,8 @@ class WindowsPreflightApp(App[int]):
                     self._snapshot_summary,
                     f"Backup: {self.stage_states['backup'].value}",
                     f"Partition: {self.stage_states['partition'].value}",
+                    f"Ventoy/handoff: {self.stage_states['handoff'].value}",
+                    f"One-time live key: {self._handoff_key or 'not generated'}",
                     f"Recent: {recent_notes}",
                     "Continue only hands off after explicit backup and partition stages.",
                 ]
@@ -161,8 +173,11 @@ class WindowsPreflightApp(App[int]):
     def _invalidate_dependent_results(self) -> None:
         self._backup_result = None
         self._partition_result = None
+        self._handoff_result = None
+        self._handoff_key = ""
         self.stage_states["backup"] = StageState.IDLE
         self.stage_states["partition"] = StageState.IDLE
+        self.stage_states["handoff"] = StageState.IDLE
 
     @staticmethod
     def _collect_fresh_safety_snapshot() -> tuple[list[dict[str, str]], DiskProbeSnapshot]:
@@ -252,6 +267,20 @@ class WindowsPreflightApp(App[int]):
     def _partition_worker(self) -> None:
         self._run_flow_worker("partition", self._flow.run_partition_prep)
 
+    @work(thread=True, exclusive=True, group="handoff")
+    def _handoff_worker(self) -> None:
+        self._run_flow_worker(
+            "handoff",
+            lambda: self._flow.run_ventoy_handoff(
+                plan_path=self._config.plan_path,
+                iso_path=self._config.iso_path,
+                release_manifest_path=self._config.release_manifest_path,
+                usb_disk_number=self._config.usb_disk_number,
+                usb_confirmation=self._config.usb_confirmation,
+                allow_ventoy_install=self._config.allow_ventoy_install,
+            ),
+        )
+
     def _apply_flow_result(
         self,
         stage: str,
@@ -260,8 +289,10 @@ class WindowsPreflightApp(App[int]):
     ) -> None:
         if stage == "backup":
             self._backup_result = result
-        else:
+        elif stage == "partition":
             self._partition_result = result
+        else:
+            self._handoff_result = result
         if error == "__cancelled__":
             self.stage_states[stage] = StageState.CANCELLED
             summary = "Simulation cancelled; no changes were applied."
@@ -275,6 +306,10 @@ class WindowsPreflightApp(App[int]):
                 StageState.SUCCEEDED if self._flow.apply_changes else StageState.SIMULATED
             )
             summary = result.summary
+            if stage == "partition" and self._flow.prepared_snapshot is not None:
+                self._snapshot = self._flow.prepared_snapshot
+            if stage == "handoff" and result.payload:
+                self._handoff_key = str(result.payload.get("integrity_key_hex", ""))
             self.notify(summary, severity="information")
         self._set_busy(False)
         self._cancel_requested.clear()
@@ -309,16 +344,36 @@ class WindowsPreflightApp(App[int]):
         self._set_busy(True)
         self._cancel_requested.clear()
         self.stage_states["partition"] = StageState.RUNNING
+        self.stage_states["handoff"] = StageState.IDLE
+        self._handoff_result = None
         self._render_summary()
         self._partition_worker()
+
+    def action_run_ventoy_step(self) -> None:
+        if self._busy:
+            self.notify("An operation is already running.", severity="warning")
+            return
+        required = StageState.SUCCEEDED if self._flow.apply_changes else StageState.SIMULATED
+        if self.stage_states["partition"] != required:
+            self.notify("Complete the current-mode partition stage first.", severity="warning")
+            return
+        if not all(
+            (self._config.plan_path, self._config.iso_path, self._config.release_manifest_path)
+        ) or self._config.usb_disk_number < 0:
+            self.notify("Plan, ISO, release manifest, and USB disk number are required.", severity="error")
+            return
+        self._set_busy(True)
+        self.stage_states["handoff"] = StageState.RUNNING
+        self._render_summary()
+        self._handoff_worker()
 
     def action_continue_flow(self) -> None:
         if self._busy:
             self.notify("Wait for the active operation to finish.", severity="warning")
             return
         required = StageState.SUCCEEDED if self._flow.apply_changes else StageState.SIMULATED
-        if self.stage_states["backup"] != required or self.stage_states["partition"] != required:
-            self.notify("Run backup and partition stages explicitly before continuing.", severity="warning")
+        if any(self.stage_states[name] != required for name in ("backup", "partition", "handoff")):
+            self.notify("Run backup, partition, and Ventoy/handoff stages before finishing.", severity="warning")
             return
         self._append_note("Windows Python preparation flow complete.")
         self.exit(EXIT_QUIT)
@@ -352,6 +407,12 @@ def run_windows_preflight_tui(
     target_free_gib: int = 120,
     backup_destination: str | None = None,
     backup_fallback_destination: str | None = None,
+    plan_path: str = "",
+    iso_path: str = "",
+    release_manifest_path: str = "",
+    usb_disk_number: int = -1,
+    usb_confirmation: str = "",
+    allow_ventoy_install: bool = False,
 ) -> int:
     app = WindowsPreflightApp(
         WindowsTuiConfig(
@@ -359,6 +420,12 @@ def run_windows_preflight_tui(
             target_free_gib=target_free_gib,
             backup_destination=backup_destination,
             backup_fallback_destination=backup_fallback_destination,
+            plan_path=plan_path,
+            iso_path=iso_path,
+            release_manifest_path=release_manifest_path,
+            usb_disk_number=usb_disk_number,
+            usb_confirmation=usb_confirmation,
+            allow_ventoy_install=allow_ventoy_install,
         )
     )
     result = app.run()

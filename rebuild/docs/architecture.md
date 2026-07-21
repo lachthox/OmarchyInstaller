@@ -21,7 +21,7 @@ It is the source of truth for:
 | --- | --- | --- | --- | --- | --- |
 | Layer 0 | Build/Release | Build, package, and publish artifacts and metadata | Repo source, build scripts, templates | ISO/EXE artifacts, checksums, release metadata, compatibility metadata | Embed runtime installer behavior in workflow YAML |
 | Layer 1 | Windows Preparation | Validate Windows state and prepare transport + handoff payload | User intent, system checks, shared schema contracts, release metadata | Deterministic handoff package and bootable transport | Perform Linux install operations |
-| Layer 2 | Arch Live Installer | Execute install from live environment using validated handoff | Handoff payload, disk model contracts, compatibility contract | Installed system, boot configuration, persisted first-boot inputs | Launch Omarchy directly from live install phase |
+| Layer 2 | Arch Live Installer | Execute install from live environment using validated handoff | Handoff payload, disk model contracts, compatibility contract | Installed system, boot configuration, persisted first-login inputs | Launch Omarchy directly from live install phase |
 | Layer 3 | Installed-System Protections | Run normal-user first-login and post-install boot safety checks | Release pairing, install markers, expected boot state | Controlled Omarchy bootstrap and ongoing boot health guardrails | Re-run install-time partitioning or Windows preparation steps |
 
 ## Ownership Boundaries
