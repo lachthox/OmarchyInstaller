@@ -295,6 +295,19 @@ def run_pipeline(args: argparse.Namespace) -> int:
     )
 
     if args.publish:
+        signing_evidence_path = bundle["exe_file"].parent / "windows-exe-signing.json"
+        if not signing_evidence_path.is_file():
+            raise RuntimeError(
+                "Windows EXE signing evidence is missing; refusing to publish an "
+                "unverified production artifact. Run rebuild.tools.sign_windows_exe first."
+            )
+        signing_evidence = read_json(signing_evidence_path)
+        if signing_evidence.get("production_signing") is not True or signing_evidence.get("signed") is not True:
+            raise RuntimeError(
+                "Windows EXE is not signed with a production Authenticode certificate "
+                "(production_signing must be true). Configure WINDOWS_CODESIGN_PFX_BASE64 / "
+                "WINDOWS_CODESIGN_PASSWORD secrets; production release remains blocked until then."
+            )
         repo = args.repo or os.environ.get("GITHUB_REPOSITORY", "")
         if not repo:
             raise RuntimeError("Repository not provided. Set --repo or GITHUB_REPOSITORY.")

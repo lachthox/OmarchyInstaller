@@ -2,9 +2,18 @@
 
 Status: publication remains blocked by later VM gates and Windows code signing.
 
-The VM job also requires an isolated console-automation driver configured as
-`OMARCHY_ISOLATED_VM_DRIVER`. Its evidence is schema-checked and bound to the
-exact ISO hash; missing, dry-run, partial, or mismatched evidence blocks publish.
+The VM job also requires a console-automation driver configured as
+`OMARCHY_ISOLATED_VM_DRIVER`. A real implementation of this contract,
+`rebuild/tools/vm_drivers/qemu_ovmf_driver.py`, has been built and proven
+against a disposable KVM-accelerated VM: it drives the real production TUI
+to a real, non-mocked install completion with verified Windows EFI
+preservation, but does not yet succeed at unlocking the installed system's
+LUKS2 volume after reboot (see `docs/test-evidence.md` Phase 21 and
+`docs/release-readiness.md`). Its evidence is schema-checked and bound to the
+exact ISO hash; missing, dry-run, partial, or mismatched evidence blocks
+publish. The `offline-iso-boot`, `vm-install-reboot`, and
+`recovery-rehearsal` jobs run on GitHub-hosted `ubuntu-latest` runners
+(public-repo `/dev/kvm` access), not self-hosted infrastructure.
 
 ## Immutable paired build
 

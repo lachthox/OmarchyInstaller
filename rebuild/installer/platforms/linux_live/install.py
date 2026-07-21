@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import subprocess
 import shutil
+import time
 from tempfile import gettempdir
 from typing import Any, Protocol
 from uuid import uuid4
@@ -37,9 +38,19 @@ class CommandRunner(Protocol):
 
 
 class SubprocessCommandRunner:
-    """Default command runner backed by subprocess."""
+    """Default command runner backed by subprocess.
+
+    `archinstall` itself allocates a pseudo-terminal internally (its
+    `SysCommandWorker` uses `pty.fork()`, and its `--silent` execution path
+    runs steps under `systemd-run --pty`); invoked with plain captured pipes
+    and no controlling terminal at all, that inner pty/systemd-run setup
+    fails immediately. Every other command in the install plan works fine
+    without one, so only the `archinstall` invocation is given a real pty.
+    """
 
     def run(self, command: list[str], input_text: str | None = None) -> subprocess.CompletedProcess[str]:
+        if command and command[0] == "archinstall":
+            return _run_with_pty(command)
         return subprocess.run(
             command,
             capture_output=True,
@@ -47,6 +58,39 @@ class SubprocessCommandRunner:
             input=input_text,
             check=False,
         )
+
+
+def _run_with_pty(command: list[str]) -> subprocess.CompletedProcess[str]:
+    import os
+    import pty
+
+    master_fd, slave_fd = pty.openpty()
+    try:
+        process = subprocess.Popen(  # noqa: S603 - command list is built internally, not from user input
+            command,
+            stdin=slave_fd,
+            stdout=slave_fd,
+            stderr=slave_fd,
+            close_fds=True,
+        )
+        os.close(slave_fd)
+        slave_fd = -1
+        output = bytearray()
+        while True:
+            try:
+                chunk = os.read(master_fd, 65536)
+            except OSError:
+                break
+            if not chunk:
+                break
+            output.extend(chunk)
+        returncode = process.wait()
+    finally:
+        if slave_fd != -1:
+            os.close(slave_fd)
+        os.close(master_fd)
+    text = output.decode("utf-8", errors="replace")
+    return subprocess.CompletedProcess(command, returncode, stdout=text, stderr="")
 
 
 @dataclass(frozen=True, slots=True)
@@ -275,7 +319,7 @@ def _assert_planned_extent_is_still_free(
 def _build_archinstall_config(
     plan: PlanContract,
 ) -> dict[str, Any]:
-    return build_archinstall_config(plan).model_dump(mode="json", by_alias=True)
+    return build_archinstall_config(plan).model_dump(mode="json", by_alias=True, exclude_none=True)
 
 
 def _build_install_command_plan(
@@ -347,6 +391,25 @@ def _build_install_command_plan(
                 "> /etc/mkinitcpio.conf.d/omarchy.conf",
             ],
             ["arch-chroot", mount_root, "mkinitcpio", "-P"],
+            [
+                "bash",
+                "-c",
+                "set -euo pipefail; "
+                f"luks_uuid=$(blkid -s UUID -o value {target_partition_path}); "
+                f"mkdir -p {mount_root}/boot/EFI/BOOT; "
+                f"cp {mount_root}/usr/share/limine/BOOTX64.EFI {mount_root}/boot/EFI/BOOT/BOOTX64.EFI; "
+                f"cat > {mount_root}/boot/limine.conf <<LIMINECONF\n"
+                "timeout: 5\n\n"
+                "/Arch Linux\n"
+                "    protocol: linux\n"
+                "    kernel_path: boot():/vmlinuz-linux\n"
+                f"    kernel_cmdline: rd.luks.name=$luks_uuid={crypt_mapper_name} "
+                f"root=/dev/mapper/{crypt_mapper_name} rootflags=subvol=@ rw quiet\n"
+                "    module_path: boot():/initramfs-linux.img\n"
+                "LIMINECONF\n"
+                f"arch-chroot {mount_root} efibootmgr --create --disk {target_disk_path} "
+                "--part 1 --loader '\\EFI\\BOOT\\BOOTX64.EFI' --label Limine || true",
+            ],
         ]
     )
     return commands
@@ -572,12 +635,29 @@ def execute_install_plan(
                             f"target finalization: {finalization.status}; marker={finalization.success_marker}"
                         )
                         target_finalization_status = finalization.status
+                    # Best-effort, not `_run_checked`: cleanup must be
+                    # idempotent against a target that's already unmounted
+                    # (e.g. finalize_target_system's own arch-chroot calls
+                    # transiently bind/unbind /dev, /proc, /sys, /run inside
+                    # the same tree) -- a harmless already-clean state must
+                    # never discard an otherwise fully successful install.
                     for mounted in reversed(mounted_targets):
-                        _run_checked(active_runner, ["umount", mounted])
-                        install_log_lines.append(f"CLEANUP: umount {mounted}")
+                        _run_cleanup_best_effort(active_runner, ["umount", mounted], install_log_lines)
                     mounted_targets.clear()
-                    _run_checked(active_runner, ["cryptsetup", "close", crypt_mapper_name])
-                    mapper_opened = False
+                    mapper_close_ok = False
+                    for attempt in range(5):
+                        completed = active_runner.run(["cryptsetup", "close", crypt_mapper_name])
+                        if completed.returncode == 0:
+                            install_log_lines.append(f"CLEANUP: cryptsetup close {crypt_mapper_name}")
+                            mapper_close_ok = True
+                            break
+                        if attempt < 4:
+                            time.sleep(1)
+                    if not mapper_close_ok:
+                        install_log_lines.append(
+                            f"CLEANUP-FAILED: cryptsetup close {crypt_mapper_name} -> device remained busy"
+                        )
+                    mapper_opened = not mapper_close_ok
                 except Exception as exc:
                     for mounted in reversed(mounted_targets):
                         _run_cleanup_best_effort(active_runner, ["umount", mounted], install_log_lines)

@@ -5,17 +5,22 @@ on:
     inputs:
       release_version:
         description: Semantic version (X.Y.Z)
-        required: true
+        required: false
         type: string
       tag:
         description: New immutable release tag
-        required: true
+        required: false
         type: string
       publish:
         description: Publish after every gate succeeds
         required: false
         default: false
         type: boolean
+  schedule:
+    # Checks for a new official Arch release daily. Every downstream job is
+    # skipped (see `detect-arch-release` outputs) unless the upstream ISO
+    # date actually changed, so this is a no-op run on every other day.
+    - cron: "17 3 * * *"
 
 permissions:
   contents: write
@@ -23,7 +28,44 @@ permissions:
   attestations: write
 
 jobs:
+  detect-arch-release:
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.decide.outputs.should_run }}
+      release_version: ${{ steps.decide.outputs.release_version }}
+      tag: ${{ steps.decide.outputs.tag }}
+      publish: ${{ steps.decide.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.12"}
+      - name: Check upstream Arch release
+        id: check
+        run: python rebuild/tools/check_arch_release.py
+      - name: Decide whether this run proceeds
+        id: decide
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "release_version=${{ inputs.release_version }}" >> "$GITHUB_OUTPUT"
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+            echo "publish=${{ inputs.publish }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ steps.check.outputs.changed }}" = "true" ]; then
+            version="0.0.${{ github.run_number }}"
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "release_version=$version" >> "$GITHUB_OUTPUT"
+            echo "tag=v$version-auto-${{ steps.check.outputs.latest_iso_version }}" >> "$GITHUB_OUTPUT"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "release_version=" >> "$GITHUB_OUTPUT"
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
+
   quality:
+    needs: [detect-arch-release]
+    if: needs.detect-arch-release.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -36,6 +78,8 @@ jobs:
       - run: python rebuild/tools/check_no_legacy_production_refs.py
 
   shell:
+    needs: [detect-arch-release]
+    if: needs.detect-arch-release.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -44,6 +88,8 @@ jobs:
       - run: bats rebuild/tests-shell
 
   contracts:
+    needs: [detect-arch-release]
+    if: needs.detect-arch-release.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     container: archlinux:base
     steps:
@@ -59,6 +105,8 @@ jobs:
       - run: python -m pytest rebuild/tests/test_archinstall_contract.py rebuild/tests/test_shared_contracts.py rebuild/tests/test_release_provenance.py -q
 
   first-login-pty:
+    needs: [detect-arch-release]
+    if: needs.detect-arch-release.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -68,6 +116,8 @@ jobs:
       - run: python -m pytest rebuild/tests/test_first_login.py -q
 
   build-iso:
+    needs: [detect-arch-release]
+    if: needs.detect-arch-release.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -75,11 +125,13 @@ jobs:
       - uses: actions/setup-python@v6
         with: {python-version: "3.12"}
       - run: sudo apt-get update -qq && sudo apt-get install -y xorriso squashfs-tools erofs-utils rsync curl
-      - run: python rebuild/tools/build_iso_pipeline.py --workspace "$GITHUB_WORKSPACE" --output-dir rebuild/dist/release-iso --work-dir rebuild/dist/release-iso-work --release-version "${{ inputs.release_version }}" --release-tag "${{ inputs.tag }}"
+      - run: python rebuild/tools/build_iso_pipeline.py --workspace "$GITHUB_WORKSPACE" --output-dir rebuild/dist/release-iso --work-dir rebuild/dist/release-iso-work --release-version "${{ needs.detect-arch-release.outputs.release_version }}" --release-tag "${{ needs.detect-arch-release.outputs.tag }}"
       - uses: actions/upload-artifact@v7
         with: {name: release-iso-output, path: rebuild/dist/release-iso, if-no-files-found: error}
 
   build-windows-exe:
+    needs: [detect-arch-release]
+    if: needs.detect-arch-release.outputs.should_run == 'true'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
@@ -88,32 +140,104 @@ jobs:
       - run: python -m pip install -r rebuild/requirements.txt -r rebuild/requirements-dev.txt pyinstaller
       - run: python -m pytest rebuild/tests/test_windows_launcher.py rebuild/tests/test_windows_flow.py rebuild/tests/test_windows_disk_safety.py rebuild/tests/test_windows_handoff.py -q
       - shell: pwsh
-        run: python rebuild/tools/build_windows_exe.py --workspace "$env:GITHUB_WORKSPACE" --output-dir rebuild/dist/release-windows-exe --work-dir rebuild/dist/release-windows-exe-work --release-version "${{ inputs.release_version }}" --release-tag "${{ inputs.tag }}"
+        run: python rebuild/tools/build_windows_exe.py --workspace "$env:GITHUB_WORKSPACE" --output-dir rebuild/dist/release-windows-exe --work-dir rebuild/dist/release-windows-exe-work --release-version "${{ needs.detect-arch-release.outputs.release_version }}" --release-tag "${{ needs.detect-arch-release.outputs.tag }}"
+      - name: Sign Windows EXE
+        shell: pwsh
+        env:
+          WINDOWS_CODESIGN_PFX_BASE64: ${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 }}
+          WINDOWS_CODESIGN_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_PASSWORD }}
+          WINDOWS_CODESIGN_TIMESTAMP_URL: ${{ secrets.WINDOWS_CODESIGN_TIMESTAMP_URL }}
+        run: |
+          $ephemeral = if ("$env:WINDOWS_CODESIGN_PFX_BASE64" -eq "") { "--ephemeral-test-cert" } else { "" }
+          python rebuild/tools/sign_windows_exe.py --exe rebuild/dist/release-windows-exe/OmarchyInstaller.exe --output rebuild/dist/release-windows-exe/windows-exe-signing.json $ephemeral
       - uses: actions/upload-artifact@v7
         with: {name: release-windows-exe-output, path: rebuild/dist/release-windows-exe, if-no-files-found: error}
 
-  vm-install-reboot:
-    runs-on: [self-hosted, linux, x64, omarchy-vm]
-    needs: [build-iso]
-    timeout-minutes: 120
+  offline-iso-boot:
+    # GitHub-hosted Linux runners on public repos expose /dev/kvm (hardware
+    # virtualization), which is all this job needs -- no self-hosted runner
+    # or externally provisioned infrastructure is required.
+    runs-on: ubuntu-latest
+    needs: [detect-arch-release, build-iso]
+    if: needs.detect-arch-release.outputs.should_run == 'true'
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.12", cache: pip}
+      - run: python -m pip install -r rebuild/requirements.txt -r rebuild/requirements-dev.txt
+      - name: Install QEMU/OVMF and disk-fixture tooling
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y qemu-system-x86 qemu-utils ovmf gdisk dosfstools ntfs-3g
+      - name: Verify KVM acceleration is available
+        run: |
+          test -e /dev/kvm
+          sudo chmod 666 /dev/kvm
+          command -v qemu-system-x86_64
+      - uses: actions/download-artifact@v8
+        with: {name: release-iso-output, path: rebuild/dist/vm-input}
+      - name: Boot the real ISO offline (no networking) and verify the live TUI starts
+        run: python -m rebuild.tools.vm_drivers.offline_boot_test --iso-glob 'rebuild/dist/vm-input/*-omarchy-auto.iso' --work-dir rebuild/dist/offline-boot-gate
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with: {name: offline-boot-evidence, path: rebuild/dist/offline-boot-gate, if-no-files-found: error}
+
+  vm-install-reboot:
+    runs-on: ubuntu-latest
+    needs: [detect-arch-release, build-iso]
+    if: needs.detect-arch-release.outputs.should_run == 'true'
+    timeout-minutes: 120
+    env:
+      OMARCHY_ISOLATED_VM_DRIVER: ${{ github.workspace }}/rebuild/tools/vm_drivers/qemu_ovmf_driver.py
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.12", cache: pip}
+      - run: python -m pip install -r rebuild/requirements.txt -r rebuild/requirements-dev.txt
+      - name: Install QEMU/OVMF and disk-fixture tooling
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y qemu-system-x86 qemu-utils ovmf gdisk dosfstools ntfs-3g
       - uses: actions/download-artifact@v8
         with: {name: release-iso-output, path: rebuild/dist/vm-input}
       - name: Verify isolated runner contract
         run: |
+          test -e /dev/kvm
+          sudo chmod 666 /dev/kvm
           command -v qemu-system-x86_64
           command -v qemu-img
           test -n "$OMARCHY_ISOLATED_VM_DRIVER"
+          chmod +x "$OMARCHY_ISOLATED_VM_DRIVER"
       - run: python -m rebuild.tools.vm_install_test --iso-glob 'rebuild/dist/vm-input/*-omarchy-auto.iso' --work-dir rebuild/dist/vm-gate --require-install --require-reboot
       - uses: actions/upload-artifact@v7
         if: always()
         with: {name: vm-install-evidence, path: rebuild/dist/vm-gate, if-no-files-found: error}
 
+  recovery-rehearsal:
+    runs-on: ubuntu-latest
+    needs: [detect-arch-release, vm-install-reboot]
+    if: needs.detect-arch-release.outputs.should_run == 'true'
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.12", cache: pip}
+      - run: python -m pip install -r rebuild/requirements.txt -r rebuild/requirements-dev.txt
+      - name: Install disk-fixture tooling
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y qemu-utils gdisk dosfstools ntfs-3g
+      - name: Damage the disposable GPT/EFI state and rehearse the documented recovery
+        run: python -m rebuild.tools.vm_drivers.recovery_rehearsal --work-dir rebuild/dist/vm-gate --output rebuild/dist/vm-gate/recovery-test.json
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with: {name: recovery-rehearsal-evidence, path: rebuild/dist/vm-gate/recovery-test.json, if-no-files-found: error}
+
   publish-release:
     runs-on: ubuntu-latest
-    needs: [quality, shell, contracts, first-login-pty, build-iso, build-windows-exe, vm-install-reboot]
-    if: ${{ inputs.publish }}
+    needs: [detect-arch-release, quality, shell, contracts, first-login-pty, build-iso, build-windows-exe, offline-iso-boot, vm-install-reboot, recovery-rehearsal]
+    if: needs.detect-arch-release.outputs.should_run == 'true' && needs.detect-arch-release.outputs.publish == 'true'
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -123,7 +247,7 @@ jobs:
       - uses: actions/download-artifact@v8
         with: {name: release-windows-exe-output, path: rebuild/dist/release-inputs/windows}
       - name: Validate pairing and construct metadata
-        run: python -m rebuild.tools.publish_release --workspace "$GITHUB_WORKSPACE" --artifact-dir rebuild/dist/release-inputs --output-dir rebuild/dist/release-output --tag "${{ inputs.tag }}"
+        run: python -m rebuild.tools.publish_release --workspace "$GITHUB_WORKSPACE" --artifact-dir rebuild/dist/release-inputs --output-dir rebuild/dist/release-output --tag "${{ needs.detect-arch-release.outputs.tag }}"
       - uses: actions/attest@v4
         with:
           subject-path: |
@@ -131,6 +255,15 @@ jobs:
             rebuild/dist/release-inputs/windows/OmarchyInstaller.exe
             rebuild/dist/release-output/*.json
             rebuild/dist/release-output/sha256sums.txt
-      - name: Publish only the validated non-dry-run pair
+      - name: Publish only the validated non-dry-run, signed pair
         env: {GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"}
-        run: python -m rebuild.tools.publish_release --workspace "$GITHUB_WORKSPACE" --artifact-dir rebuild/dist/release-inputs --output-dir rebuild/dist/release-output --tag "${{ inputs.tag }}" --repo "${{ github.repository }}" --publish --publish-only
+        run: python -m rebuild.tools.publish_release --workspace "$GITHUB_WORKSPACE" --artifact-dir rebuild/dist/release-inputs --output-dir rebuild/dist/release-output --tag "${{ needs.detect-arch-release.outputs.tag }}" --repo "${{ github.repository }}" --publish --publish-only
+      - name: Update the pinned Arch release marker (auto runs only)
+        if: github.event_name == 'schedule'
+        run: |
+          python rebuild/tools/check_arch_release.py --update-pinned-file
+          git config user.name "omarchy-release-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add rebuild/pinned-arch-release.json
+          git commit -m "chore: bump pinned Arch release after automated publish" || echo "no change to commit"
+          git push origin HEAD:${{ github.ref_name }} || echo "push skipped"

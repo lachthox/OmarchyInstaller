@@ -290,4 +290,158 @@ Date: 2026-07-21
   not be performed. Repository ledgers and reports are the durable handoff.
 - Independent ID reconciliation extracted 61 unique `CRIT`/`HIGH`/`MED` IDs
   from the audit and 61 from the ledger; `Compare-Object` returned no mismatch.
-  Ledger totals are 53 resolved and 8 verification-blocked.
+  Ledger totals were 53 resolved and 8 verification-blocked at that point.
+
+## Phase 21 evidence — real disposable VM execution
+
+This phase closes the environment gap the previous phase left open: it
+provisions a genuine, disposable, KVM-accelerated Linux environment and runs
+every previously-blocked gate against real artifacts through the real
+production code paths. No mocks, dry-runs, or fake command runners are used
+anywhere in this section.
+
+### Environment
+
+A disposable WSL2 distribution (`omarchy-vm-test`) was created by direct
+rootfs import specifically for this testing, with `.wslconfig` raised to
+12 GB RAM / 6 vCPU / 4 GB swap and `nestedVirtualization=true`. It had a real
+non-root Linux userland, `/dev/kvm` access, and no prior state. It was used
+only for this remediation work and is torn down afterward; it is not part of
+the shipped product or a claimed permanent CI runner.
+
+### Real ISO build (CRIT-06)
+
+`build-custom-iso.sh` was executed for real — not `--dry-run` — on the
+disposable host. It produced a bootable ISO plus `iso-build-manifest.json`
+and a `.sha256` sidecar. The manifest's recorded SHA256 was independently
+recomputed with `sha256sum` and matched exactly. Interrupting this same real
+build mid-run (HIGH-23) surfaced a genuine leaked mount caused by
+`gpg-agent` (spawned by `pacman-key`) holding `/dev` busy; this was fixed by
+adding an explicit `gpgconf --kill all` to the cleanup path, and a repeat
+interruption then cleaned up completely with no leaked mounts.
+
+### Real offline UEFI boot (CRIT-07)
+
+The real ISO from the previous step was booted with QEMU/OVMF
+(`-machine q35,accel=kvm`, `-cpu host`), no network attached. The live
+console reached `login:`, logged in as `root`, and confirmed the entrypoint
+runs correctly from an arbitrary `cwd` and that `archinstall`, `cryptsetup`,
+`mkfs.btrfs`, `efibootmgr`, and the rest of the required binary set are all
+present on the live image.
+
+### Real archinstall 4.4-1 upstream parser (CRIT-01)
+
+A real Arch Linux bootstrap chroot was built (the official bootstrap
+tarball, SHA256-verified). Inside it, `archinstall-4.4-1-any.pkg.tar.zst`
+was downloaded from the official Arch archive, SHA256-verified, and
+installed via `pacman -U`, confirmed as exactly `archinstall 4.4-1`. The
+generated pre-mounted config and separate credentials file were fed to the
+real, installed package's own `ArchConfig`/`ConfigurationOutput` parser
+(not a hand-rolled shape check), which accepted them.
+
+### Real disposable dual-boot disk fixture
+
+A raw disk image was built with a real GPT: an ESP (vfat), a synthetic
+"Windows" NTFS partition seeded with a placeholder `bootmgfw.efi` (its
+SHA256 recorded before any install activity), and free extent for Linux —
+matching `plan.template.json`'s documented disk geometry exactly, including
+querying the real `mkfs.vfat`-assigned filesystem UUID via `blkid` rather
+than a synthetic placeholder.
+
+### Real VM automation driver (CRIT-03 / `OMARCHY_ISOLATED_VM_DRIVER`)
+
+`rebuild/tools/vm_drivers/qemu_ovmf_driver.py` is a real implementation of
+the isolated-runner driver contract, not a stub. Against the disposable disk
+above, it:
+
+1. Booted the real ISO under QEMU/OVMF and logged in as `root` over a real
+   serial console (parsed with a `pyte` VT100 terminal emulator, since the
+   Textual TUI redraws via cursor-positioned partial updates that a naive
+   ANSI-strip cannot follow).
+2. Registered a synthetic "Windows Boot Manager" NVRAM entry via
+   `efibootmgr`, mirroring what real Windows setup does via `bcdboot` (this
+   cannot be pre-baked into a raw disk image — NVRAM only exists once real
+   firmware runs).
+3. Drove the **actual production Python TUI** (not a mock or fake runner):
+   entered the 64-hex handoff key, waited for real `Dependencies: PASS` /
+   `Handoff: PASS` / `Machine identity: PASS` preflight results, waited for
+   real network-readiness output, then entered a real LUKS passphrase and
+   user password and pressed the real apply-install action.
+4. The **real production install engine** ran to completion: real
+   `sgdisk`-backed partitioning, real `cryptsetup luksFormat`/`luksOpen`,
+   real `mkfs.btrfs` with `@`/`@home` subvolumes, a real (non-dry-run,
+   PTY-attached) `archinstall` invocation against the pre-mounted layout,
+   real manual Limine installation, and real `arch-chroot` target
+   finalization (provisioning `/opt/omarchy-venv`, `pip install
+   --require-hashes`, wrapper/unit deployment, atomic marker activation).
+   `install.log` and the run's `vm-evidence.json` record
+   `installation_completed: true`.
+5. After completion, the target was remounted (LUKS-unlocked, root +
+   ESP) purely for inspection: `/etc/fstab`, `/etc/crypttab.initramfs`, the
+   ESP's Limine files, and the *original* synthetic `bootmgfw.efi` were all
+   present, and the Windows EFI loader's SHA256 was **unchanged** from the
+   pre-install hash — `windows_efi_preserved: true`. This is genuine,
+   hash-verified Windows EFI preservation evidence (CRIT-05 / HIGH-18),
+   not a claim.
+
+### Real backup/restore recovery rehearsal (Task 11 / `docs/recovery.md`)
+
+`rebuild/tools/vm_drivers/recovery_rehearsal.py` built a fresh disposable
+disk, took a real `sgdisk --backup` GPT snapshot and a real per-file SHA256
+manifest of the ESP tree, **deliberately destroyed** the GPT
+(`sgdisk --zap-all`) and corrupted the Windows EFI loader in place, then
+restored from the backups and re-hashed. Result:
+`gpt_restored_clean: true`, `esp_restore_matches_backup: true`,
+`recovery_passed: true`. Output saved at
+`rebuild/dist/vm-gate-evidence/recovery-test.json`.
+
+### Real non-root first-login PTY run (Task 8 / CRIT-09)
+
+A genuine non-root user (`omarchytest`, uid 1001) was created on the
+disposable host. `rebuild/tests/test_first_login.py` was run under a real
+`script --quiet --return`-allocated PTY (not a synthetic/faked terminal).
+All 10 tests passed, including
+`test_pseudo_terminal_preserves_installer_output`, which is
+platform-gated off on Windows and was previously only a CI-only claim.
+Transcript saved at
+`rebuild/dist/vm-gate-evidence/first-login-pty-transcript.log`.
+
+### What is genuinely NOT resolved: post-reboot LUKS unlock
+
+The one sub-claim that could not be closed: booting the *installed* disk
+(ISO detached) and unlocking its LUKS2 volume through the automation
+console. Six independent fix attempts were made — varying the line-ending
+sent to the passphrase prompt (`\r`, `\n`, `\r\n`), slowing down every send
+during the install phase, switching QEMU's disk cache mode from
+`cache=unsafe` to `cache=writeback` (so guest flush/FUA requests are
+actually honored across separate QEMU process invocations of the same
+image), and building a 12-attempt retry loop that waits only for `login:`
+rather than misfiring on the ambient "passphrase for" text that persists in
+scrollback. Every attempt produced the same symptom: the console echoes the
+correct number of dots for the passphrase, then re-displays the identical
+prompt, consistent with `systemd-ask-password` in the initramfs not
+receiving the input as expected input over this particular
+serial-console/PTY plumbing. This is an automation/tooling gap in driving
+`systemd-ask-password` over a raw serial console, not evidence of an
+incorrect installed system — the pre-reboot remount inspection above
+independently confirms `/etc/crypttab.initramfs`, `mkinitcpio`'s
+`sd-encrypt` hook, and the LUKS header are all present and correctly
+configured. **No reboot/login pass is claimed.** CRIT-03, CRIT-05,
+HIGH-32, and MED-15 remain `Verification blocked` for exactly this reason.
+
+### CI graph changes
+
+The `offline-iso-boot`, `vm-install-reboot`, and `recovery-rehearsal` jobs
+in `.github/workflows/rebuild-release.yml` previously targeted
+`runs-on: [self-hosted, linux, x64, omarchy-vm]` — a runner label that was
+never registered against this repository, so triggering the workflow would
+only ever have hung waiting for a runner that does not exist, never
+producing evidence. They were switched to `runs-on: ubuntu-latest`:
+GitHub-hosted Linux runners on public repositories expose `/dev/kvm`, which
+is the only real hardware requirement these jobs have, and the repository
+is public. Package installation (`qemu-system-x86`, `qemu-utils`, `ovmf`,
+`gdisk`, `dosfstools`, `ntfs-3g`) was added to each job since a hosted
+runner is not pre-provisioned the way a dedicated self-hosted box would be.
+This has not yet been observed running green in GitHub's own infrastructure
+at the time of writing — see `docs/release-readiness.md` for exactly what
+that leaves open.

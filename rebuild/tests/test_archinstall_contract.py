@@ -29,17 +29,22 @@ def plan() -> PlanContract:
 
 
 def test_pinned_44_config_is_premounted_and_not_internal_plan() -> None:
-    config = build_archinstall_config(plan()).model_dump(mode="json", by_alias=True)
+    config = build_archinstall_config(plan()).model_dump(mode="json", by_alias=True, exclude_none=True)
     assert config["version"] == ARCHINSTALL_VERSION == "4.4"
     assert config["disk_config"] == {
         "config_type": "pre_mounted_config",
         "mountpoint": "/mnt/archinstall",
     }
-    assert config["bootloader_config"] == {
-        "bootloader": "Limine",
-        "uki": False,
-        "removable": False,
-    }
+    # archinstall 4.4's pre-mounted-config bootloader auto-detection cannot
+    # resolve a LUKS2-encrypted root (it only inspects a partition's own
+    # lsblk mountpoints, never a dm-crypt mapped child's), so `add_bootloader`
+    # always raises "Could not detect root" in this mode. Its own --config
+    # parser also rejects the enum's "No bootloader" sentinel as an invalid
+    # *input* value, so the field is omitted entirely (not merely set to
+    # that sentinel) -- only an absent key reaches guided.py's runtime check
+    # as None and skips add_bootloader; the install engine installs Limine
+    # itself afterward.
+    assert "bootloader_config" not in config
     assert "disk_identity" not in config
     assert "prepared_free_space_range" not in config
     assert "encryption_password" not in json.dumps(config)
@@ -50,6 +55,8 @@ def test_pinned_44_config_is_premounted_and_not_internal_plan() -> None:
         "git",
         "curl",
         "base-devel",
+        "limine",
+        "efibootmgr",
     }
 
 
@@ -70,7 +77,7 @@ def test_serialized_files_pass_same_semantic_models(tmp_path: Path) -> None:
     config_path = tmp_path / "config.json"
     credentials_path = tmp_path / "credentials.json"
     config_path.write_text(
-        build_archinstall_config(plan()).model_dump_json(by_alias=True), encoding="utf-8"
+        build_archinstall_config(plan()).model_dump_json(by_alias=True, exclude_none=True), encoding="utf-8"
     )
     credentials_path.write_text(
         build_archinstall_credentials(
@@ -85,7 +92,9 @@ def test_generated_files_are_consumed_by_pinned_upstream_parser(tmp_path: Path) 
     pytest.importorskip("archinstall")
     config_path = tmp_path / "config.json"
     credentials_path = tmp_path / "credentials.json"
-    config_path.write_text(build_archinstall_config(plan()).model_dump_json(by_alias=True), encoding="utf-8")
+    config_path.write_text(
+        build_archinstall_config(plan()).model_dump_json(by_alias=True, exclude_none=True), encoding="utf-8"
+    )
     credentials_path.write_text(
         build_archinstall_credentials(
             plan(), user_password_hash="$6$test$abcdefghijklmnopqrstuvwxyz0123456789"

@@ -396,7 +396,7 @@ class LiveInstallerApp(App[int]):
         yield Header(show_clock=True)
         with Vertical(id="body"):
             yield Static("Omarchy Arch Live Installer (Python TUI)", id="title")
-            yield Static("", id="stages")
+            yield Static("", id="stages", markup=False)
             yield Input(placeholder="One-time handoff key (64 hex characters)", password=True, id="handoff-key")
             yield Button("Validate handoff", id="validate-handoff")
             yield Static("", id="content")

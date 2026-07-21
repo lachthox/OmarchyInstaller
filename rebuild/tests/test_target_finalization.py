@@ -81,11 +81,26 @@ def test_finalization_is_atomic_and_machine_specific(tmp_path: Path) -> None:
     assert (target / "var/lib/omarchy/install/base-install-complete.json").is_file()
     assert (target / "var/lib/omarchy/install/target-finalization-complete.json").is_file()
     assert not (target / "var/lib/omarchy/install/omarchy-complete.json").exists()
-    assert (target / "etc/systemd/system/multi-user.target.wants/omarchy-boot-guardian.service").exists()
+    # The symlink target is an absolute path meant to resolve once this
+    # directory becomes the real root (post arch-chroot/boot), so `.exists()`
+    # here would follow it against the *host* filesystem and always report
+    # False from outside a chroot; `.is_symlink()` verifies creation without
+    # requiring host-relative resolution.
+    assert (target / "etc/systemd/system/multi-user.target.wants/omarchy-boot-guardian.service").is_symlink()
     assert not (target / "etc/systemd/system/multi-user.target.wants/omarchy-firstboot.service").exists()
     assert (target / "etc/profile.d/omarchy-first-login.sh").is_file()
     assert any(command[:2] == ["systemd-analyze", "verify"] for command in runner.commands)
-    assert any("PYTHONPATH=/opt/omarchy-installer" in command for command in runner.commands)
+    # The target's own system Python has none of pydantic/rich/textual/mcp,
+    # so finalize builds the identical locked venv the ISO itself uses
+    # (mirroring build-custom-iso.sh's `/opt/omarchy-venv` provisioning)
+    # before importing the deployed installer package inside the chroot.
+    assert any("python -m venv /opt/omarchy-venv" in " ".join(command) for command in runner.commands)
+    assert any(
+        "pip install --require-hashes" in " ".join(command) and "requirements.lock" in " ".join(command)
+        for command in runner.commands
+    )
+    assert any(command[:3] == ["arch-chroot", str(target), "/opt/omarchy-venv/bin/python"] for command in runner.commands)
+    assert (target / "opt/omarchy-installer/requirements.lock").is_file()
 
 
 def test_missing_windows_loader_blocks_activation_and_marker(tmp_path: Path) -> None:

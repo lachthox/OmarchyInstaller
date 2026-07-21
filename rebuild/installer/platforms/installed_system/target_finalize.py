@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import py_compile
+import re
 import shutil
 import subprocess
 from typing import Any, Protocol
@@ -72,10 +73,23 @@ class TargetFinalizationResult:
 
 
 def _target(root: Path, absolute: str | Path) -> Path:
+    """Join `absolute` under `root`, rejecting `..`-style escapes.
+
+    Deliberately lexical (`os.path.normpath`), not `Path.resolve()`: this
+    tree legitimately contains symlinks with absolute targets (every
+    systemd-enabled unit under `multi-user.target.wants/` is one), and
+    those are only resolvable once `root` becomes the real root at boot.
+    Fully resolving them here follows the link against *this* process's
+    real filesystem instead and every such path would wrongly appear to
+    "escape" -- the traversal check only needs to catch attacker-controlled
+    `..` segments in the requested path, not dereference what's already on
+    disk.
+    """
+    root_resolved = root.resolve()
     relative = Path(str(absolute).lstrip("/\\"))
-    candidate = (root / relative).resolve()
+    candidate = Path(os.path.normpath(root_resolved / relative))
     try:
-        candidate.relative_to(root.resolve())
+        candidate.relative_to(root_resolved)
     except ValueError as exc:
         raise TargetFinalizationError(f"Target path escapes mounted root: {absolute}") from exc
     return candidate
@@ -111,10 +125,15 @@ def deploy_target_assets(
     if not installer_source.is_dir() or not assets.is_dir():
         raise TargetFinalizationError(f"Installed-system source assets are incomplete: {rebuild_root}")
 
+    requirements_lock = rebuild_root / "requirements.lock"
+    if not requirements_lock.is_file():
+        raise TargetFinalizationError(f"Installed-system source assets are incomplete: {rebuild_root}")
+
     runtime = _target(root, RUNTIME_ROOT)
     if runtime.exists():
         shutil.rmtree(runtime)
     shutil.copytree(installer_source, runtime / "installer", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    shutil.copy2(requirements_lock, runtime / "requirements.lock")
     for path in (runtime, runtime / "installer"):
         path.chmod(0o755)
 
@@ -202,8 +221,14 @@ def validate_target_root(target_root: str | Path, machine: TargetMachineState) -
     _require(any(_target(root, "/boot").glob("initramfs-*.img")), "Target initramfs is missing", validated, "initramfs")
 
     fstab = _target(root, "/etc/fstab").read_text(encoding="utf-8") if _target(root, "/etc/fstab").is_file() else ""
-    _require("btrfs" in fstab and " / " in fstab, "fstab lacks the Btrfs root mount", validated, "fstab-root")
-    _require(" /boot " in fstab, "fstab lacks the EFI /boot mount", validated, "fstab-efi")
+    # genfstab separates columns with tabs and right-pads each field with
+    # spaces for alignment (e.g. "UUID=...\t/         \tbtrfs     \t..."), so
+    # a literal " / " substring check never matches -- the character before
+    # the mountpoint is a tab, not a space. Match on any whitespace instead.
+    fstab_root_mount = re.search(r"[ \t]/[ \t]", fstab) is not None
+    fstab_boot_mount = re.search(r"[ \t]/boot[ \t]", fstab) is not None
+    _require("btrfs" in fstab and fstab_root_mount, "fstab lacks the Btrfs root mount", validated, "fstab-root")
+    _require(fstab_boot_mount, "fstab lacks the EFI /boot mount", validated, "fstab-efi")
     crypttab_path = _target(root, "/etc/crypttab.initramfs")
     crypttab = crypttab_path.read_text(encoding="utf-8") if crypttab_path.is_file() else ""
     _require(machine.mapper_name in crypttab and machine.luks_uuid in crypttab, "crypttab.initramfs does not match LUKS state", validated, "crypttab")
@@ -281,7 +306,36 @@ def finalize_target_system(
     deployed = deploy_target_assets(root, machine, source_root=source_root)
     validated = validate_target_root(root, machine)
     active_runner = runner or SubprocessCommandRunner()
-    _run_checked(active_runner, ["arch-chroot", str(root), "/usr/bin/env", "PYTHONPATH=/opt/omarchy-installer", "/usr/bin/python", "-c", "import installer.platforms.installed_system.first_login; import installer.platforms.installed_system.boot_guardian"])
+    # The target's system Python (from the pinned `python` package) has none
+    # of pydantic/rich/textual/mcp -- only the live ISO's own
+    # `/opt/omarchy-venv` does. The deployed first-login/boot-guardian
+    # wrappers need the identical locked runtime to actually import, so
+    # build the same venv on the installed system, mirroring how the ISO's
+    # own build-custom-iso.sh provisions `/opt/omarchy-venv`.
+    _run_checked(
+        active_runner,
+        [
+            "arch-chroot",
+            str(root),
+            "/usr/bin/bash",
+            "-c",
+            "python -m venv /opt/omarchy-venv && "
+            "/opt/omarchy-venv/bin/python -m pip install --require-hashes "
+            "-r /opt/omarchy-installer/requirements.lock && "
+            "site_packages=\"$(/opt/omarchy-venv/bin/python -c 'import site; print(site.getsitepackages()[0])')\" && "
+            "printf '/opt/omarchy-installer\\n' > \"$site_packages/omarchy-installer.pth\"",
+        ],
+    )
+    _run_checked(
+        active_runner,
+        [
+            "arch-chroot",
+            str(root),
+            "/opt/omarchy-venv/bin/python",
+            "-c",
+            "import installer.platforms.installed_system.first_login; import installer.platforms.installed_system.boot_guardian",
+        ],
+    )
     _run_checked(active_runner, ["systemd-analyze", "verify", f"--root={root}", "omarchy-boot-guardian.service"])
     boot_summary = summarize_boot_policy(
         "omarchy-post-install",

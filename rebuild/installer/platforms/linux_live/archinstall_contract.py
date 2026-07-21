@@ -45,7 +45,19 @@ class Archinstall44Config(StrictModel):
     script: Literal["guided"] = "guided"
     archinstall_language: Literal["English"] = Field(default="English", alias="archinstall-language")
     disk_config: PreMountedDiskConfig
-    bootloader_config: BootloaderConfig
+    # Deliberately absent, not merely disabled: archinstall 4.4's own
+    # --config parser rejects "No bootloader" as an invalid *input* value
+    # (it enumerates only Systemd-boot/Grub/Efistub/Limine/Refind), even
+    # though `Bootloader.NO_BOOTLOADER` is a real enum member guided.py
+    # checks for at runtime. Only an *absent* key reaches that runtime check
+    # as `None` and skips `add_bootloader()` -- which is required here
+    # because archinstall's pre-mounted-config auto-detection
+    # (`detect_pre_mounted_mods`) only resolves a partition's own `lsblk`
+    # mountpoints, never a dm-crypt mapped child device's, so it can never
+    # find our LUKS2-encrypted root and `add_bootloader()` always raises
+    # "Could not detect root". The install engine installs Limine itself
+    # afterward, using the identity it already has.
+    bootloader_config: BootloaderConfig | None = None
     hostname: str
     kernels: tuple[Literal["linux"], ...] = ("linux",)
     locale_config: LocaleConfig
@@ -88,7 +100,6 @@ def build_archinstall_config(plan: PlanContract) -> Archinstall44Config:
                 "config_type": "pre_mounted_config",
                 "mountpoint": plan.user_choices.filesystem.root_mountpoint,
             },
-            "bootloader_config": {"bootloader": "Limine", "uki": False, "removable": False},
             "hostname": plan.user_choices.hostname,
             "kernels": ("linux",),
             "locale_config": {
@@ -106,6 +117,8 @@ def build_archinstall_config(plan: PlanContract) -> Archinstall44Config:
                 "git",
                 "curl",
                 "base-devel",
+                "limine",
+                "efibootmgr",
             ),
             "services": ("NetworkManager",),
             "timezone": plan.user_choices.timezone,

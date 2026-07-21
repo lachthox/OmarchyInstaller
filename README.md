@@ -29,6 +29,10 @@ The only intended live entrypoint is the installed Python package:
 
 That packaged runtime and the complete installation flow are still undergoing
 acceptance work. There is currently no approved real-hardware quick start.
+A real, non-dry-run ISO build and disposable UEFI install through this exact
+entrypoint have been verified in a disposable KVM-accelerated VM (see
+`docs/test-evidence.md`); what remains open is verifying login after a
+reboot of the installed system, tracked in `docs/release-readiness.md`.
 
 ## Retired implementations
 

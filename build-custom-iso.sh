@@ -293,6 +293,11 @@ ensure_live_runtime() {
     done
     cd /
     /opt/omarchy-venv/bin/python -c "import installer.main"
+
+    # pacman-key/pacman spawn a gpg-agent that keeps file descriptors open
+    # under this chroot; left running, it pins the bind-mounted /dev busy
+    # and the later unmount fails with "target is busy".
+    gpgconf --homedir /etc/pacman.d/gnupg --kill all >/dev/null 2>&1 || true
   ' || install_rc=$?
 
   if [[ "$install_rc" -eq 0 ]]; then

@@ -32,3 +32,14 @@ machine-state record.
 Record VM firmware, disk fixture hashes, release artifact hashes, command logs,
 reboot results, Windows EFI preservation, and restore verification in
 `docs/test-evidence.md`. A unit test or dry run is not recovery evidence.
+
+This rehearsal has been performed for real on a disposable disk:
+`rebuild/tools/vm_drivers/recovery_rehearsal.py` took a real `sgdisk --backup`
+GPT snapshot and a per-file SHA256 manifest of the ESP tree, deliberately
+zapped the GPT and corrupted the Windows EFI loader, then restored from the
+backups and re-verified every hash matched
+(`recovery_passed: true`, `rebuild/dist/vm-gate-evidence/recovery-test.json`).
+Windows EFI preservation across a real install (not just this rehearsal) was
+separately verified byte-for-byte via SHA256 — see `docs/test-evidence.md`
+Phase 21. The one recovery-adjacent step not yet verified is booting the
+*installed* disk and unlocking it post-reboot, which remains open.

@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PYTHON_BIN="${PYTHON_BIN:-/usr/bin/python}"
+# The target's system Python has none of pydantic/rich/textual/mcp; finalize
+# builds a locked venv at /opt/omarchy-venv (mirroring the ISO's own
+# provisioning) specifically so this wrapper can import the installer package.
+PYTHON_BIN="${PYTHON_BIN:-/opt/omarchy-venv/bin/python}"
 RUNTIME_ROOT="${OMARCHY_RUNTIME_ROOT:-/opt/omarchy-installer}"
 export PYTHONPATH="$RUNTIME_ROOT${PYTHONPATH:+:$PYTHONPATH}"
 MODE="check"

@@ -1,15 +1,24 @@
 # Final remediation report
 
-Date: 2026-07-21  
-Branch: `fix/python-tui-full-remediation`  
+Date: 2026-07-22
+Branch: `fix/python-tui-full-remediation`
 Baseline: `08737764721d915921af4fa8a82015d3ea975fbd`
 
 ## Decision
 
 The repository has one Python implementation and one gated release graph, but
-release remains **blocked**. The current host cannot build/boot the real ISO or
-run the mandatory disposable UEFI install, reboot, Windows-preservation, and
-recovery test. No real-hardware use is approved.
+release remains **blocked**. A disposable, KVM-accelerated Linux environment
+was provisioned specifically to close the environment gap the prior phase
+left open: the real ISO now builds and boots for real, the real production
+TUI drives a real disposable UEFI install through to completion (real GPT,
+LUKS2, Btrfs, archinstall 4.4-1, Limine, and target finalization), Windows
+EFI preservation is verified byte-for-byte, and the backup/restore recovery
+rehearsal passes for real. What remains genuinely unresolved is narrower and
+more specific than before: unlocking the LUKS2 volume on the *installed*
+disk through serial-console automation after reboot has not succeeded after
+six independent attempts, and a green run of the CI VM jobs (now retargeted
+at GitHub-hosted, KVM-capable runners) has not yet been observed. No
+real-hardware use is approved until both close.
 
 ## Before and after
 
@@ -53,19 +62,37 @@ and fail-closed publication gates cover the supported path.
 - Phase 20 connected the live TUI apply action to the production engine, added
   Windows Ventoy/handoff completion, added the fail-closed VM evidence harness,
   reconciled all findings, and reran every locally available gate.
+- Phase 21 built a disposable KVM-accelerated Linux environment and used it to
+  run every previously environment-blocked gate for real: the exact pinned
+  archinstall 4.4-1 upstream parser, a real non-dry-run ISO build (and a real
+  interrupted-build cleanup bug found and fixed), a real OVMF offline boot, a
+  real disposable dual-boot GPT/LUKS2/Btrfs install driven through the real
+  production TUI with verified Windows EFI preservation, a real non-root PTY
+  first-login run, and a real backup/damage/restore recovery rehearsal. It
+  also retargeted the CI VM jobs from an unregistered self-hosted runner label
+  onto GitHub-hosted runners that can actually execute them, and pushed this
+  branch to trigger a real run.
 
 ## Finding result
 
-The ledger contains all 61 audit IDs: 53 resolved and 8 verification-blocked.
-No finding is silently waived. See `docs/remediation-status.md`.
+The ledger contains all 61 audit IDs: 57 resolved and 4 verification-blocked
+(`CRIT-03`, `CRIT-05`, `HIGH-32`, `MED-15` — all four share the single root
+cause described below). No finding is silently waived. See
+`docs/remediation-status.md`.
 
 ## Limitations and next action
 
-An isolated Linux runner must provide QEMU, OVMF, `qemu-img`, Bats, the pinned
-archinstall package, a non-dry-run ISO, and an approved console-automation driver
-through `OMARCHY_ISOLATED_VM_DRIVER`. Run the release workflow and retain its VM
-evidence. Then perform and document the restore rehearsal. Separately, configure
-managed Authenticode signing credentials and verification for the Windows EXE.
+The real disposable install completes successfully and is verified correct
+by remounting the target, but the post-reboot LUKS2 unlock could not be
+driven through the serial-console automation after six independent fix
+attempts (line-ending variations, slower typing, `cache=writeback` instead
+of `cache=unsafe`, and a corrected retry loop) — this is an
+automation/tooling gap in driving `systemd-ask-password` over a raw serial
+console, not an installed-system defect. Separately, the retargeted CI VM
+jobs have been pushed and triggered but a green run has not yet been
+observed; re-check the Actions run before treating HIGH-32/MED-15 as
+closed. Configure managed Authenticode signing credentials for the Windows
+EXE before any production (non-ephemeral-cert) release.
 
 Recovery procedure: `docs/recovery.md`. Detailed commands and observed results:
 `docs/test-evidence.md`. Release decision: `docs/release-readiness.md`.
