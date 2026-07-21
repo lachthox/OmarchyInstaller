@@ -50,7 +50,14 @@ def test_run_backup_success(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert result.ok is True
     assert "DRY-RUN" in result.summary
-    assert Path(str(calls["primary_destination"])) == Path("E:/backup")
+    # `E:/backup` is a Windows drive-letter path. It is already absolute in
+    # Windows terms, so `_resolve_backup_destination` (via `pathlib.Path`)
+    # returns it unchanged on a real Windows host. On a POSIX CI host,
+    # `pathlib.Path` has no concept of drive letters and treats it as
+    # relative, so `.resolve()` legitimately prepends the CWD there instead.
+    # Comparing the tail keeps this assertion meaningful and host-agnostic.
+    destination = str(calls["primary_destination"]).replace("\\", "/")
+    assert destination.endswith("E:/backup")
     assert calls["dry_run"] is True
 
 
