@@ -14,10 +14,13 @@ test success as installation success.
 - Packaged Windows launcher no longer bundles, exposes, or falls back to the
   legacy PowerShell installer.
 - Launcher failure behavior has focused automated coverage.
+- Windows preflight, backup, and partition stages execute in Textual workers;
+  simulation, failure, blocking, stale-state invalidation, and cancellation have
+  Pilot coverage at 80x24.
 
 ## Active work
 
-- Phase 2: strict shared contracts and validated templates.
+- Phase 5: Windows identity, backup, and contiguous shrink planning.
 
 ## Known blockers
 

@@ -46,3 +46,12 @@ Date: 2026-07-21
   replace failure, cleanup on success/handled failure/exception/cancellation,
   cleanup failure, interrupted-journal recovery, simulation state, allowlists,
   secret redaction, inherited-terminal enforcement, and pre-start cancellation.
+
+## Phase 4 evidence
+
+- `pytest -q rebuild/tests/test_windows_tui_pilot.py`: 5 passed.
+- Focused Ruff and mypy for the Windows Textual app: passed.
+- Textual Pilot evidence covers 80x24 layout, keyboard/Vim/Tab navigation,
+  worker-backed refresh, fail-closed disk snapshot errors, a deliberately blocked
+  long-running backup while the UI continues handling keys, stale-result
+  invalidation, and cancellation reported as `cancelled` rather than success.
