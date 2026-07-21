@@ -12,7 +12,10 @@ except ImportError as exc:  # pragma: no cover - exercised only when dependency 
         "Missing dependency 'mcp'. Install project-local dependencies from rebuild/requirements.txt or rebuild/pyproject.toml."
     ) from exc
 
-from tracker_store import DEFAULT_LEASE_MINUTES, StoreError, TrackerStore, normalize_assignee
+try:
+    from .tracker_store import DEFAULT_LEASE_MINUTES, StoreError, TrackerStore, normalize_assignee
+except ImportError:  # pragma: no cover - direct script launch compatibility
+    from tracker_store import DEFAULT_LEASE_MINUTES, StoreError, TrackerStore, normalize_assignee  # type: ignore[import-not-found,no-redef]
 
 
 store = TrackerStore()

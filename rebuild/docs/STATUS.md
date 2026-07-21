@@ -29,10 +29,13 @@ test success as installation success.
 - Boot preservation, post-install finalization, and installed guardian contracts
   are separate; expected machine state and a `findmnt`-verified `/boot` ESP are
   mandatory, and repair is limited to unambiguous boot-order drift.
+- Task orchestration now uses crash-released OS locks, inspectable owner
+  metadata, atomic writes, locked lease purges, strict record validation, and a
+  replayable journal for tracker/state transactions.
 
 ## Active work
 
-- Phase 16: task orchestrator atomicity and crash-safe locking.
+- Phase 17: replace obsolete tests and make the full test gate authoritative.
 
 ## Known blockers
 

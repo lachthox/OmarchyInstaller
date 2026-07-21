@@ -202,3 +202,18 @@ Date: 2026-07-21
 - A healthy/repaired guardian writes the boot-policy marker atomically. Overall
   completion is written only when the independent Omarchy marker also exists.
 - Full local suite: 119 passed, 1 platform-gated Unix PTY test skipped.
+
+## Phase 16 evidence
+
+- `test_task_orchestrator_store.py`: 10 passed, covering an actually terminated
+  lock-owning subprocess, stale owner metadata, six concurrent claimants with
+  one winner, persisted lease expiry, malformed task records, corrupt state
+  preservation, and replay after interruption between tracker/state writes.
+- Lock metadata records host, PID, process-start identity, and timestamp while
+  OS locking provides automatic crash release. JSON uses same-directory temp
+  files, flush/fsync, and atomic replace.
+- Server package launch uses a relative import and retains a tested direct-script
+  compatibility fallback. Focused Ruff and mypy gates pass.
+- Full suite: 129 passed, 1 Windows-side PTY skip. Full-tree mypy now reaches
+  Phase 17 test typing and reports test-only fallback/negative-fixture issues;
+  production orchestrator mypy is clean.

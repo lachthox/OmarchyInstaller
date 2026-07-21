@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import json
+import importlib
 import os
+import socket
+import tempfile
+import threading
 import time
 import calendar
 from collections import Counter
@@ -9,6 +13,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
+
+_locking: Any = importlib.import_module("msvcrt" if os.name == "nt" else "fcntl")
 
 
 STATE_SCHEMA_VERSION = "1.0.0"
@@ -33,34 +39,72 @@ class FileLock:
     def __post_init__(self) -> None:
         self.lock_path = self.path
         self._fd: int | None = None
+        self._thread_lock = _thread_lock_for(self.lock_path)
 
     def __enter__(self) -> "FileLock":
-        deadline = time.time() + self.timeout_seconds
+        deadline = time.monotonic() + self.timeout_seconds
+        if not self._thread_lock.acquire(timeout=self.timeout_seconds):
+            raise StoreError(f"Timed out acquiring in-process lock: {self.lock_path}")
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        self._fd = os.open(str(self.lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+        if os.fstat(self._fd).st_size == 0:
+            os.write(self._fd, b"\0")
+            os.fsync(self._fd)
         while True:
             try:
-                self._fd = os.open(
-                    str(self.lock_path),
-                    os.O_CREAT | os.O_EXCL | os.O_WRONLY,
-                )
-                payload = {
-                    "pid": os.getpid(),
-                    "created_at": _utc_now(),
-                }
-                os.write(self._fd, json.dumps(payload).encode("utf-8"))
-                return self
-            except FileExistsError:
-                if time.time() >= deadline:
-                    raise StoreError(f"Timed out acquiring lock: {self.lock_path}")
+                if os.name == "nt":
+                    os.lseek(self._fd, 0, os.SEEK_SET)
+                    _locking.locking(self._fd, _locking.LK_NBLCK, 1)
+                else:  # pragma: no cover - exercised on Linux CI
+                    _locking.flock(self._fd, _locking.LOCK_EX | _locking.LOCK_NB)
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    os.close(self._fd)
+                    self._fd = None
+                    self._thread_lock.release()
+                    raise StoreError(f"Timed out acquiring OS lock: {self.lock_path}")
                 time.sleep(self.poll_interval_seconds)
+        payload = {
+            "host": socket.gethostname(),
+            "pid": os.getpid(),
+            "process_start_identity": _process_start_identity(os.getpid()),
+            "lock_created_at": _utc_now(),
+        }
+        os.ftruncate(self._fd, 0)
+        os.lseek(self._fd, 0, os.SEEK_SET)
+        os.write(self._fd, json.dumps(payload, sort_keys=True).encode("utf-8"))
+        os.fsync(self._fd)
+        return self
 
     def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
         if self._fd is not None:
+            if os.name == "nt":
+                os.lseek(self._fd, 0, os.SEEK_SET)
+                _locking.locking(self._fd, _locking.LK_UNLCK, 1)
+            else:  # pragma: no cover - exercised on Linux CI
+                _locking.flock(self._fd, _locking.LOCK_UN)
             os.close(self._fd)
             self._fd = None
-        try:
-            self.lock_path.unlink()
-        except FileNotFoundError:
-            pass
+        self._thread_lock.release()
+
+
+_THREAD_LOCKS: dict[str, threading.Lock] = {}
+_THREAD_LOCKS_GUARD = threading.Lock()
+
+
+def _thread_lock_for(path: Path) -> threading.Lock:
+    key = str(path.resolve())
+    with _THREAD_LOCKS_GUARD:
+        return _THREAD_LOCKS.setdefault(key, threading.Lock())
+
+
+def _process_start_identity(pid: int) -> str:
+    proc_stat = Path(f"/proc/{pid}/stat")
+    try:
+        return f"proc:{proc_stat.read_text(encoding='utf-8').split()[21]}"
+    except (OSError, IndexError):
+        return f"pid:{pid}:host:{socket.gethostname()}"
 
 
 class TrackerStore:
@@ -85,13 +129,16 @@ class TrackerStore:
             ).resolve()
         )
         self.lock_path = self.state_path.with_suffix(".lock")
+        self.journal_path = self.state_path.with_suffix(".transaction.json")
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
-        self._ensure_state_file()
+        with FileLock(self.lock_path):
+            self._recover_transaction()
+            self._ensure_state_file()
+            self._read_tracker()
+            self._read_state()
 
     def server_info(self) -> dict[str, Any]:
-        tracker = self._read_tracker()
-        state = self._read_state()
-        self._purge_expired_leases(state)
+        tracker, state = self._read_consistent()
         return {
             "workspace_root": str(self.workspace_root),
             "tracker_path": str(self.tracker_path),
@@ -110,9 +157,7 @@ class TrackerStore:
         completion_flag: bool | None = None,
         limit: int = 25,
     ) -> list[dict[str, Any]]:
-        tracker = self._read_tracker()
-        state = self._read_state()
-        self._purge_expired_leases(state)
+        tracker, state = self._read_consistent()
         normalized_assignee = normalize_assignee(assingee)
 
         tasks: list[dict[str, Any]] = []
@@ -137,9 +182,7 @@ class TrackerStore:
         return tasks
 
     def get_task(self, task_number: str, assingee: str | None = None) -> dict[str, Any]:
-        tracker = self._read_tracker()
-        state = self._read_state()
-        self._purge_expired_leases(state)
+        tracker, state = self._read_consistent()
         normalized_assignee = normalize_assignee(assingee)
         task, index = self._find_task(tracker["tasks"], task_number)
         return self._augment_task(
@@ -151,9 +194,7 @@ class TrackerStore:
         )
 
     def list_ready_tasks(self, limit: int = 10, assingee: str | None = None) -> list[dict[str, Any]]:
-        tracker = self._read_tracker()
-        state = self._read_state()
-        self._purge_expired_leases(state)
+        tracker, state = self._read_consistent()
         normalized_assignee = normalize_assignee(assingee)
         ready: list[dict[str, Any]] = []
         for index, task in enumerate(tracker["tasks"]):
@@ -173,9 +214,9 @@ class TrackerStore:
         return ready
 
     def claim_next_task(self, agent_name: str, assingee: str | None = None, lease_minutes: int = DEFAULT_LEASE_MINUTES) -> dict[str, Any]:
-        tracker = self._read_tracker()
         normalized_assignee = normalize_assignee(assingee)
         with self._locked_state() as state:
+            tracker = self._read_tracker()
             self._purge_expired_leases(state)
             for index, task in enumerate(tracker["tasks"]):
                 if normalized_assignee and normalize_assignee(task["Assingee"]) != normalized_assignee:
@@ -195,9 +236,9 @@ class TrackerStore:
         raise StoreError("No ready task is available to claim.")
 
     def claim_task(self, task_number: str, agent_name: str, lease_minutes: int = DEFAULT_LEASE_MINUTES) -> dict[str, Any]:
-        tracker = self._read_tracker()
-        task, index = self._find_task(tracker["tasks"], task_number)
         with self._locked_state() as state:
+            tracker = self._read_tracker()
+            task, index = self._find_task(tracker["tasks"], task_number)
             self._purge_expired_leases(state)
             augmented = self._augment_task(task, index, tracker["tasks"], state)
             if not augmented["ready"]:
@@ -208,9 +249,9 @@ class TrackerStore:
             return self._augment_task(task, index, tracker["tasks"], state)
 
     def release_task(self, task_number: str, agent_name: str, note: str = "") -> dict[str, Any]:
-        tracker = self._read_tracker()
-        task, index = self._find_task(tracker["tasks"], task_number)
         with self._locked_state() as state:
+            tracker = self._read_tracker()
+            task, index = self._find_task(tracker["tasks"], task_number)
             self._purge_expired_leases(state)
             lease = state["leases"].get(task_number)
             if not lease:
@@ -229,10 +270,10 @@ class TrackerStore:
         clear_all: bool = False,
         note: str = "",
     ) -> dict[str, Any]:
-        tracker = self._read_tracker()
         normalized_assignee = normalize_assignee(assingee)
         cleared: list[str] = []
         with self._locked_state() as state:
+            tracker = self._read_tracker()
             self._purge_expired_leases(state)
             task_assignee_by_number = {
                 task["Task Number"]: normalize_assignee(task["Assingee"]) for task in tracker["tasks"]
@@ -258,9 +299,9 @@ class TrackerStore:
         }
 
     def block_task(self, task_number: str, agent_name: str, reason: str) -> dict[str, Any]:
-        tracker = self._read_tracker()
-        task, index = self._find_task(tracker["tasks"], task_number)
         with self._locked_state() as state:
+            tracker = self._read_tracker()
+            task, index = self._find_task(tracker["tasks"], task_number)
             self._purge_expired_leases(state)
             state["blocked"][task_number] = {
                 "blocked_by": agent_name,
@@ -273,9 +314,9 @@ class TrackerStore:
             return self._augment_task(task, index, tracker["tasks"], state)
 
     def unblock_task(self, task_number: str, agent_name: str, note: str = "") -> dict[str, Any]:
-        tracker = self._read_tracker()
-        task, index = self._find_task(tracker["tasks"], task_number)
         with self._locked_state() as state:
+            tracker = self._read_tracker()
+            task, index = self._find_task(tracker["tasks"], task_number)
             self._purge_expired_leases(state)
             blocked = state["blocked"].get(task_number)
             if not blocked:
@@ -298,12 +339,10 @@ class TrackerStore:
 
             task["Completion Flag"] = True
             task["Completion Comment"] = completion_comment.strip() or f"Completed by {agent_name} at {_utc_now()}."
-            self._write_tracker(tracker)
-
             state["leases"].pop(task_number, None)
             state["blocked"].pop(task_number, None)
             self._record_event(state, "complete", task_number, agent_name, task["Completion Comment"])
-            self._write_state(state)
+            self._commit_pair(tracker, state)
             return self._augment_task(task, index, tracker["tasks"], state)
 
     def reopen_task(self, task_number: str, agent_name: str, note: str = "") -> dict[str, Any]:
@@ -315,22 +354,29 @@ class TrackerStore:
 
             task["Completion Flag"] = False
             task["Completion Comment"] = note.strip()
-            self._write_tracker(tracker)
-
             self._record_event(state, "reopen", task_number, agent_name, note)
-            self._write_state(state)
+            self._commit_pair(tracker, state)
             return self._augment_task(task, index, tracker["tasks"], state)
 
     def list_events(self, limit: int = 20) -> list[dict[str, Any]]:
-        state = self._read_state()
-        self._purge_expired_leases(state)
+        _, state = self._read_consistent()
         return list(reversed(state["events"][-limit:]))
 
     @contextmanager
     def _locked_state(self) -> Iterator[dict[str, Any]]:
         with FileLock(self.lock_path):
+            self._recover_transaction()
             state = self._read_state()
             yield state
+
+    def _read_consistent(self) -> tuple[dict[str, Any], dict[str, Any]]:
+        with FileLock(self.lock_path):
+            self._recover_transaction()
+            tracker = self._read_tracker()
+            state = self._read_state()
+            if self._purge_expired_leases(state):
+                self._write_state(state)
+            return tracker, state
 
     def _ensure_state_file(self) -> None:
         if self.state_path.exists():
@@ -362,6 +408,7 @@ class TrackerStore:
         for key in ("leases", "blocked", "events"):
             state.setdefault(key, {} if key != "events" else [])
         state.setdefault("strategy", "strict-sequential")
+        self._validate_state(state)
         return state
 
     def _write_state(self, payload: dict[str, Any]) -> None:
@@ -369,22 +416,81 @@ class TrackerStore:
 
     def _read_json(self, path: Path) -> dict[str, Any]:
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
+            payload = json.loads(path.read_text(encoding="utf-8"))
         except FileNotFoundError as exc:
             raise StoreError(f"Missing required file: {path}") from exc
         except json.JSONDecodeError as exc:
             raise StoreError(f"Invalid JSON in {path}: {exc}") from exc
+        if not isinstance(payload, dict):
+            raise StoreError(f"JSON root in {path} must be an object.")
+        return payload
 
     def _write_json(self, path: Path, payload: dict[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        fd, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+        temporary = Path(temporary_name)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+                json.dump(payload, handle, indent=2)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    def _commit_pair(self, tracker: dict[str, Any], state: dict[str, Any]) -> None:
+        transaction = {
+            "schema_version": STATE_SCHEMA_VERSION,
+            "created_at": _utc_now(),
+            "tracker": tracker,
+            "state": state,
+        }
+        self._write_json(self.journal_path, transaction)
+        self._write_tracker(tracker)
+        self._write_state(state)
+        self.journal_path.unlink(missing_ok=True)
+
+    def _recover_transaction(self) -> None:
+        if not self.journal_path.exists():
+            return
+        journal = self._read_json(self.journal_path)
+        tracker = journal.get("tracker")
+        state = journal.get("state")
+        if not isinstance(tracker, dict) or not isinstance(state, dict):
+            raise StoreError(f"Invalid transaction journal: {self.journal_path}")
+        self._validate_tracker(tracker)
+        self._validate_state(state)
+        self._write_tracker(tracker)
+        self._write_state(state)
+        self.journal_path.unlink(missing_ok=True)
 
     def _validate_tracker(self, tracker: dict[str, Any]) -> None:
-        tasks = tracker.get("tasks", [])
-        numbers = [task["Task Number"] for task in tasks]
+        tasks = tracker.get("tasks")
+        if not isinstance(tasks, list):
+            raise StoreError("Tracker tasks must be a list.")
+        required = {"Task Number", "Section", "Assingee", "Completion Flag", "Completion Comment"}
+        numbers: list[str] = []
+        for index, task in enumerate(tasks):
+            if not isinstance(task, dict):
+                raise StoreError(f"Tracker task at index {index} must be an object.")
+            missing = required - set(task)
+            if missing:
+                raise StoreError(f"Tracker task at index {index} is missing keys: {sorted(missing)}")
+            if not isinstance(task["Task Number"], str) or not task["Task Number"].strip():
+                raise StoreError(f"Tracker task at index {index} has an invalid Task Number.")
+            if not isinstance(task["Completion Flag"], bool):
+                raise StoreError(f"Tracker task {task['Task Number']} has a non-boolean Completion Flag.")
+            numbers.append(task["Task Number"])
         duplicates = [number for number, count in Counter(numbers).items() if count > 1]
         if duplicates:
             raise StoreError(f"Duplicate task numbers detected: {duplicates}")
+
+    def _validate_state(self, state: dict[str, Any]) -> None:
+        if not isinstance(state.get("leases"), dict) or not isinstance(state.get("blocked"), dict):
+            raise StoreError("Runtime state leases and blocked fields must be objects.")
+        if not isinstance(state.get("events"), list):
+            raise StoreError("Runtime state events must be a list.")
 
     def _find_task(self, tasks: list[dict[str, Any]], task_number: str) -> tuple[dict[str, Any], int]:
         for index, task in enumerate(tasks):
@@ -450,7 +556,7 @@ class TrackerStore:
             "lease_expires_at": _utc_now(offset_seconds=lease_seconds),
         }
 
-    def _purge_expired_leases(self, state: dict[str, Any]) -> None:
+    def _purge_expired_leases(self, state: dict[str, Any]) -> bool:
         now = time.time()
         expired = []
         for task_number, lease in state["leases"].items():
@@ -464,6 +570,7 @@ class TrackerStore:
         for task_number in expired:
             del state["leases"][task_number]
             self._record_event(state, "lease-expired", task_number, "system", "")
+        return bool(expired)
 
     def _record_event(self, state: dict[str, Any], event_type: str, task_number: str, agent_name: str, detail: str) -> None:
         state["events"].append(

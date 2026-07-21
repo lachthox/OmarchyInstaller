@@ -92,3 +92,14 @@ python rebuild/tools/task_orchestrator_mcp/server.py
 The runtime state file is intentionally local to this repo and should not be promoted as the source of truth:
 
 - `rebuild/tools/task_orchestrator_mcp/runtime/task_state.json`
+
+## Durability and locking
+
+- The lock file is persistent metadata, not the locking primitive. It records
+  host, PID, process-start identity, and creation time while an OS-level lock
+  determines ownership, so a killed process cannot leave a permanent wedge.
+- Reads that expire leases hold the same lock and persist the purge event.
+- Every JSON write uses fsync plus atomic replacement. Completion/reopen changes
+  use a write-ahead transaction journal spanning tracker and runtime state; the
+  next process replays a surviving journal before serving any request.
+- Malformed task/state records fail closed without overwriting the evidence.
