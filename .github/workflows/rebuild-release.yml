@@ -177,6 +177,14 @@ jobs:
           command -v qemu-system-x86_64
       - uses: actions/download-artifact@v8
         with: {name: release-iso-output, path: rebuild/dist/vm-input}
+      - name: Enable a serial console on this downloaded ISO copy (CI observation only)
+        # Patches only this job's own downloaded copy so the isolated test
+        # driver can observe boot/TUI output over ttyS0; the published
+        # artifact (re-downloaded independently by publish-release) is
+        # never touched. See rebuild/tools/vm_drivers/enable_vm_console.py.
+        run: |
+          iso_path=$(ls rebuild/dist/vm-input/*-omarchy-auto.iso)
+          sudo -E env "PATH=$PATH" python -m rebuild.tools.vm_drivers.enable_vm_console --iso "$iso_path" --manifest rebuild/dist/vm-input/iso-build-manifest.json
       - name: Boot the real ISO offline (no networking) and verify the live TUI starts
         run: python -m rebuild.tools.vm_drivers.offline_boot_test --iso-glob 'rebuild/dist/vm-input/*-omarchy-auto.iso' --work-dir rebuild/dist/offline-boot-gate
       - uses: actions/upload-artifact@v7
@@ -201,6 +209,12 @@ jobs:
           sudo apt-get install -y qemu-system-x86 qemu-utils ovmf gdisk dosfstools ntfs-3g
       - uses: actions/download-artifact@v8
         with: {name: release-iso-output, path: rebuild/dist/vm-input}
+      - name: Enable a serial console on this downloaded ISO copy (CI observation only)
+        # Same as offline-iso-boot: patches only this job's own downloaded
+        # copy so the driver can observe/drive the live TUI over ttyS0.
+        run: |
+          iso_path=$(ls rebuild/dist/vm-input/*-omarchy-auto.iso)
+          sudo -E env "PATH=$PATH" python -m rebuild.tools.vm_drivers.enable_vm_console --iso "$iso_path" --manifest rebuild/dist/vm-input/iso-build-manifest.json
       - name: Verify isolated runner contract
         run: |
           test -e /dev/kvm
