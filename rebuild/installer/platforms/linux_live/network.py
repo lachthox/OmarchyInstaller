@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import http.client
 import shutil
+import socket
+import ssl
 import subprocess
 from typing import Any, Protocol
+from urllib.parse import urlparse
 
 
 DEFAULT_RETRY_ATTEMPTS = 2
@@ -20,6 +24,8 @@ class CommandRunner(Protocol):
 
     def run(self, command: list[str]) -> subprocess.CompletedProcess[str]: ...
 
+    def run_interactive(self, command: list[str]) -> subprocess.CompletedProcess[str]: ...
+
 
 class SubprocessCommandRunner:
     """Default runner backed by subprocess."""
@@ -31,6 +37,9 @@ class SubprocessCommandRunner:
             text=True,
             check=False,
         )
+
+    def run_interactive(self, command: list[str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(command, check=False, text=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +55,7 @@ class NetworkResolutionResult:
     connection_mode: str
     requires_abort: bool
     active_connection_name: str
+    readiness: "NetworkReadiness"
     steps: tuple[NetworkStepResult, ...]
     hint: str
 
@@ -53,6 +63,85 @@ class NetworkResolutionResult:
         payload = asdict(self)
         payload["steps"] = [asdict(step) for step in self.steps]
         return payload
+
+
+@dataclass(frozen=True, slots=True)
+class NetworkReadiness:
+    link: bool
+    ip_configuration: bool
+    dns: bool
+    tls: bool
+    http: bool
+    package_mirror: bool
+    omarchy_bootstrap: bool
+    captive_portal: bool
+
+    @property
+    def internet_ready(self) -> bool:
+        return all(
+            (
+                self.link,
+                self.ip_configuration,
+                self.dns,
+                self.tls,
+                self.http,
+                self.package_mirror,
+                self.omarchy_bootstrap,
+            )
+        ) and not self.captive_portal
+
+
+class ConnectivityProbe(Protocol):
+    def assess(self, client: "NetworkManagerClient") -> NetworkReadiness: ...
+
+
+class SystemConnectivityProbe:
+    """Layered connectivity checks that distinguish link, DNS, TLS, and HTTP."""
+
+    @staticmethod
+    def _https_status(url: str) -> bool:
+        parsed = urlparse(url)
+        if not parsed.hostname:
+            return False
+        connection = http.client.HTTPSConnection(parsed.hostname, parsed.port or 443, timeout=8)
+        try:
+            connection.request("HEAD", parsed.path or "/")
+            response = connection.getresponse()
+            return 200 <= response.status < 500
+        except OSError:
+            return False
+        finally:
+            connection.close()
+
+    def assess(self, client: "NetworkManagerClient") -> NetworkReadiness:
+        link = client.general_state() == "connected"
+        ip_configuration = client.has_ip_configuration()
+        try:
+            socket.getaddrinfo("archlinux.org", 443)
+            dns = True
+        except OSError:
+            dns = False
+        tls = False
+        if dns:
+            try:
+                with socket.create_connection(("archlinux.org", 443), timeout=8) as raw:
+                    with ssl.create_default_context().wrap_socket(raw, server_hostname="archlinux.org"):
+                        tls = True
+            except OSError:
+                pass
+        http = tls and self._https_status("https://archlinux.org/")
+        package_mirror = tls and self._https_status("https://geo.mirror.pkgbuild.com/lastsync")
+        omarchy_bootstrap = tls and self._https_status("https://omarchy.org/")
+        return NetworkReadiness(
+            link=link,
+            ip_configuration=ip_configuration,
+            dns=dns,
+            tls=tls,
+            http=http,
+            package_mirror=package_mirror,
+            omarchy_bootstrap=omarchy_bootstrap,
+            captive_portal=client.connectivity_state() == "portal",
+        )
 
 
 def _parse_nmcli_table(output: str) -> list[list[str]]:
@@ -71,6 +160,9 @@ class NetworkManagerClient:
 
     def _run(self, command: list[str]) -> subprocess.CompletedProcess[str]:
         return self.runner.run(command)
+
+    def _run_interactive(self, command: list[str]) -> subprocess.CompletedProcess[str]:
+        return self.runner.run_interactive(command)
 
     def _nmcli(self, args: list[str]) -> subprocess.CompletedProcess[str]:
         return self._run(["nmcli", *args])
@@ -96,6 +188,16 @@ class NetworkManagerClient:
             if value:
                 return value
         return ""
+
+    def has_ip_configuration(self) -> bool:
+        completed = self._nmcli(["-t", "-f", "IP4.ADDRESS", "device", "show"])
+        return completed.returncode == 0 and any(
+            line.partition(":")[2].strip() for line in completed.stdout.splitlines()
+        )
+
+    def connectivity_state(self) -> str:
+        completed = self._nmcli(["-t", "networking", "connectivity", "check"])
+        return completed.stdout.strip().lower() if completed.returncode == 0 else "unknown"
 
     def ethernet_connected(self) -> bool:
         completed = self._nmcli(["-t", "-f", "TYPE,STATE", "device", "status"])
@@ -130,24 +232,24 @@ class NetworkManagerClient:
         if not ssid:
             return False, "Missing SSID."
 
-        command = ["device", "wifi", "connect", ssid]
+        command = ["nmcli", "--ask", "device", "wifi", "connect", ssid]
         password = str(profile.get("passphrase", "") or profile.get("password", "")).strip()
         if password:
-            command.extend(["password", password])
+            return False, "Plaintext Wi-Fi credentials are not accepted; use the inherited terminal prompt."
         interface_name = str(profile.get("interface_name", "")).strip()
         if interface_name:
             command.extend(["ifname", interface_name])
         if bool(profile.get("hidden", False)):
             command.extend(["hidden", "yes"])
 
-        completed = self._nmcli(command)
+        completed = self._run_interactive(command)
         if completed.returncode != 0:
             message = completed.stderr.strip() or completed.stdout.strip() or "nmcli wifi connect failed"
             return False, message
         return True, completed.stdout.strip() or "Connected via nmcli."
 
     def run_nmtui(self) -> tuple[bool, str]:
-        completed = self._run(["nmtui"])
+        completed = self._run_interactive(["nmtui"])
         if completed.returncode != 0:
             message = completed.stderr.strip() or completed.stdout.strip() or "nmtui exited with non-zero status"
             return False, message
@@ -158,14 +260,33 @@ def _step(steps: list[NetworkStepResult], step: str, status: str, detail: str) -
     steps.append(NetworkStepResult(step=step, status=status, detail=detail))
 
 
-def _connected_result(mode: str, client: NetworkManagerClient, steps: list[NetworkStepResult]) -> NetworkResolutionResult:
+def _connected_result(
+    mode: str,
+    client: NetworkManagerClient,
+    steps: list[NetworkStepResult],
+    probe: ConnectivityProbe,
+) -> NetworkResolutionResult:
+    readiness = probe.assess(client)
+    for field in (
+        "link", "ip_configuration", "dns", "tls", "http", "package_mirror", "omarchy_bootstrap"
+    ):
+        passed = bool(getattr(readiness, field))
+        _step(steps, field.replace("_", "-"), "pass" if passed else "fail", f"{field}: {passed}")
+    _step(
+        steps,
+        "captive-portal",
+        "fail" if readiness.captive_portal else "pass",
+        f"captive_portal: {readiness.captive_portal}",
+    )
+    ready = readiness.internet_ready
     return NetworkResolutionResult(
-        connected=True,
-        connection_mode=mode,
-        requires_abort=False,
+        connected=ready,
+        connection_mode=mode if ready else "limited",
+        requires_abort=not ready,
         active_connection_name=client.active_connection_name(),
+        readiness=readiness,
         steps=tuple(steps),
-        hint="",
+        hint="" if ready else "Link exists, but required DNS/TLS/HTTP sources are not reachable.",
     )
 
 
@@ -176,10 +297,29 @@ def resolve_network_connectivity(
     retry_attempts: int = DEFAULT_RETRY_ATTEMPTS,
     allow_nmtui: bool = True,
     client: NetworkManagerClient | None = None,
+    connectivity_probe: ConnectivityProbe | None = None,
 ) -> NetworkResolutionResult:
     """Resolve network with strict fallback order and fail-closed abort state."""
     active_client = client or NetworkManagerClient()
+    active_probe = connectivity_probe or SystemConnectivityProbe()
     steps: list[NetworkStepResult] = []
+
+    if wifi_handoff_profile:
+        _step(
+            steps,
+            "wifi-handoff",
+            "fail",
+            "Credential profiles from removable handoff media are prohibited.",
+        )
+        return NetworkResolutionResult(
+            connected=False,
+            connection_mode="offline",
+            requires_abort=True,
+            active_connection_name="",
+            readiness=NetworkReadiness(False, False, False, False, False, False, False, False),
+            steps=tuple(steps),
+            hint="Use interactive Wi-Fi, ethernet, or USB tethering.",
+        )
 
     if not active_client.nmcli_available():
         _step(steps, "ethernet-check", "fail", "nmcli is unavailable.")
@@ -191,6 +331,7 @@ def resolve_network_connectivity(
             connection_mode="offline",
             requires_abort=True,
             active_connection_name="",
+            readiness=NetworkReadiness(False, False, False, False, False, False, False, False),
             steps=tuple(steps),
             hint=hint,
         )
@@ -198,18 +339,11 @@ def resolve_network_connectivity(
     # 1) Ethernet
     if active_client.ethernet_connected() and active_client.general_state() == "connected":
         _step(steps, "ethernet-check", "pass", "Ethernet is connected.")
-        return _connected_result("ethernet", active_client, steps)
+        return _connected_result("ethernet", active_client, steps, active_probe)
     _step(steps, "ethernet-check", "warn", "Ethernet not connected.")
 
-    # 2) Auto Wi-Fi handoff profile
-    if wifi_handoff_profile:
-        ok, detail = active_client.connect_wifi(wifi_handoff_profile)
-        if ok and active_client.wifi_connected():
-            _step(steps, "wifi-handoff", "pass", detail)
-            return _connected_result("wifi", active_client, steps)
-        _step(steps, "wifi-handoff", "warn", detail)
-    else:
-        _step(steps, "wifi-handoff", "warn", "No auto Wi-Fi handoff profile was provided.")
+    # 2) Removable-media credentials are deliberately unsupported.
+    _step(steps, "wifi-handoff", "pass", "No removable-media credential profile was used.")
 
     # 3) Retry / rescan
     attempts = max(0, retry_attempts)
@@ -218,21 +352,14 @@ def resolve_network_connectivity(
         if not scanned:
             _step(steps, "wifi-retry-rescan", "warn", f"Attempt {attempt}: wifi rescan failed.")
             continue
-        if wifi_handoff_profile:
-            ok, detail = active_client.connect_wifi(wifi_handoff_profile)
-            if ok and active_client.wifi_connected():
-                _step(steps, "wifi-retry-rescan", "pass", f"Attempt {attempt}: {detail}")
-                return _connected_result("wifi", active_client, steps)
-            _step(steps, "wifi-retry-rescan", "warn", f"Attempt {attempt}: {detail}")
-        else:
-            _step(steps, "wifi-retry-rescan", "warn", f"Attempt {attempt}: rescan complete, no profile to retry.")
+        _step(steps, "wifi-retry-rescan", "warn", f"Attempt {attempt}: rescan complete; use interactive Wi-Fi.")
 
     # 4) Manual profile
     if manual_wifi_profile:
         ok, detail = active_client.connect_wifi(manual_wifi_profile)
         if ok and active_client.wifi_connected():
             _step(steps, "manual-ui-profile", "pass", detail)
-            return _connected_result("wifi", active_client, steps)
+            return _connected_result("wifi", active_client, steps, active_probe)
         _step(steps, "manual-ui-profile", "warn", detail)
     else:
         _step(steps, "manual-ui-profile", "warn", "No manual Wi-Fi profile was provided.")
@@ -243,7 +370,7 @@ def resolve_network_connectivity(
         if ok and active_client.general_state() == "connected":
             _step(steps, "nmtui-fallback", "pass", detail)
             mode = "wifi" if active_client.wifi_connected() else "ethernet"
-            return _connected_result(mode, active_client, steps)
+            return _connected_result(mode, active_client, steps, active_probe)
         _step(steps, "nmtui-fallback", "warn", detail)
     else:
         _step(steps, "nmtui-fallback", "warn", "nmtui fallback unavailable or disabled.")
@@ -259,6 +386,7 @@ def resolve_network_connectivity(
         connection_mode="offline",
         requires_abort=True,
         active_connection_name=active_client.active_connection_name(),
+        readiness=NetworkReadiness(False, False, False, False, False, False, False, False),
         steps=tuple(steps),
         hint=hint,
     )

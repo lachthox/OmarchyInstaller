@@ -23,7 +23,7 @@ test success as installation success.
 
 ## Active work
 
-- Phase 10: live NetworkManager handling and secret-safe connectivity.
+- Phase 11: real worker-backed Linux installation state machine.
 
 ## Known blockers
 

@@ -42,10 +42,10 @@ be marked complete until run in a capable environment.
 | HIGH-10 | High | EFI fallback accepts arbitrary FAT32 | 5 | Windows identity | Removed FAT32 fallback; GPT ESP type required | FAT32-decoy and missing-ESP tests | Resolved | | |
 | HIGH-11 | High | EFI backup is not verifiable | 5 | Windows backup | Added per-file SHA256, deterministic aggregate, and read-back verification | `test_backup_verifies_selected_esp_and_per_file_manifest` | Resolved | | |
 | HIGH-12 | High | Backup may mount wrong ESP | 5 | Windows backup | Mounts exact disk/partition selected by system-partition probe and records identities | selected-ESP fixture and source manifest assertions | Resolved | | |
-| HIGH-13 | High | USB may contain plaintext Wi-Fi secret | 6, 10 | handoff/network | Removed plaintext Wi-Fi handoff; credentials are interactive-only | `test_plaintext_wifi_handoff_is_disabled` | Resolved | | Live network secret handling continues in Phase 10 |
-| HIGH-14 | High | Wi-Fi password exposed in argv | 10 | network | Pending | Pending | Open | | |
-| HIGH-15 | High | nmtui lacks inherited terminal | 10 | network | Pending | Pending | Open | | |
-| HIGH-16 | High | Link state mistaken for internet readiness | 10 | network | Pending | Pending | Open | | |
+| HIGH-13 | High | USB may contain plaintext Wi-Fi secret | 6, 10 | handoff/network | Removed plaintext Wi-Fi handoff; Linux rejects such profiles and credentials are interactive-only | Windows staging and Linux rejection tests | Resolved | | |
+| HIGH-14 | High | Wi-Fi password exposed in argv | 10 | network | Rejects programmatic plaintext passwords; Wi-Fi uses inherited `nmcli --ask` with no secret argument | argv recording test proves secret absence | Resolved | | |
+| HIGH-15 | High | nmtui lacks inherited terminal | 10 | network | `nmtui` and interactive nmcli use a non-capturing inherited-terminal runner | captured-vs-interactive runner test | Resolved | | |
+| HIGH-16 | High | Link state mistaken for internet readiness | 10 | network | Independent link, IP, DNS, TLS, HTTP, mirror, bootstrap, and captive-portal states; any failure blocks | connected-with-failed-DNS plus every layer/captive tests | Resolved | | |
 | HIGH-17 | High | Partial firstboot automatically retries | 14 | first-login service | Pending | Pending | Open | | |
 | HIGH-18 | High | EFI mount contracts conflict | 12, 13, 15 | install/guardian | Pending | Pending | Open | | |
 | HIGH-19 | High | Failure evidence is deleted | 3, 11, 12 | diagnostics | Pending | Pending | Open | | |
@@ -73,7 +73,7 @@ be marked complete until run in a capable environment.
 | MED-08 | Medium | FAT32 file-size limit unchecked | 6 | handoff | Rejects any FAT32 payload above 4 GiB minus one byte | sparse over-limit test | Resolved | | |
 | MED-09 | Medium | Arbitrary 72-hour plan freshness | 6, 9 | discovery/main | Pending | Pending | Open | | |
 | MED-10 | Medium | EXE version derived from commit digits | 7 | EXE build | Requires explicit semantic X.Y.Z and emits X.Y.Z.0 | strict VERSIONINFO test | Resolved | | |
-| MED-11 | Medium | Prompt responses logged | 3, 10 | command/logging | Pending | Pending | Open | | |
+| MED-11 | Medium | Prompt responses logged | 3, 10 | command/logging | Prompt-bearing commands inherit terminal I/O and are never captured; structured diagnostics contain booleans only | secret not in argv/captured command tests | Resolved | | |
 | MED-12 | Medium | Release template incompatible | 2, 7 | models/templates | Template and publisher both validate with `ReleaseManifestContract` schema 1.0.0 | template and valid release-pair tests | Resolved | | |
 | MED-13 | Medium | README/status materially stale | 1, 19 | documentation | Pending | Pending | Open | | |
 | MED-14 | Medium | Tests enforce obsolete archinstall shape | 12, 17, 19 | Bats/contracts | Pending | Pending | Open | | |

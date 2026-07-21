@@ -119,3 +119,14 @@ Date: 2026-07-21
 - The install transaction records the created partition's actual path, start,
   end, size, and PARTUUID, and rewrites runtime configuration from those observed
   values instead of assuming requested `sgdisk` boundaries.
+
+## Phase 10 evidence
+
+- Full Python suite: 91 passed; full Ruff and focused Linux-live mypy pass.
+- `test_linux_network.py`: 5 passed.
+- Evidence covers NetworkManager `connected` with failed DNS, independent TLS,
+  HTTP, package mirror and Omarchy bootstrap failures, captive portal rejection,
+  complete readiness, removable-media credential rejection, password absence
+  from argv, and inherited-terminal execution for `nmcli --ask` and `nmtui`.
+- No live-network integration test was run on this host; the gate is fully
+  deterministic through injected readiness and command-runner fixtures.

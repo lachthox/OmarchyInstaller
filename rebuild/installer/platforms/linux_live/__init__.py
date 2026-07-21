@@ -18,7 +18,15 @@ from .identity import (
     match_machine_identity,
 )
 from .preflight import PreflightGateError, PreflightSummary, assert_preflight_ready, build_preflight_summary
-from .network import NetworkFallbackError, NetworkManagerClient, NetworkResolutionResult, assert_network_ready, resolve_network_connectivity
+from .network import (
+    NetworkFallbackError,
+    NetworkManagerClient,
+    NetworkReadiness,
+    NetworkResolutionResult,
+    SystemConnectivityProbe,
+    assert_network_ready,
+    resolve_network_connectivity,
+)
 from .boot_policy import (
     BootPolicyError,
     BootPolicySummary,
@@ -59,7 +67,9 @@ __all__ = [
     "PreflightSummary",
     "NetworkFallbackError",
     "NetworkManagerClient",
+    "NetworkReadiness",
     "NetworkResolutionResult",
+    "SystemConnectivityProbe",
     "assert_network_ready",
     "BootPolicyError",
     "BootPolicySummary",
