@@ -39,10 +39,13 @@ class LivePartitionSnapshot:
 @dataclass(frozen=True, slots=True)
 class LiveDiskSnapshot:
     path: str
+    gpt_disk_guid: str
     serial: str
     model: str
     size_bytes: int
     logical_sector_size: int
+    first_usable_sector: int
+    last_usable_sector: int
     partitions: tuple[LivePartitionSnapshot, ...]
 
 
@@ -71,7 +74,7 @@ class LsblkProbe:
                 "-b",
                 "-J",
                 "-o",
-                "NAME,PATH,TYPE,SIZE,MODEL,SERIAL,PARTUUID,UUID,FSTYPE,START,LOG-SEC",
+                "NAME,PATH,TYPE,SIZE,MODEL,SERIAL,PTUUID,PARTUUID,UUID,FSTYPE,START,LOG-SEC",
             ],
             capture_output=True,
             text=True,
@@ -86,6 +89,30 @@ class LsblkProbe:
             raise MachineIdentityError(f"Invalid lsblk JSON payload: {exc}") from exc
         if not isinstance(payload, dict):
             raise MachineIdentityError("lsblk payload must be an object.")
+        for record in payload.get("blockdevices", []) or []:
+            if not isinstance(record, dict) or str(record.get("type", "")).lower() != "disk":
+                continue
+            path = str(record.get("path") or record.get("name") or "")
+            completed = subprocess.run(
+                ["sgdisk", "--print", path], capture_output=True, text=True, check=False
+            )
+            if completed.returncode != 0:
+                raise MachineIdentityError(
+                    completed.stderr.strip() or f"sgdisk failed for {path}"
+                )
+            usable = re.search(
+                r"First usable sector is\s+(\d+), last usable sector is\s+(\d+)",
+                completed.stdout,
+                flags=re.IGNORECASE,
+            )
+            guid = re.search(
+                r"Disk identifier \(GUID\):\s*([0-9A-Fa-f-]+)", completed.stdout
+            )
+            if not usable or not guid:
+                raise MachineIdentityError(f"sgdisk omitted authoritative GPT geometry for {path}")
+            record["first_usable_sector"] = int(usable.group(1))
+            record["last_usable_sector"] = int(usable.group(2))
+            record["ptuuid"] = guid.group(1)
         return payload
 
 
@@ -153,10 +180,13 @@ def _disk_snapshot(record: dict[str, Any]) -> LiveDiskSnapshot:
         raise MachineIdentityError("Candidate disk has no readable partition records.")
     return LiveDiskSnapshot(
         path=str(_value(record, "path", "name")).strip(),
+        gpt_disk_guid=str(_value(record, "ptuuid")).strip(),
         serial=str(_value(record, "serial")).strip(),
         model=str(_value(record, "model")).strip(),
         size_bytes=_as_int(_value(record, "size"), default=0),
         logical_sector_size=logical_sector_size,
+        first_usable_sector=_as_int(_value(record, "first_usable_sector"), default=-1),
+        last_usable_sector=_as_int(_value(record, "last_usable_sector"), default=-1),
         partitions=partitions,
     )
 
@@ -167,7 +197,11 @@ def _match_disk_identity(plan: PlanContract, disk: LiveDiskSnapshot) -> bool:
     actual_serial = _normalize_serial(disk.serial)
     actual_model = _normalize_model(disk.model)
 
+    if _normalize_guid(plan.disk_identity.gpt_disk_guid) != _normalize_guid(disk.gpt_disk_guid):
+        return False
     if plan.disk_identity.disk_size_bytes != disk.size_bytes:
+        return False
+    if plan.disk_identity.logical_sector_size != disk.logical_sector_size:
         return False
     if expected_serial and expected_serial != actual_serial:
         return False
@@ -176,50 +210,62 @@ def _match_disk_identity(plan: PlanContract, disk: LiveDiskSnapshot) -> bool:
     return True
 
 
-def _partition_match_tokens(partition_guid: str, partuuid: str) -> set[str]:
-    tokens = {
-        _normalize_guid(partition_guid),
-        _normalize_guid(partuuid),
-    }
-    return {token for token in tokens if token}
-
-
 def _find_partition_match(
     partitions: tuple[LivePartitionSnapshot, ...],
     *,
     expected_partition_guid: str,
     expected_partuuid: str,
+    expected_filesystem_uuid: str,
+    expected_filesystem: str,
+    expected_start_sector: int,
+    expected_end_sector: int,
+    expected_size_bytes: int,
     label: str,
 ) -> LivePartitionSnapshot:
-    expected_tokens = _partition_match_tokens(expected_partition_guid, expected_partuuid)
-    if not expected_tokens:
+    expected_guid = _normalize_guid(expected_partition_guid)
+    expected_linux_partuuid = _normalize_guid(expected_partuuid)
+    if not expected_guid or not expected_linux_partuuid:
         raise MachineIdentityError(f"{label} identity in plan has no GUID/PARTUUID match tokens.")
+    if expected_guid != expected_linux_partuuid:
+        raise MachineIdentityError(f"{label} GPT GUID and PARTUUID contract disagree.")
 
     matches = []
     for partition in partitions:
-        live_tokens = _partition_match_tokens(partition.partuuid, partition.uuid)
-        if expected_tokens.intersection(live_tokens):
+        if expected_linux_partuuid == _normalize_guid(partition.partuuid):
             matches.append(partition)
 
     if not matches:
         raise MachineIdentityError(f"{label} partition from plan was not found on live disk.")
     if len(matches) > 1:
         raise MachineIdentityError(f"{label} partition match is ambiguous; multiple candidates were found.")
-    return matches[0]
+    match = matches[0]
+    if expected_filesystem_uuid and expected_filesystem_uuid.casefold() != match.uuid.casefold():
+        raise MachineIdentityError(f"{label} filesystem UUID does not match independently.")
+    if expected_filesystem and expected_filesystem.casefold() != match.filesystem.casefold():
+        raise MachineIdentityError(f"{label} filesystem type does not match independently.")
+    if (
+        match.start_sector != expected_start_sector
+        or match.end_sector != expected_end_sector
+        or match.size_bytes != expected_size_bytes
+    ):
+        raise MachineIdentityError(f"{label} partition geometry/size does not match independently.")
+    return match
 
 
 def _compute_free_space_gaps(disk: LiveDiskSnapshot) -> tuple[tuple[int, int, int], ...]:
-    total_sectors = max(1, disk.size_bytes // disk.logical_sector_size)
-    max_sector = total_sectors - 1
+    if disk.first_usable_sector < 0 or disk.last_usable_sector < disk.first_usable_sector:
+        raise MachineIdentityError("Authoritative GPT usable-sector bounds are unavailable.")
+    min_sector = disk.first_usable_sector
+    max_sector = disk.last_usable_sector
     occupied = sorted(
         (
-            max(0, partition.start_sector),
+            max(min_sector, partition.start_sector),
             min(max_sector, partition.end_sector),
         )
         for partition in disk.partitions
     )
     gaps: list[tuple[int, int, int]] = []
-    cursor = 0
+    cursor = min_sector
     for start, end in occupied:
         if start > cursor:
             size = (start - cursor) * disk.logical_sector_size
@@ -235,11 +281,9 @@ def _validate_prepared_free_space(plan: PlanContract, disk: LiveDiskSnapshot) ->
     expected_start = plan.prepared_free_space_range.start_sector
     expected_end = plan.prepared_free_space_range.end_sector
     expected_size = plan.prepared_free_space_range.size_bytes
-    expected = (expected_start, expected_end, expected_size)
-
-    for gap in _compute_free_space_gaps(disk):
-        if gap == expected:
-            return gap
+    for gap_start, gap_end, _gap_size in _compute_free_space_gaps(disk):
+        if gap_start <= expected_start and gap_end >= expected_end:
+            return expected_start, expected_end, expected_size
     raise MachineIdentityError(
         "Prepared free-space range from plan does not match current disk gaps "
         f"(expected start={expected_start}, end={expected_end}, size={expected_size})."
@@ -279,12 +323,22 @@ def match_machine_identity(
         disk.partitions,
         expected_partition_guid=plan.efi_identity.partition_guid,
         expected_partuuid=plan.efi_identity.partuuid,
+        expected_filesystem_uuid=plan.efi_identity.filesystem_uuid,
+        expected_filesystem=plan.efi_identity.filesystem_type,
+        expected_start_sector=plan.efi_identity.start_sector,
+        expected_end_sector=plan.efi_identity.end_sector,
+        expected_size_bytes=plan.efi_identity.size_bytes,
         label="EFI",
     )
     windows_partition = _find_partition_match(
         disk.partitions,
         expected_partition_guid=plan.windows_partition_identity.partition_guid,
         expected_partuuid=plan.windows_partition_identity.partuuid,
+        expected_filesystem_uuid=plan.windows_partition_identity.filesystem_uuid,
+        expected_filesystem=plan.windows_partition_identity.filesystem_type,
+        expected_start_sector=plan.windows_partition_identity.start_sector,
+        expected_end_sector=plan.windows_partition_identity.end_sector,
+        expected_size_bytes=plan.windows_partition_identity.size_bytes,
         label="Windows",
     )
     free_space_start, free_space_end, free_space_size = _validate_prepared_free_space(plan, disk)

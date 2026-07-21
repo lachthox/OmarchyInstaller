@@ -106,3 +106,16 @@ Date: 2026-07-21
   is available and archinstall `4.4-1` was published for that ISO cycle.
 - Real rootfs assembly, OVMF boot, and offline TUI startup are blocked because
   this host has no Linux distribution, Docker, QEMU, or OVMF.
+
+## Phase 9 evidence
+
+- Full Python suite: 86 passed; full Ruff passes; focused Linux-live mypy passes.
+- `test_linux_handoff_identity.py` covers nested mount topology, deliberate
+  removable VENTOY selection, read-only mount options, guaranteed unmount,
+  authenticated plan/ISO hashes, stale and tampered handoffs, exact GPT disk
+  GUID matching, absent serials, duplicate identities, filesystem UUID namespace
+  separation, GPT first/last usable sectors, a stale occupied extent immediately
+  before creation, and post-creation alignment changes.
+- The install transaction records the created partition's actual path, start,
+  end, size, and PARTUUID, and rewrites runtime configuration from those observed
+  values instead of assuming requested `sgdisk` boundaries.

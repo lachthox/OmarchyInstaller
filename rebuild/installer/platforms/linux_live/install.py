@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 import json
 from pathlib import Path
+import re
 import subprocess
 import shutil
 from tempfile import gettempdir
@@ -50,6 +51,10 @@ class LiveInstallExecutionResult:
     removed_paths: tuple[str, ...]
     commands: tuple[str, ...]
     target_partition_path: str
+    target_partition_start_sector: int
+    target_partition_end_sector: int
+    target_partition_size_bytes: int
+    target_partition_guid: str
     mount_root: str
     encryption_mapper: str
     dry_run: bool
@@ -152,13 +157,21 @@ def _parse_lsblk_partitions(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return partitions
 
 
-def _discover_partition_path(
+@dataclass(frozen=True, slots=True)
+class CreatedPartition:
+    path: str
+    start_sector: int
+    end_sector: int
+    size_bytes: int
+    partuuid: str
+
+
+def _discover_partition(
     runner: CommandRunner,
     *,
     disk_path: str,
-    start_sector: int,
-    expected_size_bytes: int,
-) -> str:
+    logical_sector_size: int,
+) -> CreatedPartition:
     output = _run_checked(
         runner,
         [
@@ -166,7 +179,7 @@ def _discover_partition_path(
             "-b",
             "-J",
             "-o",
-            "PATH,TYPE,START,SIZE,PKNAME",
+            "PATH,TYPE,START,SIZE,PKNAME,PARTLABEL,PARTUUID",
         ],
     )
     try:
@@ -175,7 +188,7 @@ def _discover_partition_path(
         raise LiveInstallError(f"Invalid lsblk JSON while discovering partition: {exc}") from exc
 
     disk_name = Path(disk_path).name
-    candidates: list[str] = []
+    candidates: list[CreatedPartition] = []
     for partition in _parse_lsblk_partitions(payload):
         pkname = str(partition.get("pkname", "")).strip()
         if pkname != disk_name:
@@ -185,16 +198,63 @@ def _discover_partition_path(
             part_size = int(str(partition.get("size", "0")).strip())
         except ValueError:
             continue
-        if part_start == start_sector and part_size == expected_size_bytes:
+        if str(partition.get("partlabel", "")).strip() == "omarchy-linux":
             path = str(partition.get("path", "")).strip()
             if path:
-                candidates.append(path)
+                sectors = (part_size + logical_sector_size - 1) // logical_sector_size
+                candidates.append(
+                    CreatedPartition(
+                        path=path,
+                        start_sector=part_start,
+                        end_sector=part_start + sectors - 1,
+                        size_bytes=part_size,
+                        partuuid=str(partition.get("partuuid", "")).strip(),
+                    )
+                )
 
     if not candidates:
         raise LiveInstallError("Could not resolve newly created Linux partition path after sgdisk.")
     if len(candidates) > 1:
         raise LiveInstallError("Linux partition discovery is ambiguous after sgdisk.")
-    return candidates[0]
+    created = candidates[0]
+    if not created.partuuid:
+        raise LiveInstallError("New Linux partition is missing its actual PARTUUID.")
+    return created
+
+
+def _assert_planned_extent_is_still_free(
+    runner: CommandRunner,
+    *,
+    disk_path: str,
+    start_sector: int,
+    end_sector: int,
+    logical_sector_size: int,
+) -> None:
+    gpt = _run_checked(runner, ["sgdisk", "--print", disk_path])
+    match = re.search(
+        r"First usable sector is\s+(\d+), last usable sector is\s+(\d+)", gpt, re.IGNORECASE
+    )
+    if not match:
+        raise LiveInstallError("sgdisk omitted authoritative GPT usable-sector bounds.")
+    first_usable, last_usable = int(match.group(1)), int(match.group(2))
+    if start_sector < first_usable or end_sector > last_usable:
+        raise LiveInstallError("Planned extent overlaps reserved GPT metadata sectors.")
+
+    output = _run_checked(runner, ["lsblk", "-b", "-J", "-o", "PATH,TYPE,START,SIZE,PKNAME"])
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError as exc:
+        raise LiveInstallError(f"Invalid lsblk JSON while revalidating free space: {exc}") from exc
+    disk_name = Path(disk_path).name
+    for partition in _parse_lsblk_partitions(payload):
+        if str(partition.get("pkname", "")).strip() != disk_name:
+            continue
+        part_start = int(str(partition.get("start", "0")))
+        part_size = int(str(partition.get("size", "0")))
+        part_sectors = (part_size + logical_sector_size - 1) // logical_sector_size
+        part_end = part_start + part_sectors - 1
+        if not (end_sector < part_start or start_sector > part_end):
+            raise LiveInstallError("Planned free-space extent is no longer free.")
 
 
 def _build_archinstall_config(
@@ -204,6 +264,9 @@ def _build_archinstall_config(
     target_partition_path: str,
     crypt_mapper_name: str,
     mount_root: str,
+    partition_start_sector: int | None = None,
+    partition_end_sector: int | None = None,
+    partition_size_bytes: int | None = None,
 ) -> dict[str, Any]:
     return {
         "schema_version": "1.0.0",
@@ -215,9 +278,15 @@ def _build_archinstall_config(
         "target": {
             "disk_path": target_disk_path,
             "partition_path": target_partition_path,
-            "partition_start_sector": plan.prepared_free_space_range.start_sector,
-            "partition_end_sector": plan.prepared_free_space_range.end_sector,
-            "partition_size_bytes": plan.prepared_free_space_range.size_bytes,
+            "partition_start_sector": partition_start_sector
+            if partition_start_sector is not None
+            else plan.prepared_free_space_range.start_sector,
+            "partition_end_sector": partition_end_sector
+            if partition_end_sector is not None
+            else plan.prepared_free_space_range.end_sector,
+            "partition_size_bytes": partition_size_bytes
+            if partition_size_bytes is not None
+            else plan.prepared_free_space_range.size_bytes,
         },
         "layout": {
             "encryption": {
@@ -284,11 +353,15 @@ def execute_install_plan(
 
     if plan_payload is not None:
         plan_contract = plan_payload if isinstance(plan_payload, PlanContract) else validate_plan_contract(plan_payload)
-        plan_file = stage_live_runtime_artifact(root, "runtime/plan.json", plan_contract.model_dump())
+        plan_file = stage_live_runtime_artifact(root, "runtime/plan.json", plan_contract.model_dump(mode="json"))
         staged_files.append(str(plan_file))
 
     install_log_lines: list[str] = ["live install orchestration initialized"]
     target_partition_path = ""
+    target_partition_start_sector = 0
+    target_partition_end_sector = 0
+    target_partition_size_bytes = 0
+    target_partition_guid = ""
     removed_paths: tuple[str, ...] = tuple()
     status = "staged"
     failed = False
@@ -300,8 +373,6 @@ def execute_install_plan(
 
             start_sector = plan_contract.prepared_free_space_range.start_sector
             end_sector = plan_contract.prepared_free_space_range.end_sector
-            partition_size_bytes = plan_contract.prepared_free_space_range.size_bytes
-
             target_partition_path = f"{target_disk_path}-planned-partition"
             archinstall_config = _build_archinstall_config(
                 plan_contract,
@@ -339,18 +410,34 @@ def execute_install_plan(
                 mapper_opened = False
                 mounted_target = False
                 try:
+                    _assert_planned_extent_is_still_free(
+                        active_runner,
+                        disk_path=target_disk_path,
+                        start_sector=start_sector,
+                        end_sector=end_sector,
+                        logical_sector_size=plan_contract.disk_identity.logical_sector_size,
+                    )
                     # Execute partition creation first, then resolve created partition path exactly.
                     for command in command_plan[:3]:
                         _run_checked(active_runner, command)
                         install_log_lines.append(f"EXECUTED: {' '.join(command)}")
 
-                    target_partition_path = _discover_partition_path(
+                    created_partition = _discover_partition(
                         active_runner,
                         disk_path=target_disk_path,
-                        start_sector=start_sector,
-                        expected_size_bytes=partition_size_bytes,
+                        logical_sector_size=plan_contract.disk_identity.logical_sector_size,
                     )
+                    target_partition_path = created_partition.path
+                    target_partition_start_sector = created_partition.start_sector
+                    target_partition_end_sector = created_partition.end_sector
+                    target_partition_size_bytes = created_partition.size_bytes
+                    target_partition_guid = created_partition.partuuid
                     install_log_lines.append(f"resolved target partition: {target_partition_path}")
+                    install_log_lines.append(
+                        "actual target geometry: "
+                        f"{target_partition_start_sector}-{target_partition_end_sector} "
+                        f"size={target_partition_size_bytes} partuuid={target_partition_guid}"
+                    )
 
                     # Rebuild archinstall config and command plan with concrete partition path.
                     archinstall_config = _build_archinstall_config(
@@ -359,6 +446,9 @@ def execute_install_plan(
                         target_partition_path=target_partition_path,
                         crypt_mapper_name=crypt_mapper_name,
                         mount_root=mount_root,
+                        partition_start_sector=target_partition_start_sector,
+                        partition_end_sector=target_partition_end_sector,
+                        partition_size_bytes=target_partition_size_bytes,
                     )
                     stage_live_runtime_artifact(root, "runtime/archinstall-config.json", archinstall_config)
                     command_plan = _build_install_command_plan(
@@ -413,6 +503,10 @@ def execute_install_plan(
         removed_paths=removed_paths,
         commands=tuple(commands),
         target_partition_path=target_partition_path,
+        target_partition_start_sector=target_partition_start_sector,
+        target_partition_end_sector=target_partition_end_sector,
+        target_partition_size_bytes=target_partition_size_bytes,
+        target_partition_guid=target_partition_guid,
         mount_root=mount_root,
         encryption_mapper=f"/dev/mapper/{crypt_mapper_name}",
         dry_run=dry_run,

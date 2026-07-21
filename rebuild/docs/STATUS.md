@@ -23,7 +23,7 @@ test success as installation success.
 
 ## Active work
 
-- Phase 9: authenticated Linux handoff discovery and disk identity matching.
+- Phase 10: live NetworkManager handling and secret-safe connectivity.
 
 ## Known blockers
 

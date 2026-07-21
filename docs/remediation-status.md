@@ -26,16 +26,16 @@ be marked complete until run in a capable environment.
 | CRIT-07 | Critical | Live package import path is broken | 8 | startup assets | Canonical cwd-independent `python -m installer.main` entrypoint with venv `.pth` package root | payload rejects legacy aliases; chroot import is a build-failing check | Verification blocked | | ISO boot gate remains open |
 | CRIT-08 | Critical | Target markers and assets not deployed | 13 | finalization | Pending | Pending | Open | | |
 | CRIT-09 | Critical | Firstboot runs interactive install as root | 14 | first-login | Pending | Pending | Open | | |
-| CRIT-10 | Critical | GPT free-space includes reserved sectors | 5, 9 | disk geometry | Pending | Pending | Open | | |
+| CRIT-10 | Critical | GPT free-space includes reserved sectors | 5, 9 | disk geometry | Linux consumes authoritative `sgdisk` usable bounds and rechecks the planned extent immediately before creation | end-of-disk metadata, stale extent, and alignment-change tests | Resolved | | |
 | CRIT-11 | Critical | Plan template fails production contract | 2 | shared models/templates | Replaced with complete schema 1.0.0 artifact accepted by `PlanContract` | `test_shipped_plan_template_passes_production_validator` | Resolved | | |
 | CRIT-12 | Critical | Ventoy write precedes USB validation | 6 | Windows handoff | Added two pre-write USB/protected-role/identity reads and exact typed confirmation | internal-disk, wrong-confirmation, identity-race, and command-order tests | Resolved | | |
 | CRIT-13 | Critical | ISO build can disable signature checks | 8 | ISO build | Removed unsigned fallback; package install uses Arch keyring and dated signed archive | static regression rejects `SigLevel = Never`; build fails on pacman error | Resolved | | |
 | HIGH-01 | High | TUIs block their event loops | 3, 4, 11 | Textual apps | Pending | Pending | Open | | |
 | HIGH-02 | High | Pre-install flow requires Limine | 11, 15 | boot policy | Pending | Pending | Open | | |
-| HIGH-03 | High | Handoff discovery does not mount USB | 9 | discovery | Pending | Pending | Open | | |
-| HIGH-04 | High | Handoff lacks authenticated integrity | 6, 9 | handoff/discovery | Pending | Pending | Open | | |
-| HIGH-05 | High | Linux ignores GPT disk GUID | 2, 9 | identity | Pending | Pending | Open | | |
-| HIGH-06 | High | PARTUUID and filesystem UUID conflated | 2, 9 | models/identity | Pending | Pending | Open | | |
+| HIGH-03 | High | Handoff discovery does not mount USB | 9 | discovery | Recursively enumerates removable VENTOY partitions, requires one match, mounts read-only under `/run/omarchy`, and always unmounts | nested topology and controlled mount/unmount tests | Resolved | | |
+| HIGH-04 | High | Handoff lacks authenticated integrity | 6, 9 | handoff/discovery | Linux verifies one-time HMAC, plan/ISO hashes, provenance, and disk/partition identities before use | valid, tampered, missing-key, and stale tests | Resolved | | |
+| HIGH-05 | High | Linux ignores GPT disk GUID | 2, 9 | identity | Exact planned GPT disk GUID/PTUUID plus size and sector size are mandatory; ambiguous matches fail | wrong GUID, absent serial, and duplicate exact identity tests | Resolved | | |
+| HIGH-06 | High | PARTUUID and filesystem UUID conflated | 2, 9 | models/identity | PARTUUID matches GPT partition GUID only; filesystem UUID/type and geometry/size are independent checks | wrong filesystem UUID and exact geometry tests | Resolved | | |
 | HIGH-07 | High | Shrink planning merges unrelated extents | 5 | Windows partitioning | Counts only aligned extent immediately after C:; exact missing bytes plus 16 MiB margin | adjacent/non-adjacent/recovery fixtures | Resolved | | |
 | HIGH-08 | High | Legacy path over-shrinks Windows | 5, 19 | legacy Windows | Pending | Pending | Open | | |
 | HIGH-09 | High | Shrink lacks durable recovery journal | 3, 5 | transactions/partitioning | Requires verified identity-bound backup and atomic before/after journal; reports applied-validation failure distinctly | resize success/failure/identity tests | Resolved | | No automatic rollback is claimed |
