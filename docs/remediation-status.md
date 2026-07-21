@@ -19,7 +19,7 @@ be marked complete until run in a capable environment.
 |---|---|---|---:|---|---|---|---|---|---|
 | CRIT-01 | Critical | Legacy archinstall config incompatible | 2, 12, 17, 19 | `setup.sh`, install engine | Pending | Pending | Open | | |
 | CRIT-02 | Critical | Partitioning precedes semantic validation | 3, 12 | install engine | Pending | Pending | Open | | |
-| CRIT-03 | Critical | Linux TUI never performs a real install | 4, 11 | live TUI | Pending | Pending | Open | | |
+| CRIT-03 | Critical | Linux TUI never performs a real install | 4, 11 | live TUI | Ordered real/simulated state machine and confirmation boundary implemented; production stage backend lands in Phases 12-15 | ordered fake backend and Pilot tests | Open | | Partial until real engine/finalization backend is connected |
 | CRIT-04 | Critical | Internal plan passed to archinstall | 2, 12 | install engine | Pending | Pending | Open | | |
 | CRIT-05 | Critical | Incomplete target layout preparation | 9, 11, 12, 13 | install engine | Pending | Pending | Open | | |
 | CRIT-06 | Critical | ISO omits Python dependency installation | 8 | ISO pipeline | Hash-locked dependency set installed into `/opt/omarchy-venv` during rootfs assembly | payload/lock/static build tests pass; OVMF offline startup blocked locally | Verification blocked | | QEMU/OVMF gate remains open |
@@ -30,8 +30,8 @@ be marked complete until run in a capable environment.
 | CRIT-11 | Critical | Plan template fails production contract | 2 | shared models/templates | Replaced with complete schema 1.0.0 artifact accepted by `PlanContract` | `test_shipped_plan_template_passes_production_validator` | Resolved | | |
 | CRIT-12 | Critical | Ventoy write precedes USB validation | 6 | Windows handoff | Added two pre-write USB/protected-role/identity reads and exact typed confirmation | internal-disk, wrong-confirmation, identity-race, and command-order tests | Resolved | | |
 | CRIT-13 | Critical | ISO build can disable signature checks | 8 | ISO build | Removed unsigned fallback; package install uses Arch keyring and dated signed archive | static regression rejects `SigLevel = Never`; build fails on pacman error | Resolved | | |
-| HIGH-01 | High | TUIs block their event loops | 3, 4, 11 | Textual apps | Pending | Pending | Open | | |
-| HIGH-02 | High | Pre-install flow requires Limine | 11, 15 | boot policy | Pending | Pending | Open | | |
+| HIGH-01 | High | TUIs block their event loops | 3, 4, 11 | Textual apps | Windows operations and Linux runtime refresh execute in Textual workers | blocked-worker responsiveness Pilot tests at 80x24 | Resolved | | |
+| HIGH-02 | High | Pre-install flow requires Limine | 11, 15 | boot policy | Removed Limine finalization probe from pre-install snapshot; boot policy is post-install only | snapshot/Pilot state proves no pre-install Limine pass | Resolved | | Final boot verification remains Phase 15 |
 | HIGH-03 | High | Handoff discovery does not mount USB | 9 | discovery | Recursively enumerates removable VENTOY partitions, requires one match, mounts read-only under `/run/omarchy`, and always unmounts | nested topology and controlled mount/unmount tests | Resolved | | |
 | HIGH-04 | High | Handoff lacks authenticated integrity | 6, 9 | handoff/discovery | Linux verifies one-time HMAC, plan/ISO hashes, provenance, and disk/partition identities before use | valid, tampered, missing-key, and stale tests | Resolved | | |
 | HIGH-05 | High | Linux ignores GPT disk GUID | 2, 9 | identity | Exact planned GPT disk GUID/PTUUID plus size and sector size are mandatory; ambiguous matches fail | wrong GUID, absent serial, and duplicate exact identity tests | Resolved | | |
@@ -48,7 +48,7 @@ be marked complete until run in a capable environment.
 | HIGH-16 | High | Link state mistaken for internet readiness | 10 | network | Independent link, IP, DNS, TLS, HTTP, mirror, bootstrap, and captive-portal states; any failure blocks | connected-with-failed-DNS plus every layer/captive tests | Resolved | | |
 | HIGH-17 | High | Partial firstboot automatically retries | 14 | first-login service | Pending | Pending | Open | | |
 | HIGH-18 | High | EFI mount contracts conflict | 12, 13, 15 | install/guardian | Pending | Pending | Open | | |
-| HIGH-19 | High | Failure evidence is deleted | 3, 11, 12 | diagnostics | Pending | Pending | Open | | |
+| HIGH-19 | High | Failure evidence is deleted | 3, 11, 12 | diagnostics | Failed state-machine runs atomically preserve redacted stage diagnostics; failed install staging is retained | secret redaction and diagnostic persistence test | Resolved | | |
 | HIGH-20 | High | Conflicting release products | 1, 7, 18, 19 | workflows | Pending | Pending | Open | | |
 | HIGH-21 | High | Publisher can pair unrelated artifacts | 7, 18 | release tooling | Requires unique artifacts and matching commit/tag/version/run/ref/schema/name/hash/non-dry-run manifests | provenance pairing negative tests | Resolved | | VM release gate remains Phase 18 |
 | HIGH-22 | High | Provenance failures can fail open | 7, 18 | release/Windows | Missing, ambiguous, dry-run, mismatched, or tampered provenance now hard-fails | provenance negative tests | Resolved | | |
@@ -57,7 +57,7 @@ be marked complete until run in a capable environment.
 | HIGH-25 | High | Runtime dependency manifest incomplete | 8, 13 | ISO/finalization | Live manifest and rootfs verification cover disk, crypto, Btrfs, udev, boot, network, and installer tools | Phase 8 static coverage passes; installed-target Phase 13 remains | Open | | Partial implementation |
 | HIGH-26 | High | Startup metadata disagrees with runtime | 8, 19 | ISO assets | Metadata and hook use the sole venv module entrypoint and record exact base/runtime provenance | payload regression passes; Phase 19 end-to-end verification remains | Open | | Partial implementation |
 | HIGH-27 | High | Launcher silently falls back to PowerShell | 1, 4, 19 | Windows launcher, Windows TUI, EXE builder | Removed fallback/bypass and legacy payload; Python startup now fails visibly | `pytest -q rebuild/tests/test_windows_launcher.py rebuild/tests/test_windows_flow.py` (6 passed); focused Ruff passed | Resolved | | Final legacy archive remains tracked separately by Phase 19 |
-| HIGH-28 | High | Windows TUI bypasses and fake completion | 4, 11 | Windows TUI | Pending | Pending | Open | | |
+| HIGH-28 | High | Windows TUI bypasses and fake completion | 4, 11 | Windows TUI | Windows stage gates distinguish simulated/applied; Linux state machine rejects empty plans and distinguishes simulated/applied | Windows Pilot plus Linux state tests | Resolved | | |
 | HIGH-29 | High | Guardian defaults when expected state absent | 13, 15 | guardian | Pending | Pending | Open | | |
 | HIGH-30 | High | Tracker lock survives crashed process | 16 | task orchestrator | Pending | Pending | Open | | |
 | HIGH-31 | High | Tracker/state writes are non-atomic | 3, 16 | task orchestrator/state | Pending | Pending | Open | | |

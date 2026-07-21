@@ -10,8 +10,9 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.widgets import Footer, Header, Static
+from textual import work
 
-from ..platforms.linux_live.boot_policy import BootPolicyError, BootPolicySummary, summarize_boot_policy
+from ..platforms.linux_live.boot_policy import BootPolicySummary
 from ..platforms.linux_live.discovery import (
     HandoffDiscoveryError,
     HandoffDiscoveryResult,
@@ -19,7 +20,7 @@ from ..platforms.linux_live.discovery import (
     discover_and_validate_handoff_plan,
     discover_handoff_sources,
 )
-from ..platforms.linux_live.install import LiveInstallError, LiveInstallExecutionResult, execute_install_plan
+from ..platforms.linux_live.install import LiveInstallExecutionResult
 from ..platforms.linux_live.network import NetworkResolutionResult, resolve_network_connectivity
 
 
@@ -133,26 +134,11 @@ def collect_live_runtime_snapshot(
 
     install_result: LiveInstallExecutionResult | None = None
     install_error = ""
-    try:
-        install_result = execute_install_plan(
-            plan_payload=None,
-            dry_run=True,
-            cleanup_after_success=True,
-        )
-    except (LiveInstallError, OSError, ValueError) as exc:
-        install_error = str(exc)
+    install_error = "Install not started; a validated plan and explicit simulation/apply action are required."
 
     boot_policy_result: BootPolicySummary | None = None
     boot_policy_error = ""
-    try:
-        boot_policy_result = summarize_boot_policy(
-            "limine",
-            efi_mount=efi_mount,
-        )
-        if not boot_policy_result.can_finalize:
-            boot_policy_error = "; ".join(boot_policy_result.blockers)
-    except (BootPolicyError, OSError, ValueError) as exc:
-        boot_policy_error = str(exc)
+    boot_policy_error = "Post-install boot policy validation has not run; Limine is not a pre-install requirement."
 
     return LiveRuntimeSnapshot(
         generated_at_utc=_now_utc(),
@@ -419,14 +405,44 @@ class LiveInstallerApp(App[int]):
     def action_goto_error(self) -> None:
         self._set_stage("error")
 
-    def action_refresh_runtime(self) -> None:
-        self._snapshot = collect_live_runtime_snapshot(
-            live_runtime_version=self._live_runtime_version,
-            max_plan_age_hours=self._max_plan_age_hours,
-            efi_mount=self._efi_mount,
-        )
+    @work(thread=True, exclusive=True, group="live-refresh")
+    def _refresh_worker(self) -> None:
+        try:
+            snapshot = collect_live_runtime_snapshot(
+                live_runtime_version=self._live_runtime_version,
+                max_plan_age_hours=self._max_plan_age_hours,
+                efi_mount=self._efi_mount,
+            )
+            self.call_from_thread(self._apply_refresh, snapshot, None)
+        except Exception as exc:  # pragma: no cover - defensive worker boundary
+            self.call_from_thread(self._apply_refresh, None, str(exc))
+
+    def _apply_refresh(self, snapshot: LiveRuntimeSnapshot | None, error: str | None) -> None:
+        if snapshot is None:
+            self._snapshot = LiveRuntimeSnapshot(
+                generated_at_utc=_now_utc(),
+                dependencies_ok=False,
+                missing_dependencies=REQUIRED_LIVE_BINARIES,
+                handoff_sources=tuple(),
+                handoff_result=None,
+                handoff_error=error or "Runtime refresh failed.",
+                network_result=None,
+                network_error=error or "Runtime refresh failed.",
+                install_result=None,
+                install_error=error or "Runtime refresh failed.",
+                boot_policy_result=None,
+                boot_policy_error=error or "Runtime refresh failed.",
+            )
+            self._render()
+            self.notify("Runtime refresh failed.", severity="error")
+            return
+        self._snapshot = snapshot
         self._render()
         self.notify("Runtime state refreshed.", severity="information")
+
+    def action_refresh_runtime(self) -> None:
+        self.notify("Refreshing runtime state…", severity="information")
+        self._refresh_worker()
 
     def action_quit_flow(self) -> None:
         self.exit(0)

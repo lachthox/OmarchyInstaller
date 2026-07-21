@@ -23,7 +23,7 @@ test success as installation success.
 
 ## Active work
 
-- Phase 11: real worker-backed Linux installation state machine.
+- Phase 12: pinned pre-mounted archinstall engine and credential contract.
 
 ## Known blockers
 

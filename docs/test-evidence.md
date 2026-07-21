@@ -130,3 +130,16 @@ Date: 2026-07-21
   from argv, and inherited-terminal execution for `nmcli --ask` and `nmtui`.
 - No live-network integration test was run on this host; the gate is fully
   deterministic through injected readiness and command-runner fixtures.
+
+## Phase 11 evidence
+
+- `test_linux_state_machine.py`: 6 passed; focused UI Ruff and mypy pass.
+- The required 24 stages execute in order through a backend protocol. Simulation
+  ends only as `simulated`; real mode requires exact disk-GUID-bound typed
+  confirmation and ends only as `applied` after every postcondition succeeds.
+- Tests reject `plan_payload=None`, preserve an atomic redacted diagnostic on
+  failure, and prove cancellation is honored only before partition changes.
+- An 80x24 Textual Pilot test blocks runtime collection in a worker while the UI
+  continues accepting navigation. The old snapshot probe no longer calls an
+  empty install plan or treats it as success, and Limine is no longer a
+  pre-install prerequisite.
