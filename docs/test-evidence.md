@@ -168,3 +168,21 @@ Date: 2026-07-21
 - Chroot imports and `systemd-analyze verify` precede service activation. Base
   and target-finalization markers and the success marker are atomic; later
   Omarchy, boot-policy, and overall markers are not claimed early.
+
+## Phase 14 evidence
+
+- The root `multi-user.target` firstboot unit and `Restart=on-failure` path are
+  removed. A profile hook can launch only after an interactive normal-user
+  login; Python policy separately rejects root, non-TTY, WSL, live ISO, and a
+  missing base-install marker.
+- The upstream script is downloaded to user-owned state, SHA256-checked against
+  root-owned release-pairing metadata, and identified to the user before exact
+  typed confirmation. URL, retrieval time, upstream version/commit when exposed,
+  release/build identity, hash, and every stage are written atomically.
+- Partial state never retries automatically. `--retry` first displays that state
+  and runs exactly once. The upstream process gets an inherited pseudo-terminal;
+  util-linux `script --log-out` records output without enabling input/password
+  logging. Omarchy completion is a distinct privileged atomic marker.
+- Full local suite: 113 passed, 1 skipped. The skipped test is the actual Unix
+  pseudo-terminal integration, which is platform-gated off on Windows and runs
+  on a non-root Linux CI/VM host.

@@ -42,6 +42,11 @@ class TargetMachineState:
     luks_uuid: str
     mapper_name: str = "omarchy-cryptroot"
     efi_mount: str = "/boot"
+    bootstrap_url: str = "https://omarchy.org/install"
+    expected_sha256: str = "0" * 64
+    upstream_version: str = "unknown"
+    release_tag: str = "unknown"
+    build_commit: str = "unknown"
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,11 +116,12 @@ def deploy_target_assets(
         path.chmod(0o755)
 
     mappings = {
-        assets / "scripts" / "firstboot-wrapper.sh": ("/usr/local/bin/omarchy-firstboot", True),
+        assets / "scripts" / "firstboot-wrapper.sh": ("/usr/local/bin/omarchy-first-login", True),
+        assets / "scripts" / "first-login-profile.sh": ("/etc/profile.d/omarchy-first-login.sh", False),
+        assets / "scripts" / "stage-marker.sh": ("/usr/local/bin/omarchy-stage-marker", True),
         assets / "scripts" / "boot-guardian.sh": ("/usr/local/bin/omarchy-boot-guardian", True),
         assets / "scripts" / "omarchy-boot-check.sh": ("/usr/local/bin/omarchy-boot-check", True),
         assets / "scripts" / "omarchy-boot-repair.sh": ("/usr/local/bin/omarchy-boot-repair", True),
-        assets / "services" / "omarchy-firstboot.service": ("/usr/lib/systemd/system/omarchy-firstboot.service", False),
         assets / "services" / "boot-guardian.service": ("/usr/lib/systemd/system/omarchy-boot-guardian.service", False),
     }
     deployed = [str(runtime / "installer")]
@@ -154,6 +160,16 @@ def deploy_target_assets(
     expected["machine"] = asdict(machine)
     _write_atomic(_target(root, EXPECTED_STATE_PATH), expected)
     deployed.append(str(_target(root, EXPECTED_STATE_PATH)))
+    pairing = {
+        "url": machine.bootstrap_url,
+        "expected_sha256": machine.expected_sha256,
+        "upstream_version": machine.upstream_version,
+        "release_tag": machine.release_tag,
+        "build_commit": machine.build_commit,
+    }
+    pairing_path = _target(root, "/var/lib/omarchy/firstboot/release-pairing.json")
+    _write_atomic(pairing_path, pairing, mode=0o644)
+    deployed.append(str(pairing_path))
     return tuple(deployed)
 
 
@@ -200,7 +216,7 @@ def validate_target_root(target_root: str | Path, machine: TargetMachineState) -
     _require(any(path.is_file() for path in (_target(root, "/boot/limine.conf"), _target(root, "/boot/limine/limine.conf"))), "Limine configuration is missing", validated, "limine-config")
 
     runtime = _target(root, RUNTIME_ROOT / "installer")
-    required_modules = (runtime / "__init__.py", runtime / "platforms/installed_system/firstboot.py", runtime / "platforms/installed_system/boot_guardian.py")
+    required_modules = (runtime / "__init__.py", runtime / "platforms/installed_system/first_login.py", runtime / "platforms/installed_system/boot_guardian.py")
     _require(all(path.is_file() for path in required_modules), "Installed Python runtime modules are incomplete", validated, "python-runtime")
     try:
         for module in required_modules:
@@ -210,12 +226,20 @@ def validate_target_root(target_root: str | Path, machine: TargetMachineState) -
     validated.append("python-compile")
 
     executable_paths = tuple(_target(root, path) for path in (
-        "/usr/local/bin/omarchy-firstboot", "/usr/local/bin/omarchy-boot-guardian",
+        "/usr/local/bin/omarchy-first-login", "/usr/local/bin/omarchy-stage-marker",
+        "/usr/local/bin/omarchy-boot-guardian",
         "/usr/local/bin/omarchy-boot-check", "/usr/local/bin/omarchy-boot-repair",
         "/usr/local/bin/omarchy-install-help",
     ))
     _require(all(_is_executable(path) for path in executable_paths), "Installed wrappers are missing or not executable", validated, "executables")
-    for unit_name in ("omarchy-firstboot.service", "omarchy-boot-guardian.service"):
+    _require(_target(root, "/etc/profile.d/omarchy-first-login.sh").is_file(), "First-login shell hook is missing", validated, "first-login-hook")
+    pairing_path = _target(root, "/var/lib/omarchy/firstboot/release-pairing.json")
+    try:
+        pairing = json.loads(pairing_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise TargetFinalizationError(f"Release-pairing JSON is invalid: {exc}") from exc
+    _require(pairing.get("expected_sha256") == machine.expected_sha256, "Release-pairing SHA256 does not match plan", validated, "release-pairing")
+    for unit_name in ("omarchy-boot-guardian.service",):
         unit = _target(root, f"/usr/lib/systemd/system/{unit_name}")
         text = unit.read_text(encoding="utf-8") if unit.is_file() else ""
         starts = [line.split("=", 1)[1].split()[0] for line in text.splitlines() if line.startswith("ExecStart=")]
@@ -250,13 +274,13 @@ def finalize_target_system(
     deployed = deploy_target_assets(root, machine, source_root=source_root)
     validated = validate_target_root(root, machine)
     active_runner = runner or SubprocessCommandRunner()
-    _run_checked(active_runner, ["arch-chroot", str(root), "/usr/bin/env", "PYTHONPATH=/opt/omarchy-installer", "/usr/bin/python", "-c", "import installer.platforms.installed_system.firstboot; import installer.platforms.installed_system.boot_guardian"])
-    _run_checked(active_runner, ["systemd-analyze", "verify", f"--root={root}", "omarchy-firstboot.service", "omarchy-boot-guardian.service"])
+    _run_checked(active_runner, ["arch-chroot", str(root), "/usr/bin/env", "PYTHONPATH=/opt/omarchy-installer", "/usr/bin/python", "-c", "import installer.platforms.installed_system.first_login; import installer.platforms.installed_system.boot_guardian"])
+    _run_checked(active_runner, ["systemd-analyze", "verify", f"--root={root}", "omarchy-boot-guardian.service"])
 
     enabled: list[str] = []
     wants = _target(root, "/etc/systemd/system/multi-user.target.wants")
     wants.mkdir(parents=True, exist_ok=True)
-    for unit in ("omarchy-firstboot.service", "omarchy-boot-guardian.service"):
+    for unit in ("omarchy-boot-guardian.service",):
         link = wants / unit
         if link.exists() or link.is_symlink():
             link.unlink()

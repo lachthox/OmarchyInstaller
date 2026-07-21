@@ -25,6 +25,13 @@ from .post_install import (
     evaluate_bootstrap_health,
     normalize_boot_policy,
 )
+from .first_login import (
+    FirstLoginContext,
+    FirstLoginError,
+    FirstLoginResult,
+    ReleasePairing,
+    run_first_login,
+)
 from .target_finalize import (
     TargetFinalizationError,
     TargetFinalizationResult,
@@ -55,6 +62,10 @@ __all__ = [
     "FirstBootExecutionResult",
     "FirstBootPolicyError",
     "FirstBootRuntimeContext",
+    "FirstLoginContext",
+    "FirstLoginError",
+    "FirstLoginResult",
+    "ReleasePairing",
     "assert_firstboot_ready",
     "build_bootstrap_contract",
     "detect_runtime_context",
@@ -64,6 +75,7 @@ __all__ = [
     "PostInstallNormalizationError",
     "PostInstallNormalizationResult",
     "run_firstboot_handoff",
+    "run_first_login",
     "TargetFinalizationError",
     "TargetFinalizationResult",
     "TargetMachineState",

@@ -23,10 +23,13 @@ test success as installation success.
 - Target finalization deploys and validates runtime, wrappers, units, actual
   machine state, boot assets, and protected directories before activation or
   atomic completion markers are permitted.
+- The one-time Omarchy launcher is a normal-user interactive login flow with a
+  release-paired download hash, output-only PTY transcript, atomic state, and
+  explicit retry; the former root retrying service is removed.
 
 ## Active work
 
-- Phase 14: normal-user interactive Omarchy first-login flow.
+- Phase 15: canonical boot policy and fail-closed guardian deployment.
 
 ## Known blockers
 

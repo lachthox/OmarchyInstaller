@@ -78,6 +78,8 @@ def test_finalization_is_atomic_and_machine_specific(tmp_path: Path) -> None:
     assert (target / "var/lib/omarchy/install/target-finalization-complete.json").is_file()
     assert not (target / "var/lib/omarchy/install/omarchy-complete.json").exists()
     assert (target / "etc/systemd/system/multi-user.target.wants/omarchy-boot-guardian.service").exists()
+    assert not (target / "etc/systemd/system/multi-user.target.wants/omarchy-firstboot.service").exists()
+    assert (target / "etc/profile.d/omarchy-first-login.sh").is_file()
     assert any(command[:2] == ["systemd-analyze", "verify"] for command in runner.commands)
     assert any("PYTHONPATH=/opt/omarchy-installer" in command for command in runner.commands)
 
