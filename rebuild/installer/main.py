@@ -29,8 +29,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--max-plan-age-hours",
         type=int,
-        default=72,
-        help="Maximum allowed plan age in hours (set <0 to disable age gating).",
+        default=-1,
+        help="Optional explicit maximum plan age; disabled by default in favor of artifact pairing.",
     )
     parser.add_argument(
         "--efi-mount",

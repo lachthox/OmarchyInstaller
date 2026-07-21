@@ -69,3 +69,14 @@ Date: 2026-07-21
 - `test_windows_backup.py` verifies selected-ESP per-file hashing, aggregate
   hashing, source identity binding, raw GPT artifacts, and simulated-not-verified
   dry runs.
+
+## Phase 6 evidence
+
+- `pytest -q rebuild/tests/test_windows_handoff.py rebuild/tests/test_shared_contracts.py`:
+  18 passed.
+- Focused Ruff and mypy for Windows handoff: passed.
+- Evidence proves non-USB/internal targets, wrong typed confirmation, and identity
+  races execute no Ventoy command; matching identity is read twice before write;
+  ISO copy hashes match; corruption removes the copy; FAT32 rejects a sparse file
+  over 4 GiB; plaintext Wi-Fi handoff is blocked; and plan/ISO/provenance are
+  HMAC-bound with a one-time key.

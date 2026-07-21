@@ -28,7 +28,7 @@ be marked complete until run in a capable environment.
 | CRIT-09 | Critical | Firstboot runs interactive install as root | 14 | first-login | Pending | Pending | Open | | |
 | CRIT-10 | Critical | GPT free-space includes reserved sectors | 5, 9 | disk geometry | Pending | Pending | Open | | |
 | CRIT-11 | Critical | Plan template fails production contract | 2 | shared models/templates | Replaced with complete schema 1.0.0 artifact accepted by `PlanContract` | `test_shipped_plan_template_passes_production_validator` | Resolved | | |
-| CRIT-12 | Critical | Ventoy write precedes USB validation | 6 | Windows handoff | Pending | Pending | Open | | |
+| CRIT-12 | Critical | Ventoy write precedes USB validation | 6 | Windows handoff | Added two pre-write USB/protected-role/identity reads and exact typed confirmation | internal-disk, wrong-confirmation, identity-race, and command-order tests | Resolved | | |
 | CRIT-13 | Critical | ISO build can disable signature checks | 8 | ISO build | Pending | Pending | Open | | |
 | HIGH-01 | High | TUIs block their event loops | 3, 4, 11 | Textual apps | Pending | Pending | Open | | |
 | HIGH-02 | High | Pre-install flow requires Limine | 11, 15 | boot policy | Pending | Pending | Open | | |
@@ -42,7 +42,7 @@ be marked complete until run in a capable environment.
 | HIGH-10 | High | EFI fallback accepts arbitrary FAT32 | 5 | Windows identity | Removed FAT32 fallback; GPT ESP type required | FAT32-decoy and missing-ESP tests | Resolved | | |
 | HIGH-11 | High | EFI backup is not verifiable | 5 | Windows backup | Added per-file SHA256, deterministic aggregate, and read-back verification | `test_backup_verifies_selected_esp_and_per_file_manifest` | Resolved | | |
 | HIGH-12 | High | Backup may mount wrong ESP | 5 | Windows backup | Mounts exact disk/partition selected by system-partition probe and records identities | selected-ESP fixture and source manifest assertions | Resolved | | |
-| HIGH-13 | High | USB may contain plaintext Wi-Fi secret | 6, 10 | handoff/network | Pending | Pending | Open | | |
+| HIGH-13 | High | USB may contain plaintext Wi-Fi secret | 6, 10 | handoff/network | Removed plaintext Wi-Fi handoff; credentials are interactive-only | `test_plaintext_wifi_handoff_is_disabled` | Resolved | | Live network secret handling continues in Phase 10 |
 | HIGH-14 | High | Wi-Fi password exposed in argv | 10 | network | Pending | Pending | Open | | |
 | HIGH-15 | High | nmtui lacks inherited terminal | 10 | network | Pending | Pending | Open | | |
 | HIGH-16 | High | Link state mistaken for internet readiness | 10 | network | Pending | Pending | Open | | |
@@ -69,8 +69,8 @@ be marked complete until run in a capable environment.
 | MED-04 | Medium | Version comparison mishandles prereleases | 2 | versioning | Replaced parser with `packaging.version.Version` | `test_version_comparison_uses_standard_prerelease_ordering` | Resolved | | |
 | MED-05 | Medium | Windows preflight parsing locale-dependent | 4, 5 | Windows checks | Pending | Pending | Open | | |
 | MED-06 | Medium | Disk number used when serial absent | 2, 5, 9 | identity | Pending | Pending | Open | | |
-| MED-07 | Medium | Copied ISO hash not verified | 6 | handoff | Pending | Pending | Open | | |
-| MED-08 | Medium | FAT32 file-size limit unchecked | 6 | handoff | Pending | Pending | Open | | |
+| MED-07 | Medium | Copied ISO hash not verified | 6 | handoff | Source/destination SHA256 compared; corrupt copy removed | ISO copy and corruption tests | Resolved | | |
+| MED-08 | Medium | FAT32 file-size limit unchecked | 6 | handoff | Rejects any FAT32 payload above 4 GiB minus one byte | sparse over-limit test | Resolved | | |
 | MED-09 | Medium | Arbitrary 72-hour plan freshness | 6, 9 | discovery/main | Pending | Pending | Open | | |
 | MED-10 | Medium | EXE version derived from commit digits | 7 | EXE build | Pending | Pending | Open | | |
 | MED-11 | Medium | Prompt responses logged | 3, 10 | command/logging | Pending | Pending | Open | | |
