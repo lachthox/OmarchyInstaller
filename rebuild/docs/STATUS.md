@@ -1,46 +1,34 @@
-# Rebuild Status Ledger
+# Python rebuild status
 
-## Completed
+## Current state
 
-- Created the `rebuild/` containment area on branch `Python-Rebuild`.
-- Added coordination documents for ownership, dependencies, roles, project setup, and review discipline.
-- Added GitHub issue and pull request templates to enforce structured work items.
-- Added `rebuild/docs/stage-briefs.md` to define the mandatory Stage 0 through Stage 12 execution order.
-- Added `rebuild/docs/boot-protection.md`, `rebuild/docs/plan-schema.md`, `rebuild/docs/release-process.md`, and `rebuild/docs/development-notes.md` as the remaining core project documentation files.
-- Documented the rebuild trigger matrix and freshness policy in `rebuild/docs/release-process.md` and aligned the EXE and release workflow path filters with shared-contract changes.
-- Created the parent issue hierarchy on GitHub: #11, #7, #6, #10, #4, #3, #5, #9, and #8.
-- Created and linked the initial child issue sequence on GitHub: #12 under #11, #16 under #7, #13 under #6, #14 under #10, and #15 under #4.
-- Created and linked the next child issue wave on GitHub: #17 under #3, #18 under #5, #19 under #9, and #20 under #8.
-- Created GitHub Project `OmarchyInstaller Rebuild` as project #1 and linked `lachthox/OmarchyInstaller` to it.
-- Created the custom project fields: `Rebuild Status`, `Layer`, `Workstream`, `Priority`, `Risk`, `Dependency State`, and `Agent Group`.
-- Created the rebuild label set and the eight milestone entries from the buildout plan.
-- Added issues #3 through #20 to project #1 and stamped their milestone, labels, and custom project field values.
-- Added a project-local MCP task orchestrator scaffold under `rebuild/tools/task_orchestrator_mcp/`.
-- Added a workspace-scoped `.vscode/mcp.json` so the task orchestrator is configured in this repo only, not at user profile level.
-- Codified the containment boundary in `rebuild/docs/containment-boundary.md` so early rebuild work stays inside `rebuild/` until explicit promotion gates are met.
-- Added `rebuild/docs/architecture.md` with the four-layer model, preserved legacy concepts, runtime boundaries, and target repo structure/ownership contracts.
-- Created the concrete containment tree under `rebuild/installer/` with shared, platform-specific, and UI package families.
-- Added scaffold assets for templates, systemd unit files, helper shell wrappers, ISO payload assets, and startup assets under `rebuild/assets/`.
-- Added `rebuild/requirements-dev.txt` and synchronized dev dependencies in `rebuild/pyproject.toml`.
-- Added a rebuild-owned Arch ISO CI slice with `.github/workflows/rebuild-iso.yml` and `rebuild/tools/build_iso_pipeline.py`, including payload staging for Python runtime files, startup hook references, required package manifest, and ISO build metadata output.
-- Added a rebuild-owned Windows EXE CI slice with `.github/workflows/rebuild-windows-exe.yml` and `rebuild/tools/build_windows_exe.py`, including PyInstaller packaging inputs, version stamping, and executable build metadata output.
-- Added a rebuild-owned release pipeline slice with `.github/workflows/rebuild-release.yml` and `rebuild/tools/publish_release.py`, generating release manifest, compatibility manifest, and release checksum bundle with optional GitHub release upload.
-- Implemented strict shared contracts in `rebuild/installer/shared/` using Pydantic models, version parsing/comparison helpers, strict plan/compat validation, and fail-closed compatibility evaluation for Windows producer and Arch consumer alignment.
+The Python implementation is the canonical replacement under remediation. It is
+not approved for real hardware and no release workflow may treat dry-run or unit
+test success as installation success.
 
-## In Progress
+## Completed gates
 
-- None.
+- Audited checkout and dedicated remediation branch established.
+- All 61 audit findings entered in `docs/remediation-status.md`.
+- Real-hardware warning added to top-level documentation.
+- Packaged Windows launcher no longer bundles, exposes, or falls back to the
+  legacy PowerShell installer.
+- Launcher failure behavior has focused automated coverage.
 
-## Blocked
+## Active work
 
-- None.
+- Phase 2: strict shared contracts and validated templates.
 
-## Changed Assumptions
+## Known blockers
 
-- The rebuild coordination layer is being established before any runtime Python modules are implemented.
-- All rebuild PRs should target the `Python-Rebuild` branch until a later promotion decision is made.
-- GitHub Project operations were completed through GitHub CLI after granting the local token the `project` scope, because the available MCP surface still does not expose Project creation commands.
+- Serena MCP is not exposed in this execution session; local memories are being
+  refreshed manually.
+- Docker/QEMU/OVMF are unavailable on the current host, so ISO boot, disposable
+  install, reboot, and recovery gates remain open.
+- Exact external archinstall and Omarchy contracts still require pinned-version
+  verification before installation-engine work.
 
-## Current Next Priority
+## Readiness
 
-- Keep tracker and status docs synchronized as new maintenance or follow-up hardening tasks are opened.
+See `docs/remediation-status.md`, `docs/test-evidence.md`, and
+`docs/release-readiness.md`. Only those ledgers may claim subsystem readiness.

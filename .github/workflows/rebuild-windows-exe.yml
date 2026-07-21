@@ -13,7 +13,7 @@ on:
       - Python-Rebuild
       - main
     paths:
-      - "windows-prep.ps1"
+      - "rebuild/installer/platforms/windows/**"
       - "rebuild/installer/shared/**"
       - "rebuild/tools/build_windows_exe.py"
       - "rebuild/tools/windows/omarchy_installer_launcher.py"

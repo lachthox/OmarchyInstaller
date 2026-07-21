@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
-import subprocess
 import sys
+import traceback
 from pathlib import Path
 
-LEGACY_HANDOFF_EXIT_CODE = 10
+EXIT_FATAL_STARTUP = 1
 
 
 def bundled_root() -> Path:
@@ -28,22 +27,6 @@ def ensure_rebuild_on_syspath() -> None:
             sys.path.insert(0, rebuild_path)
 
 
-def powershell_script() -> Path:
-    return bundled_root() / "windows-prep.ps1"
-
-
-def build_command(script_path: Path, passthrough_args: list[str]) -> list[str]:
-    return [
-        "powershell.exe",
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        str(script_path),
-        *passthrough_args,
-    ]
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="OmarchyInstaller",
@@ -51,14 +34,9 @@ def build_parser() -> argparse.ArgumentParser:
         description="Omarchy Windows installer launcher.",
     )
     parser.add_argument(
-        "--legacy-powershell",
-        action="store_true",
-        help="Bypass Python TUI and launch legacy PowerShell workflow directly.",
-    )
-    parser.add_argument(
         "--python-preflight-only",
         action="store_true",
-        help="Run Python preflight TUI and exit without launching legacy flow.",
+        help="Run Python preflight TUI without applying changes.",
     )
     parser.add_argument(
         "--python-preflight-json",
@@ -89,19 +67,6 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def run_legacy_powershell(passthrough_args: list[str]) -> int:
-    script_path = powershell_script()
-    if not script_path.exists():
-        print(f"Missing bundled script: {script_path}", file=sys.stderr)
-        return 2
-
-    command = build_command(script_path, passthrough_args)
-    env = dict(os.environ)
-    env.setdefault("OMARCHY_INSTALLER_WRAPPED", "1")
-    completed = subprocess.run(command, env=env)
-    return int(completed.returncode)
-
-
 def run_python_tui(
     *,
     preflight_only: bool,
@@ -111,18 +76,16 @@ def run_python_tui(
     backup_fallback_destination: str,
 ) -> int:
     ensure_rebuild_on_syspath()
-    from installer.platforms.windows import EXIT_LAUNCH_LEGACY, run_windows_preflight_tui
+    from installer.platforms.windows import run_windows_preflight_tui
 
-    result = run_windows_preflight_tui(
-        launch_legacy_on_continue=not preflight_only,
+    return int(
+        run_windows_preflight_tui(
         apply_changes=apply_changes,
         target_free_gib=target_free_gib,
         backup_destination=backup_destination or None,
         backup_fallback_destination=backup_fallback_destination or None,
+        )
     )
-    if result == EXIT_LAUNCH_LEGACY:
-        return LEGACY_HANDOFF_EXIT_CODE
-    return int(result)
 
 
 def run_python_preflight_json() -> int:
@@ -136,13 +99,10 @@ def run_python_preflight_json() -> int:
 
 def main() -> int:
     parser = build_parser()
-    args, passthrough_args = parser.parse_known_args(sys.argv[1:])
+    args = parser.parse_args(sys.argv[1:])
 
     if args.python_preflight_json:
         return run_python_preflight_json()
-
-    if args.legacy_powershell:
-        return run_legacy_powershell(passthrough_args)
 
     try:
         tui_result = run_python_tui(
@@ -152,12 +112,13 @@ def main() -> int:
             backup_destination=args.python_backup_destination,
             backup_fallback_destination=args.python_backup_fallback_destination,
         )
-    except Exception as exc:  # pragma: no cover - runtime fallback
-        print(f"Python TUI startup failed, falling back to PowerShell: {exc}", file=sys.stderr)
-        return run_legacy_powershell(passthrough_args)
+    except Exception as exc:  # pragma: no cover - exercised by packaged runtime
+        print("FATAL: OmarchyInstaller Python TUI could not start.", file=sys.stderr)
+        print(f"{type(exc).__name__}: {exc}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        print("No alternate installer was launched.", file=sys.stderr)
+        return EXIT_FATAL_STARTUP
 
-    if tui_result == LEGACY_HANDOFF_EXIT_CODE:
-        return run_legacy_powershell(passthrough_args)
     return int(tui_result)
 
 

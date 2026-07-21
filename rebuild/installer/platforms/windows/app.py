@@ -16,7 +16,6 @@ from .flow import FlowStepResult, WindowsMigrationFlow
 
 
 EXIT_QUIT = 0
-EXIT_LAUNCH_LEGACY = 10
 
 
 def _coerce_report(report: dict[str, Any]) -> tuple[list[dict[str, str]], bool]:
@@ -41,7 +40,6 @@ def _coerce_report(report: dict[str, Any]) -> tuple[list[dict[str, str]], bool]:
 
 @dataclass(slots=True)
 class WindowsTuiConfig:
-    launch_legacy_on_continue: bool = True
     apply_changes: bool = False
     target_free_gib: int = 120
     backup_destination: str | None = None
@@ -78,7 +76,6 @@ class WindowsPreflightApp(App[int]):
         Binding("b", "run_backup_step", "Run Backup Step"),
         Binding("p", "run_partition_step", "Run Partition Step"),
         Binding("c", "continue_flow", "Continue"),
-        Binding("l", "launch_legacy", "Legacy PowerShell"),
         Binding("q", "quit_flow", "Quit"),
     ]
 
@@ -105,7 +102,7 @@ class WindowsPreflightApp(App[int]):
             yield DataTable(id="checks")
             yield Static("", id="summary")
             yield Static(
-                "Keys: [R] refresh  [B] backup  [P] partition prep  [C] continue  [L] legacy  [Q] quit",
+                "Keys: [R] refresh  [B] backup  [P] partition prep  [C] continue  [Q] quit",
                 id="hints",
             )
         yield Footer()
@@ -237,13 +234,7 @@ class WindowsPreflightApp(App[int]):
             if not self._partition_result or not self._partition_result.ok:
                 return
         self._append_note("Python flow completed.")
-        if self._config.launch_legacy_on_continue:
-            self.exit(EXIT_LAUNCH_LEGACY)
-            return
         self.exit(EXIT_QUIT)
-
-    def action_launch_legacy(self) -> None:
-        self.exit(EXIT_LAUNCH_LEGACY)
 
     def action_quit_flow(self) -> None:
         self.exit(EXIT_QUIT)
@@ -251,7 +242,6 @@ class WindowsPreflightApp(App[int]):
 
 def run_windows_preflight_tui(
     *,
-    launch_legacy_on_continue: bool = True,
     apply_changes: bool = False,
     target_free_gib: int = 120,
     backup_destination: str | None = None,
@@ -259,7 +249,6 @@ def run_windows_preflight_tui(
 ) -> int:
     app = WindowsPreflightApp(
         WindowsTuiConfig(
-            launch_legacy_on_continue=launch_legacy_on_continue,
             apply_changes=apply_changes,
             target_free_gib=target_free_gib,
             backup_destination=backup_destination,

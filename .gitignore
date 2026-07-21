@@ -24,6 +24,12 @@ desktop.ini
 dist/
 build/
 .cache/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
 # Archive artifacts
 *.zip

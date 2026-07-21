@@ -23,7 +23,6 @@ on:
       - main
     paths:
       - "build-custom-iso.sh"
-      - "windows-prep.ps1"
       - "rebuild/assets/**"
       - "rebuild/installer/**"
       - "rebuild/requirements.txt"

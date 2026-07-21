@@ -75,13 +75,11 @@ def compute_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def ensure_paths(workspace: Path) -> tuple[Path, Path]:
+def ensure_paths(workspace: Path) -> Path:
     launcher = workspace / "rebuild" / "tools" / "windows" / "omarchy_installer_launcher.py"
-    windows_prep = workspace / "windows-prep.ps1"
-    missing = [str(path) for path in (launcher, windows_prep) if not path.exists()]
-    if missing:
-        raise RuntimeError(f"Missing required packaging input paths: {missing}")
-    return launcher, windows_prep
+    if not launcher.exists():
+        raise RuntimeError(f"Missing required packaging input path: {launcher}")
+    return launcher
 
 
 def write_version_file(path: Path, stamp: VersionStamp) -> None:
@@ -129,7 +127,7 @@ def run_pipeline(args: argparse.Namespace) -> int:
     workspace = args.workspace.resolve()
     output_dir = args.output_dir.resolve()
     work_dir = args.work_dir.resolve()
-    launcher, windows_prep = ensure_paths(workspace)
+    launcher = ensure_paths(workspace)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -144,7 +142,6 @@ def run_pipeline(args: argparse.Namespace) -> int:
     if payload_dir.exists():
         shutil.rmtree(payload_dir)
     payload_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(windows_prep, payload_dir / "windows-prep.ps1")
 
     version_file = work_dir / "version_info.txt"
     write_version_file(version_file, stamp)
@@ -173,8 +170,6 @@ def run_pipeline(args: argparse.Namespace) -> int:
                 str(workspace / "rebuild"),
                 "--version-file",
                 str(version_file),
-                "--add-data",
-                f"{payload_dir / 'windows-prep.ps1'};.",
                 str(launcher),
             ],
             cwd=workspace,
@@ -202,7 +197,6 @@ def run_pipeline(args: argparse.Namespace) -> int:
         },
         "packaging_inputs": {
             "launcher": str(launcher),
-            "windows_prep_script": str(windows_prep),
             "version_file": str(version_file),
         },
         "output": {
