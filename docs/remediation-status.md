@@ -50,8 +50,8 @@ be marked complete until run in a capable environment.
 | HIGH-18 | High | EFI mount contracts conflict | 12, 13, 15 | install/guardian | Pending | Pending | Open | | |
 | HIGH-19 | High | Failure evidence is deleted | 3, 11, 12 | diagnostics | Pending | Pending | Open | | |
 | HIGH-20 | High | Conflicting release products | 1, 7, 18, 19 | workflows | Pending | Pending | Open | | |
-| HIGH-21 | High | Publisher can pair unrelated artifacts | 7, 18 | release tooling | Pending | Pending | Open | | |
-| HIGH-22 | High | Provenance failures can fail open | 7, 18 | release/Windows | Pending | Pending | Open | | |
+| HIGH-21 | High | Publisher can pair unrelated artifacts | 7, 18 | release tooling | Requires unique artifacts and matching commit/tag/version/run/ref/schema/name/hash/non-dry-run manifests | provenance pairing negative tests | Resolved | | VM release gate remains Phase 18 |
+| HIGH-22 | High | Provenance failures can fail open | 7, 18 | release/Windows | Missing, ambiguous, dry-run, mismatched, or tampered provenance now hard-fails | provenance negative tests | Resolved | | |
 | HIGH-23 | High | Interrupted ISO builds leak mounts | 3, 8 | ISO build | Pending | Pending | Open | | |
 | HIGH-24 | High | Successful install leaves mounts/LUKS open | 3, 12 | install transactions | Pending | Pending | Open | | |
 | HIGH-25 | High | Runtime dependency manifest incomplete | 8, 13 | ISO/finalization | Pending | Pending | Open | | |
@@ -72,9 +72,9 @@ be marked complete until run in a capable environment.
 | MED-07 | Medium | Copied ISO hash not verified | 6 | handoff | Source/destination SHA256 compared; corrupt copy removed | ISO copy and corruption tests | Resolved | | |
 | MED-08 | Medium | FAT32 file-size limit unchecked | 6 | handoff | Rejects any FAT32 payload above 4 GiB minus one byte | sparse over-limit test | Resolved | | |
 | MED-09 | Medium | Arbitrary 72-hour plan freshness | 6, 9 | discovery/main | Pending | Pending | Open | | |
-| MED-10 | Medium | EXE version derived from commit digits | 7 | EXE build | Pending | Pending | Open | | |
+| MED-10 | Medium | EXE version derived from commit digits | 7 | EXE build | Requires explicit semantic X.Y.Z and emits X.Y.Z.0 | strict VERSIONINFO test | Resolved | | |
 | MED-11 | Medium | Prompt responses logged | 3, 10 | command/logging | Pending | Pending | Open | | |
-| MED-12 | Medium | Release template incompatible | 2, 7 | models/templates | Pending | Pending | Open | | |
+| MED-12 | Medium | Release template incompatible | 2, 7 | models/templates | Template and publisher both validate with `ReleaseManifestContract` schema 1.0.0 | template and valid release-pair tests | Resolved | | |
 | MED-13 | Medium | README/status materially stale | 1, 19 | documentation | Pending | Pending | Open | | |
 | MED-14 | Medium | Tests enforce obsolete archinstall shape | 12, 17, 19 | Bats/contracts | Pending | Pending | Open | | |
 | MED-15 | Medium | Tests mock away production failures | 17, 18 | integration/VM tests | Pending | Pending | Open | | |

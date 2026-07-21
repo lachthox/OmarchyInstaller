@@ -3,39 +3,24 @@ name: Rebuild Release Pipeline
 on:
   workflow_dispatch:
     inputs:
-      tag:
-        description: "Release tag (optional, defaults to date-based tag)"
-        required: false
+      release_version:
+        description: "Semantic version (X.Y.Z)"
+        required: true
         type: string
-      dry_run:
-        description: "Build placeholder outputs and metadata only"
-        type: boolean
-        required: false
-        default: true
+      tag:
+        description: "New immutable release tag"
+        required: true
+        type: string
       publish:
         description: "Upload assets to GitHub Release"
         type: boolean
         required: false
         default: false
-  push:
-    branches:
-      - Python-Rebuild
-      - main
-    paths:
-      - "build-custom-iso.sh"
-      - "rebuild/assets/**"
-      - "rebuild/installer/**"
-      - "rebuild/requirements.txt"
-      - "rebuild/requirements-dev.txt"
-      - "rebuild/installer/shared/**"
-      - "rebuild/tools/build_iso_pipeline.py"
-      - "rebuild/tools/build_windows_exe.py"
-      - "rebuild/tools/publish_release.py"
-      - "rebuild/tools/windows/**"
-      - ".github/workflows/rebuild-release.yml"
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   build-iso:
@@ -66,15 +51,12 @@ jobs:
       - name: Build ISO artifact
         shell: bash
         run: |
-          EXTRA_ARGS=()
-          if [[ "${{ github.event.inputs.dry_run || 'true' }}" == "true" ]]; then
-            EXTRA_ARGS+=(--dry-run)
-          fi
           python rebuild/tools/build_iso_pipeline.py \
             --workspace "$GITHUB_WORKSPACE" \
             --output-dir "$OUTPUT_DIR" \
             --work-dir "$WORK_DIR" \
-            "${EXTRA_ARGS[@]}"
+            --release-version "${{ inputs.release_version }}" \
+            --release-tag "${{ inputs.tag }}"
 
       - name: Upload ISO outputs
         uses: actions/upload-artifact@v7
@@ -107,15 +89,12 @@ jobs:
       - name: Build Windows EXE artifact
         shell: pwsh
         run: |
-          $extraArgs = @()
-          if ("${{ github.event.inputs.dry_run || 'true' }}" -eq "true") {
-            $extraArgs += "--dry-run"
-          }
           python rebuild/tools/build_windows_exe.py `
             --workspace "$env:GITHUB_WORKSPACE" `
             --output-dir "$env:OUTPUT_DIR" `
             --work-dir "$env:WORK_DIR" `
-            @extraArgs
+            --release-version "${{ inputs.release_version }}" `
+            --release-tag "${{ inputs.tag }}"
 
       - name: Upload Windows EXE outputs
         uses: actions/upload-artifact@v7
@@ -160,21 +139,41 @@ jobs:
         shell: bash
         run: |
           EXTRA_ARGS=()
-          if [[ -n "${{ github.event.inputs.tag }}" ]]; then
-            EXTRA_ARGS+=(--tag "${{ github.event.inputs.tag }}")
-          fi
-          if [[ "${{ github.event.inputs.publish || 'false' }}" == "true" ]]; then
-            EXTRA_ARGS+=(--publish --repo "${{ github.repository }}")
-          fi
-          if [[ "${{ github.event.inputs.dry_run || 'true' }}" == "true" ]]; then
-            EXTRA_ARGS+=(--dry-run)
-          fi
-
-          python rebuild/tools/publish_release.py \
+          EXTRA_ARGS+=(--tag "${{ inputs.tag }}")
+          python -m rebuild.tools.publish_release \
             --workspace "$GITHUB_WORKSPACE" \
             --artifact-dir "$INPUT_DIR" \
             --output-dir "$OUTPUT_DIR" \
             "${EXTRA_ARGS[@]}"
+
+      - name: Attest ISO and Windows executable provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            ${{ env.INPUT_DIR }}/iso/*-omarchy-auto.iso
+            ${{ env.INPUT_DIR }}/windows/OmarchyInstaller.exe
+
+      - name: Attest release metadata provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            ${{ env.OUTPUT_DIR }}/release_manifest.json
+            ${{ env.OUTPUT_DIR }}/compatibility_manifest.json
+            ${{ env.OUTPUT_DIR }}/sha256sums.txt
+
+      - name: Publish immutable release after attestations
+        if: ${{ inputs.publish }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          python -m rebuild.tools.publish_release \
+            --workspace "$GITHUB_WORKSPACE" \
+            --artifact-dir "$INPUT_DIR" \
+            --output-dir "$OUTPUT_DIR" \
+            --tag "${{ inputs.tag }}" \
+            --repo "${{ github.repository }}" \
+            --publish --publish-only
 
       - name: Upload release metadata bundle
         uses: actions/upload-artifact@v7

@@ -3,23 +3,19 @@ name: Rebuild Arch ISO Pipeline
 on:
   workflow_dispatch:
     inputs:
+      release_version:
+        description: "Semantic version (X.Y.Z)"
+        type: string
+        required: true
+      release_tag:
+        description: "Immutable release tag"
+        type: string
+        required: true
       dry_run:
         description: "Run payload + manifest generation only (no full ISO build)"
         type: boolean
         required: false
         default: false
-  push:
-    branches:
-      - Python-Rebuild
-      - main
-    paths:
-      - "build-custom-iso.sh"
-      - "rebuild/tools/build_iso_pipeline.py"
-      - "rebuild/installer/**"
-      - "rebuild/assets/**"
-      - "rebuild/requirements.txt"
-      - "rebuild/requirements-dev.txt"
-      - ".github/workflows/rebuild-iso.yml"
 
 permissions:
   contents: read
@@ -62,6 +58,8 @@ jobs:
             --workspace "$GITHUB_WORKSPACE" \
             --output-dir "$OUTPUT_DIR" \
             --work-dir "$WORK_DIR" \
+            --release-version "${{ inputs.release_version }}" \
+            --release-tag "${{ inputs.release_tag }}" \
             "${EXTRA_ARGS[@]}"
 
       - name: Upload rebuild ISO outputs

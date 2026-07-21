@@ -80,3 +80,14 @@ Date: 2026-07-21
   ISO copy hashes match; corruption removes the copy; FAT32 rejects a sparse file
   over 4 GiB; plaintext Wi-Fi handoff is blocked; and plan/ISO/provenance are
   HMAC-bound with a one-time key.
+
+## Phase 7 evidence
+
+- Full Python suite: 74 passed; full Ruff: passed.
+- `test_release_provenance.py` covers strict semantic VERSIONINFO, a valid exact
+  ISO/EXE pair, dry-run rejection, commit mismatch, tampered hash, ambiguous
+  recursive matches, immutable existing tags, and upload without clobber.
+- GitHub artifact attestation configuration follows the official current
+  `actions/attest@v4` contract and runs before optional publication.
+- Authenticode remains externally blocked because no certificate/key service or
+  CI signing-secret contract is available.

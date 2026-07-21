@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -36,6 +37,13 @@ class IsoDescriptor:
 
 def utc_now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def validate_release_version(value: str) -> str:
+    normalized = value.strip()
+    if not re.fullmatch(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)", normalized):
+        raise ValueError("release version must be explicit semantic X.Y.Z")
+    return normalized
 
 
 def fetch_text(url: str) -> str:
@@ -235,6 +243,9 @@ def run_pipeline(args: argparse.Namespace) -> int:
     output_dir = args.output_dir.resolve()
     work_dir = args.work_dir.resolve()
     ensure_workspace_layout(workspace)
+    args.release_version = validate_release_version(args.release_version)
+    if not args.release_tag.strip():
+        raise ValueError("release tag cannot be empty")
 
     output_dir.mkdir(parents=True, exist_ok=True)
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -295,6 +306,10 @@ def run_pipeline(args: argparse.Namespace) -> int:
         "artifact_prefix": args.artifact_prefix,
         "dry_run": args.dry_run,
         "git_commit": commit_sha,
+        "release_version": args.release_version,
+        "release_tag": args.release_tag,
+        "github_run_id": os.environ.get("GITHUB_RUN_ID", "local"),
+        "github_ref": os.environ.get("GITHUB_REF", f"refs/tags/{args.release_tag}"),
         "source_iso": {
             "name": iso.name,
             "date": iso.date,
@@ -343,6 +358,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--mirror-url",
         default=ARCH_MIRROR_DEFAULT,
         help="Arch mirror URL used for source ISO discovery.",
+    )
+    parser.add_argument(
+        "--release-version",
+        required=True,
+        help="Explicit semantic product version in X.Y.Z form.",
+    )
+    parser.add_argument(
+        "--release-tag",
+        required=True,
+        help="Immutable release tag paired with this artifact.",
     )
     parser.add_argument(
         "--dry-run",

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -49,21 +50,14 @@ def detect_git_commit(workspace: Path) -> str:
         return "unknown"
 
 
-def detect_git_tag(workspace: Path) -> str:
-    try:
-        return run_capture(["git", "-C", str(workspace), "describe", "--tags", "--always", "--dirty"])
-    except subprocess.CalledProcessError:
-        return "0.0.0-dev"
-
-
 def normalize_version(raw: str) -> VersionStamp:
-    digits = [int(part) for part in re.findall(r"\d+", raw)]
-    # Windows VERSIONINFO fields are 16-bit components.
-    digits = [max(0, min(part, 65535)) for part in digits]
-    while len(digits) < 4:
-        digits.append(0)
-    digits = digits[:4]
-    dotted = ".".join(str(part) for part in digits)
+    match = re.fullmatch(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)", raw.strip())
+    if not match:
+        raise ValueError("release version must be explicit semantic X.Y.Z without prerelease metadata")
+    digits = [int(part) for part in match.groups()]
+    if any(part > 65535 for part in digits):
+        raise ValueError("release version components must fit Windows 16-bit VERSIONINFO fields")
+    dotted = ".".join([*(str(part) for part in digits), "0"])
     return VersionStamp(file_version=dotted, product_version=dotted, dotted_quad=dotted)
 
 
@@ -133,8 +127,7 @@ def run_pipeline(args: argparse.Namespace) -> int:
     work_dir.mkdir(parents=True, exist_ok=True)
 
     commit_sha = detect_git_commit(workspace)
-    tag_value = detect_git_tag(workspace)
-    stamp = normalize_version(tag_value)
+    stamp = normalize_version(args.release_version)
 
     payload_dir = work_dir / "payload"
     build_dir = work_dir / "build"
@@ -189,7 +182,10 @@ def run_pipeline(args: argparse.Namespace) -> int:
         "generated_at_utc": utc_now(),
         "dry_run": args.dry_run,
         "git_commit": commit_sha,
-        "git_tag_source": tag_value,
+        "release_version": args.release_version,
+        "release_tag": args.release_tag,
+        "github_run_id": os.environ.get("GITHUB_RUN_ID", "local"),
+        "github_ref": os.environ.get("GITHUB_REF", f"refs/tags/{args.release_tag}"),
         "version_stamp": {
             "file_version": stamp.file_version,
             "product_version": stamp.product_version,
@@ -229,6 +225,16 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=workspace_default / "rebuild" / "dist" / "tmp-windows-exe",
         help="Directory for build intermediates.",
+    )
+    parser.add_argument(
+        "--release-version",
+        required=True,
+        help="Explicit semantic product version in X.Y.Z form.",
+    )
+    parser.add_argument(
+        "--release-tag",
+        required=True,
+        help="Immutable release tag paired with this artifact.",
     )
     parser.add_argument(
         "--dry-run",

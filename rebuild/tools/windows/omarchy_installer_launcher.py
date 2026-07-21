@@ -76,7 +76,7 @@ def run_python_tui(
     backup_fallback_destination: str,
 ) -> int:
     ensure_rebuild_on_syspath()
-    from installer.platforms.windows import run_windows_preflight_tui
+    from installer.platforms.windows import run_windows_preflight_tui  # type: ignore[import-not-found]
 
     return int(
         run_windows_preflight_tui(
@@ -90,7 +90,7 @@ def run_python_tui(
 
 def run_python_preflight_json() -> int:
     ensure_rebuild_on_syspath()
-    from installer.platforms.windows import run_windows_preflight
+    from installer.platforms.windows import run_windows_preflight  # type: ignore[import-not-found]
 
     report = run_windows_preflight()
     print(json.dumps(report, indent=2))

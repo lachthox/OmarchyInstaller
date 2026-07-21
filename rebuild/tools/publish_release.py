@@ -13,6 +13,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from rebuild.installer.shared.atomic_io import atomic_write_json, atomic_write_text
+from rebuild.installer.shared.models import PLAN_SCHEMA_VERSION, ReleaseManifestContract
+
 
 def utc_now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -48,24 +51,64 @@ def detect_git_commit(workspace: Path) -> str:
         return "unknown"
 
 
-def default_tag() -> str:
-    return f"v{datetime.now(UTC).strftime('%Y.%m.%d')}"
-
-
 def read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    atomic_write_json(path, payload)
 
 
 def find_single_file(artifact_dir: Path, pattern: str) -> Path:
     matches = sorted(artifact_dir.rglob(pattern))
     if not matches:
         raise RuntimeError(f"Missing required artifact matching pattern: {pattern}")
+    if len(matches) != 1:
+        raise RuntimeError(
+            f"Ambiguous artifact match for {pattern}: " + ", ".join(str(path) for path in matches)
+        )
     return matches[0]
+
+
+def _require_manifest_pair(
+    *,
+    checkout_commit: str,
+    requested_tag: str,
+    iso_manifest: dict[str, Any],
+    exe_manifest: dict[str, Any],
+    iso_file: Path,
+    exe_file: Path,
+) -> tuple[str, str, str]:
+    for name, manifest in (("ISO", iso_manifest), ("EXE", exe_manifest)):
+        if manifest.get("dry_run") is not False:
+            raise RuntimeError(f"{name} manifest is dry-run or missing an explicit false dry_run state")
+    fields = ("git_commit", "release_tag", "release_version", "github_run_id", "github_ref")
+    for field in fields:
+        left = str(iso_manifest.get(field, "")).strip()
+        right = str(exe_manifest.get(field, "")).strip()
+        if not left or left != right:
+            raise RuntimeError(f"ISO/EXE provenance mismatch for {field}: {left!r} != {right!r}")
+    commit = str(iso_manifest["git_commit"])
+    release_version = str(iso_manifest["release_version"])
+    run_id = str(iso_manifest["github_run_id"])
+    if commit != checkout_commit:
+        raise RuntimeError("Artifact commit does not match the publishing checkout commit")
+    if str(iso_manifest["release_tag"]) != requested_tag:
+        raise RuntimeError("Artifact release tag does not match requested publication tag")
+    iso_output = iso_manifest.get("output_iso", {})
+    exe_output = exe_manifest.get("output", {})
+    if not isinstance(iso_output, dict) or not isinstance(exe_output, dict):
+        raise RuntimeError("Build manifests are missing output descriptors")
+    expected = (
+        ("ISO", iso_file, iso_output.get("name"), iso_output.get("sha256")),
+        ("EXE", exe_file, exe_output.get("exe_name"), exe_output.get("sha256")),
+    )
+    for name, artifact, manifest_name, manifest_hash in expected:
+        if artifact.name != manifest_name:
+            raise RuntimeError(f"{name} filename does not match its build manifest")
+        if compute_sha256(artifact) != manifest_hash:
+            raise RuntimeError(f"{name} hash does not match its build manifest")
+    return commit, release_version, run_id
 
 
 def build_release_payload(
@@ -83,6 +126,15 @@ def build_release_payload(
     iso_manifest = read_json(iso_manifest_path)
     exe_manifest = read_json(exe_manifest_path)
 
+    commit_sha, _release_version, run_id = _require_manifest_pair(
+        checkout_commit=commit_sha,
+        requested_tag=tag,
+        iso_manifest=iso_manifest,
+        exe_manifest=exe_manifest,
+        iso_file=iso_file,
+        exe_file=exe_file,
+    )
+
     iso_sha = compute_sha256(iso_file)
     exe_sha = compute_sha256(exe_file)
 
@@ -92,8 +144,8 @@ def build_release_payload(
         "tag": tag,
         "build": {
             "git_commit": commit_sha,
-            "github_run_id": os.environ.get("GITHUB_RUN_ID", ""),
-            "github_ref": os.environ.get("GITHUB_REF", ""),
+            "github_run_id": run_id,
+            "github_ref": str(iso_manifest["github_ref"]),
         },
         "artifacts": {
             "iso": {
@@ -111,12 +163,13 @@ def build_release_payload(
             "compatibility_manifest_file": "compatibility_manifest.json",
         },
         "contracts": {
-            "plan_schema_version": "0.1.0",
+            "plan_schema_version": PLAN_SCHEMA_VERSION,
             "compatibility_schema_version": "1.0.0",
             "iso_pipeline_manifest_schema": iso_manifest.get("schema_version", ""),
             "exe_pipeline_manifest_schema": exe_manifest.get("schema_version", ""),
         },
     }
+    ReleaseManifestContract.model_validate(release_manifest)
 
     compatibility_manifest = {
         "schema_version": "1.0.0",
@@ -129,7 +182,7 @@ def build_release_payload(
         },
         "minimum_versions": {
             "windows_prep_exe_version": exe_manifest.get("version_stamp", {}).get("dotted_quad", ""),
-            "live_runtime_plan_schema_version": "0.1.0",
+            "live_runtime_plan_schema_version": PLAN_SCHEMA_VERSION,
         },
         "compatibility_rules": [
             "Windows EXE and Arch ISO artifacts must come from the same release tag.",
@@ -137,16 +190,15 @@ def build_release_payload(
             "Consumers must fail closed on missing or incompatible compatibility metadata.",
         ],
         "bootstrap_expectations": {
-            "live_entrypoint": "python3 /opt/omarchy-installer/main.py",
-            "live_setup_wrapper": "/opt/omarchy-setup/setup.sh",
-            "live_entrypoint_compat_alias": "python3 /opt/omarchy-setup/main.py",
+            "live_entrypoint": "/opt/omarchy-venv/bin/python -m installer.main",
             "firstboot_wrapper_target": "/usr/local/bin/omarchy-firstboot-wrapper.sh",
             "omarchy_timing_contract": "post-install-only",
         },
         "transport_contract": {
             "model": "Ventoy",
             "handoff_plan_path": "omarchy/plan.json",
-            "optional_network_path": "omarchy/wifi.json",
+            "handoff_manifest_path": "omarchy/handoff-manifest.json",
+            "network_credentials": "interactive-only",
         },
     }
 
@@ -155,7 +207,8 @@ def build_release_payload(
     write_json(output_dir / "compatibility_manifest.json", compatibility_manifest)
 
     checksums_path = output_dir / "sha256sums.txt"
-    checksums_path.write_text(
+    atomic_write_text(
+        checksums_path,
         "".join(
             [
                 f"{iso_sha}  {iso_file.name}\n",
@@ -164,7 +217,6 @@ def build_release_payload(
                 f"{compute_sha256(output_dir / 'compatibility_manifest.json')}  compatibility_manifest.json\n",
             ]
         ),
-        encoding="utf-8",
     )
 
     bundle = {
@@ -197,8 +249,34 @@ def publish_release_assets(repo: str, tag: str, assets: list[Path], dry_run: boo
                 "Automated rebuild release pipeline output.",
             ]
         )
-    upload_command = ["gh", "release", "upload", tag, "--repo", repo, "--clobber", *[str(path) for path in assets]]
+    else:
+        raise RuntimeError(f"Release tag already exists and is immutable: {tag}")
+    upload_command = ["gh", "release", "upload", tag, "--repo", repo, *[str(path) for path in assets]]
     run_command(upload_command)
+
+
+def load_existing_bundle(artifact_dir: Path, output_dir: Path) -> dict[str, Path]:
+    iso_file = find_single_file(artifact_dir, "*-omarchy-auto.iso")
+    exe_file = find_single_file(artifact_dir, "OmarchyInstaller.exe")
+    release_manifest = output_dir / "release_manifest.json"
+    compatibility_manifest = output_dir / "compatibility_manifest.json"
+    checksums = output_dir / "sha256sums.txt"
+    for path in (release_manifest, compatibility_manifest, checksums):
+        if not path.is_file() or path.stat().st_size <= 0:
+            raise RuntimeError(f"Existing release bundle is incomplete: {path}")
+    ReleaseManifestContract.model_validate(read_json(release_manifest))
+    checksum_text = checksums.read_text(encoding="utf-8")
+    for path in (iso_file, exe_file, release_manifest, compatibility_manifest):
+        expected_line = f"{compute_sha256(path)}  {path.name}"
+        if expected_line not in checksum_text:
+            raise RuntimeError(f"Existing checksum bundle does not authenticate {path.name}")
+    return {
+        "iso_file": iso_file,
+        "exe_file": exe_file,
+        "release_manifest": release_manifest,
+        "compatibility_manifest": compatibility_manifest,
+        "checksums": checksums,
+    }
 
 
 def run_pipeline(args: argparse.Namespace) -> int:
@@ -209,8 +287,12 @@ def run_pipeline(args: argparse.Namespace) -> int:
     if not artifact_dir.exists():
         raise RuntimeError(f"Artifact directory does not exist: {artifact_dir}")
 
-    tag = args.tag or default_tag()
-    bundle = build_release_payload(workspace, artifact_dir, output_dir, tag)
+    tag = args.tag
+    bundle = (
+        load_existing_bundle(artifact_dir, output_dir)
+        if args.publish_only
+        else build_release_payload(workspace, artifact_dir, output_dir, tag)
+    )
 
     if args.publish:
         repo = args.repo or os.environ.get("GITHUB_REPOSITORY", "")
@@ -254,8 +336,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--tag",
-        default="",
-        help="Release tag to publish. Defaults to date tag.",
+        required=True,
+        help="New immutable semantic release tag.",
     )
     parser.add_argument(
         "--repo",
@@ -266,6 +348,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--publish",
         action="store_true",
         help="Upload assets to GitHub Release.",
+    )
+    parser.add_argument(
+        "--publish-only",
+        action="store_true",
+        help="Publish an already generated and attested metadata bundle without rewriting it.",
     )
     parser.add_argument(
         "--dry-run",

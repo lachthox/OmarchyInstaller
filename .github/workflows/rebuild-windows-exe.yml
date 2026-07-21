@@ -3,21 +3,19 @@ name: Rebuild Windows EXE Pipeline
 on:
   workflow_dispatch:
     inputs:
+      release_version:
+        description: "Semantic version (X.Y.Z)"
+        type: string
+        required: true
+      release_tag:
+        description: "Immutable release tag"
+        type: string
+        required: true
       dry_run:
         description: "Run metadata generation only (skip PyInstaller executable build)"
         type: boolean
         required: false
         default: false
-  push:
-    branches:
-      - Python-Rebuild
-      - main
-    paths:
-      - "rebuild/installer/platforms/windows/**"
-      - "rebuild/installer/shared/**"
-      - "rebuild/tools/build_windows_exe.py"
-      - "rebuild/tools/windows/omarchy_installer_launcher.py"
-      - ".github/workflows/rebuild-windows-exe.yml"
 
 permissions:
   contents: read
@@ -56,6 +54,8 @@ jobs:
             --workspace "$env:GITHUB_WORKSPACE" `
             --output-dir "$env:OUTPUT_DIR" `
             --work-dir "$env:WORK_DIR" `
+            --release-version "${{ inputs.release_version }}" `
+            --release-tag "${{ inputs.release_tag }}" `
             @extraArgs
 
       - name: Upload Windows EXE outputs
