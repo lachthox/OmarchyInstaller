@@ -21,7 +21,11 @@ from ..platforms.linux_live.discovery import (
     enumerate_ventoy_data_partitions,
     open_validated_handoff,
 )
-from ..platforms.linux_live.identity import IdentityMatchResult, match_machine_identity
+from ..platforms.linux_live.identity import (
+    IdentityMatchResult,
+    match_machine_identity,
+    resolve_target_disk_path,
+)
 from ..platforms.linux_live.install import LiveInstallExecutionResult, execute_install_plan
 from ..platforms.linux_live.network import NetworkResolutionResult, resolve_network_connectivity
 from .live_state import confirmation_token
@@ -590,9 +594,19 @@ class LiveInstallerApp(App[int]):
                 if completed.returncode != 0 or not completed.stdout.strip().startswith("$6$"):
                     raise RuntimeError("Unable to derive the target user password hash.")
                 password_hash = completed.stdout.strip()
+            # Separate-disk install: the Linux root goes on the target disk while
+            # the ESP + Limine stay on the Windows disk. Single-disk installs use
+            # the Windows disk for both.
+            if handoff.plan.linux_install_target is not None:
+                linux_disk_path = resolve_target_disk_path(handoff.plan)
+                esp_disk_path = identity.disk.path
+            else:
+                linux_disk_path = identity.disk.path
+                esp_disk_path = ""
             result = execute_install_plan(
                 handoff.plan,
-                target_disk_path=identity.disk.path,
+                target_disk_path=linux_disk_path,
+                esp_disk_path=esp_disk_path,
                 dry_run=dry_run,
                 encryption_passphrase=encryption_passphrase,
                 user_password_hash=password_hash,

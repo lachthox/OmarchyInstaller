@@ -3,6 +3,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
+from rebuild.installer.platforms.linux_live.identity import (
+    MachineIdentityError,
+    resolve_target_disk_path,
+)
 from rebuild.installer.platforms.linux_live.install import execute_install_plan
 from rebuild.installer.shared.validation import validate_plan_contract
 
@@ -87,3 +93,34 @@ def test_separate_disk_puts_root_on_target_but_esp_on_windows_disk() -> None:
     # The ESP is still mounted at /boot from the Windows ESP.
     mount_esp = next(c for c in commands if c.startswith("mount") and "/dev/sda1" in c and "/boot" in c)
     assert "/mnt/archinstall/boot" in mount_esp
+
+
+class FakeBlockProbe:
+    def __init__(self, devices: list[dict]) -> None:
+        self._devices = devices
+
+    def collect_block_devices(self) -> dict:
+        return {"blockdevices": self._devices}
+
+
+def test_resolve_target_disk_matches_by_guid_and_excludes_windows() -> None:
+    payload = with_target(base_plan(), install_gib=200, guid="00000000-0000-4000-8000-0000000000aa")
+    payload["linux_install_target"]["disk_identity"]["disk_serial"] = "OMARCHYSPARE"
+    plan = validate_plan_contract(payload)
+    win_guid = plan.disk_identity.gpt_disk_guid
+    target_guid = plan.linux_install_target.disk_identity.gpt_disk_guid
+    probe = FakeBlockProbe(
+        [
+            {"type": "disk", "path": "/dev/vda", "ptuuid": win_guid, "serial": "WIN", "size": 512 * GIB},
+            {"type": "disk", "path": "/dev/vdb", "ptuuid": target_guid, "serial": "OMARCHYSPARE", "size": 1000 * GIB},
+        ]
+    )
+    assert resolve_target_disk_path(plan, probe=probe) == "/dev/vdb"
+
+
+def test_resolve_target_disk_no_match_raises() -> None:
+    payload = with_target(base_plan(), install_gib=200, guid="00000000-0000-4000-8000-0000000000bb")
+    plan = validate_plan_contract(payload)
+    probe = FakeBlockProbe([{"type": "disk", "path": "/dev/vda", "ptuuid": "other-guid", "serial": "OTHER", "size": 1 * GIB}])
+    with pytest.raises(MachineIdentityError):
+        resolve_target_disk_path(plan, probe=probe)

@@ -290,6 +290,65 @@ def _validate_prepared_free_space(plan: PlanContract, disk: LiveDiskSnapshot) ->
     )
 
 
+def resolve_target_disk_path(
+    plan_payload: PlanContract | dict[str, Any],
+    *,
+    probe: BlockDeviceProbe | None = None,
+) -> str:
+    """Resolve the live device path of the separate Linux install target disk.
+
+    Unlike the Windows disk, the target disk may be empty (no partitions), so
+    it is matched directly on the raw block-device record by GPT disk GUID
+    and/or serial+size, without requiring partitions or an ESP.
+    """
+    plan = plan_payload if isinstance(plan_payload, PlanContract) else validate_plan_contract(plan_payload)
+    target = plan.linux_install_target
+    if target is None:
+        raise MachineIdentityError("Plan has no separate Linux install target.")
+    active_probe = probe or LsblkProbe()
+    payload = active_probe.collect_block_devices()
+    devices = payload.get("blockdevices", [])
+    if not isinstance(devices, list) or not devices:
+        raise MachineIdentityError("No block devices were returned by the probe.")
+
+    expected_guid = _normalize_guid(target.disk_identity.gpt_disk_guid)
+    expected_serial = _normalize_serial(target.disk_identity.disk_serial)
+    expected_size = target.disk_identity.disk_size_bytes
+    windows_path = ""
+    if isinstance(plan.disk_identity.gpt_disk_guid, str):
+        windows_guid = _normalize_guid(plan.disk_identity.gpt_disk_guid)
+    else:
+        windows_guid = ""
+
+    matches: set[str] = set()
+    for record in devices:
+        if str(_value(record, "type")).strip().lower() != "disk":
+            continue
+        path = str(_value(record, "path", "name")).strip()
+        rec_guid = _normalize_guid(str(_value(record, "ptuuid")).strip())
+        rec_serial = _normalize_serial(str(_value(record, "serial")).strip())
+        rec_size = _as_int(_value(record, "size"), default=0)
+        if windows_guid and rec_guid and rec_guid == windows_guid:
+            windows_path = path  # never select the Windows disk as the target
+            continue
+        guid_hit = bool(expected_guid) and bool(rec_guid) and expected_guid == rec_guid
+        serial_hit = (
+            bool(expected_serial)
+            and bool(rec_serial)
+            and expected_serial == rec_serial
+            and rec_size == expected_size
+        )
+        if guid_hit or serial_hit:
+            matches.add(path)
+
+    matches.discard(windows_path)
+    if not matches:
+        raise MachineIdentityError("No live disk matches the planned Linux target disk identity.")
+    if len(matches) > 1:
+        raise MachineIdentityError("Linux target disk match is ambiguous; multiple live disks match.")
+    return next(iter(matches))
+
+
 def match_machine_identity(
     plan_payload: PlanContract | dict[str, Any],
     *,

@@ -16,6 +16,7 @@ from .identity import (
     LsblkProbe,
     MachineIdentityError,
     match_machine_identity,
+    resolve_target_disk_path,
 )
 from .preflight import PreflightGateError, PreflightSummary, assert_preflight_ready, build_preflight_summary
 from .network import (
@@ -84,6 +85,7 @@ __all__ = [
     "cleanup_live_stage",
     "execute_install_plan",
     "match_machine_identity",
+    "resolve_target_disk_path",
     "resolve_network_connectivity",
     "summarize_boot_policy",
     "summarize_preinstall_preservation",
