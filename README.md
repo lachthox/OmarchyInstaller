@@ -4,11 +4,12 @@
 > All 61 audit findings are resolved and the automated release gate runs green
 > end-to-end (real disposable-VM install, post-reboot LUKS unlock, Windows-EFI
 > preservation, and recovery rehearsal — GitHub Actions run `29886048248`).
-> Even so, current releases are **not approved for real hardware**: publishing a
-> downloadable EXE still needs a production Authenticode certificate, and running
+> Even so, current releases are **not approved for real hardware**: running
 > against a real machine's real disks is a deliberate destructive-operation
 > decision this project does not grant automatically. Use only disposable VMs
-> until `docs/release-readiness.md` records those operational sign-offs.
+> until `docs/release-readiness.md` records that sign-off. The downloadable
+> Windows EXE currently ships **unsigned** (users get a SmartScreen warning);
+> `docs/windows-code-signing.md` covers switching to a real signed release.
 
 OmarchyInstaller is being remediated into one Python-only dual-boot installer:
 

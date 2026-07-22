@@ -1,8 +1,10 @@
 # Release process
 
 Status: the VM/install/reboot/recovery gates now pass green in CI (run
-`29886048248`); publication of a downloadable release remains gated only on
-provisioning a production Windows code-signing certificate.
+`29886048248`), and the release workflow can publish a downloadable
+**unsigned** release now (see "Unsigned releases" below). Real Windows code
+signing is an optional upgrade documented in `docs/windows-code-signing.md`,
+not a publication blocker.
 
 The VM job also requires a console-automation driver configured as
 `OMARCHY_ISOLATED_VM_DRIVER`. A real implementation of this contract,
@@ -44,9 +46,18 @@ ISO/EXE and generated release metadata are attested before the optional publish
 step. Publication uses `--publish-only`, which verifies and reuses the attested
 files without rewriting them.
 
-## External signing blocker
+## Unsigned releases and optional signing
 
-Authenticode signing cannot be completed in this checkout because no code-signing
-certificate, private-key service, timestamp authority configuration, or CI secret
-contract has been provided. The EXE may be built for tests, but release approval
-remains blocked until signing and verification run in CI with managed credentials.
+The default release path publishes an **unsigned** Windows EXE. When no managed
+Authenticode secret is configured, `sign_windows_exe.py` records
+`production_signing: false` / `signed: false`, and the publish step runs with
+`--allow-unsigned`, so `publish_release.py` permits the unsigned artifact instead
+of failing closed. Users will encounter a Windows SmartScreen warning; artifact
+origin and integrity are still verifiable via `sha256sums.txt` and the GitHub
+build-provenance attestation produced by `actions/attest@v4`.
+
+To publish a **real signed** release instead — including the free SignPath
+Foundation open-source option — follow `docs/windows-code-signing.md`: provision
+the `WINDOWS_CODESIGN_*` secrets (no code change needed; the signer auto-detects
+them) and remove `--allow-unsigned` from the publish step to restore the
+fail-closed gate that requires `production_signing: true`.

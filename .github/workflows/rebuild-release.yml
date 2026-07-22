@@ -144,13 +144,18 @@ jobs:
         run: python rebuild/tools/build_windows_exe.py --workspace "$env:GITHUB_WORKSPACE" --output-dir rebuild/dist/release-windows-exe --work-dir rebuild/dist/release-windows-exe-work --release-version "${{ needs.detect-arch-release.outputs.release_version }}" --release-tag "${{ needs.detect-arch-release.outputs.tag }}"
       - name: Sign Windows EXE
         shell: pwsh
+        # When the managed Authenticode secrets are configured, sign_windows_exe
+        # auto-detects them and produces a real production signature. When they
+        # are absent, the EXE is left genuinely unsigned (no throwaway ephemeral
+        # cert on the release path) and the recorded evidence says so; the
+        # publish step below runs with --allow-unsigned to permit that. See
+        # docs/windows-code-signing.md to switch to real signing.
         env:
           WINDOWS_CODESIGN_PFX_BASE64: ${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 }}
           WINDOWS_CODESIGN_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_PASSWORD }}
           WINDOWS_CODESIGN_TIMESTAMP_URL: ${{ secrets.WINDOWS_CODESIGN_TIMESTAMP_URL }}
         run: |
-          $ephemeral = if ("$env:WINDOWS_CODESIGN_PFX_BASE64" -eq "") { "--ephemeral-test-cert" } else { "" }
-          python rebuild/tools/sign_windows_exe.py --exe rebuild/dist/release-windows-exe/OmarchyInstaller.exe --output rebuild/dist/release-windows-exe/windows-exe-signing.json $ephemeral
+          python rebuild/tools/sign_windows_exe.py --exe rebuild/dist/release-windows-exe/OmarchyInstaller.exe --output rebuild/dist/release-windows-exe/windows-exe-signing.json
       - uses: actions/upload-artifact@v7
         with: {name: release-windows-exe-output, path: rebuild/dist/release-windows-exe, if-no-files-found: error}
 
@@ -293,9 +298,9 @@ jobs:
             rebuild/dist/release-inputs/windows/OmarchyInstaller.exe
             rebuild/dist/release-output/*.json
             rebuild/dist/release-output/sha256sums.txt
-      - name: Publish only the validated non-dry-run, signed pair
+      - name: Publish only the validated non-dry-run pair (unsigned EXE permitted)
         env: {GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"}
-        run: python -m rebuild.tools.publish_release --workspace "$GITHUB_WORKSPACE" --artifact-dir rebuild/dist/release-inputs --output-dir rebuild/dist/release-output --tag "${{ needs.detect-arch-release.outputs.tag }}" --repo "${{ github.repository }}" --publish --publish-only
+        run: python -m rebuild.tools.publish_release --workspace "$GITHUB_WORKSPACE" --artifact-dir rebuild/dist/release-inputs --output-dir rebuild/dist/release-output --tag "${{ needs.detect-arch-release.outputs.tag }}" --repo "${{ github.repository }}" --publish --publish-only --allow-unsigned
       - name: Update the pinned Arch release marker (auto runs only)
         if: github.event_name == 'schedule'
         run: |

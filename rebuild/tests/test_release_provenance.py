@@ -135,6 +135,47 @@ def test_existing_release_tag_is_immutable(monkeypatch: pytest.MonkeyPatch, tmp_
     assert len(calls) == 1
 
 
+def _write_signing_evidence(path: Path, *, production: bool, signed: bool) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "production_signing": production,
+                "signed": signed,
+                "certificate_source": "managed-secret" if production else "none",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_signing_gate_requires_production_by_default(tmp_path: Path) -> None:
+    evidence = tmp_path / "windows-exe-signing.json"
+    _write_signing_evidence(evidence, production=False, signed=False)
+    with pytest.raises(RuntimeError, match="production Authenticode"):
+        publisher.enforce_signing_gate(evidence, allow_unsigned=False)
+
+
+def test_signing_gate_requires_evidence_file(tmp_path: Path) -> None:
+    missing = tmp_path / "windows-exe-signing.json"
+    with pytest.raises(RuntimeError, match="signing evidence is missing"):
+        publisher.enforce_signing_gate(missing, allow_unsigned=True)
+
+
+def test_signing_gate_allows_unsigned_when_opted_in(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    evidence = tmp_path / "windows-exe-signing.json"
+    _write_signing_evidence(evidence, production=False, signed=False)
+    result = publisher.enforce_signing_gate(evidence, allow_unsigned=True)
+    assert result["production_signing"] is False
+    assert "not signed with a production" in capsys.readouterr().err.lower()
+
+
+def test_signing_gate_accepts_production_signature(tmp_path: Path) -> None:
+    evidence = tmp_path / "windows-exe-signing.json"
+    _write_signing_evidence(evidence, production=True, signed=True)
+    result = publisher.enforce_signing_gate(evidence, allow_unsigned=False)
+    assert result["production_signing"] is True
+
+
 def test_new_release_upload_never_uses_clobber(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     calls: list[list[str]] = []
 

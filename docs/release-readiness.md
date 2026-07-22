@@ -1,9 +1,10 @@
 # Release readiness
 
-Status: **all 61 audit findings resolved; automated release gate is green.
-Real-hardware use and public publication still require the two operational
-sign-offs called out below (a production Authenticode certificate, and a
-human decision to run against real disks).**
+Status: **all 61 audit findings resolved; automated release gate is green and
+can publish an unsigned open-source release now.** Real-hardware use still
+requires a deliberate human decision to run against real disks (below), and
+code signing is available as an optional upgrade (`docs/windows-code-signing.md`)
+rather than a publication blocker.**
 
 Release approval requires, at minimum:
 
@@ -39,16 +40,17 @@ non-dry-run) evidence rather than unit tests alone.
 These are deployment decisions, not unresolved audit findings. All 61
 enumerated findings are resolved (see `docs/remediation-status.md`).
 
-1. **Production code-signing certificate.** No managed Authenticode
-   certificate, timestamp configuration, or signing secret is provisioned
-   for the Windows EXE. `sign_windows_exe.py` falls back to a
-   clearly-labeled ephemeral test certificate (`production_signing: false`),
-   and `publish_release.py` hard-fails publication unless a real production
-   signing record is present. Supply the signing secret before publishing a
-   release users will download. The CI `build-windows-exe` job verifies the
-   signing *mechanics* with `Get-AuthenticodeSignature` (which does not
-   require an OS trust chain), so a green CI run does not imply a
-   production-trusted signature.
+1. **Code signing (optional; unsigned is the current default).** No managed
+   Authenticode certificate is provisioned, so the release workflow publishes
+   an **unsigned** Windows EXE: `sign_windows_exe.py` records
+   `production_signing: false` / `signed: false`, and the publish step runs
+   with `--allow-unsigned`, which permits that instead of failing closed.
+   Users will see a Windows SmartScreen warning; origin/integrity are covered
+   by `sha256sums.txt` and GitHub build-provenance attestation. To ship a
+   real trusted signature instead (including the free SignPath Foundation OSS
+   option), follow `docs/windows-code-signing.md`: add the signing secrets and
+   drop `--allow-unsigned` to restore the fail-closed gate. This is an
+   optional upgrade, not a publication blocker.
 
 2. **Real-hardware authorization.** Every install/reboot/recovery proof to
    date was produced against disposable virtual disks in throwaway VMs.

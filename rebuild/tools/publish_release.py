@@ -229,6 +229,47 @@ def build_release_payload(
     return bundle
 
 
+def enforce_signing_gate(signing_evidence_path: Path, allow_unsigned: bool) -> dict[str, Any]:
+    """Decide whether the Windows EXE's signing state permits publication.
+
+    Default (fail-closed): the EXE must carry a production Authenticode
+    signature (`production_signing` and `signed` both true).
+
+    With `allow_unsigned=True` the caller has made a deliberate decision to
+    publish an unsigned (or non-production-signed) EXE -- the signing evidence
+    file must still exist and be recorded, but a non-production signature no
+    longer blocks the publish. This is the supported $0 open-source path;
+    Windows SmartScreen will warn users, and origin/integrity are covered by
+    the release checksums and GitHub build attestation rather than by
+    Authenticode. See docs/windows-code-signing.md for the signed path.
+    """
+    if not signing_evidence_path.is_file():
+        raise RuntimeError(
+            "Windows EXE signing evidence is missing; refusing to publish an "
+            "unverified production artifact. Run rebuild.tools.sign_windows_exe first."
+        )
+    signing_evidence = read_json(signing_evidence_path)
+    is_production = signing_evidence.get("production_signing") is True and signing_evidence.get("signed") is True
+    if is_production:
+        return signing_evidence
+    if allow_unsigned:
+        print(
+            "WARNING: publishing an EXE that is NOT signed with a production "
+            "Authenticode certificate (--allow-unsigned). Users will see a "
+            "Windows SmartScreen warning. Certificate source: "
+            f"{signing_evidence.get('certificate_source', 'none')}, "
+            f"signed={signing_evidence.get('signed')}.",
+            file=sys.stderr,
+        )
+        return signing_evidence
+    raise RuntimeError(
+        "Windows EXE is not signed with a production Authenticode certificate "
+        "(production_signing must be true). Configure WINDOWS_CODESIGN_PFX_BASE64 / "
+        "WINDOWS_CODESIGN_PASSWORD secrets, or pass --allow-unsigned to publish an "
+        "unsigned open-source release; production release remains blocked until then."
+    )
+
+
 def publish_release_assets(repo: str, tag: str, assets: list[Path], dry_run: bool) -> None:
     if dry_run:
         return
@@ -296,18 +337,7 @@ def run_pipeline(args: argparse.Namespace) -> int:
 
     if args.publish:
         signing_evidence_path = bundle["exe_file"].parent / "windows-exe-signing.json"
-        if not signing_evidence_path.is_file():
-            raise RuntimeError(
-                "Windows EXE signing evidence is missing; refusing to publish an "
-                "unverified production artifact. Run rebuild.tools.sign_windows_exe first."
-            )
-        signing_evidence = read_json(signing_evidence_path)
-        if signing_evidence.get("production_signing") is not True or signing_evidence.get("signed") is not True:
-            raise RuntimeError(
-                "Windows EXE is not signed with a production Authenticode certificate "
-                "(production_signing must be true). Configure WINDOWS_CODESIGN_PFX_BASE64 / "
-                "WINDOWS_CODESIGN_PASSWORD secrets; production release remains blocked until then."
-            )
+        enforce_signing_gate(signing_evidence_path, args.allow_unsigned)
         repo = args.repo or os.environ.get("GITHUB_REPOSITORY", "")
         if not repo:
             raise RuntimeError("Repository not provided. Set --repo or GITHUB_REPOSITORY.")
@@ -366,6 +396,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--publish-only",
         action="store_true",
         help="Publish an already generated and attested metadata bundle without rewriting it.",
+    )
+    parser.add_argument(
+        "--allow-unsigned",
+        action="store_true",
+        help=(
+            "Deliberately permit publishing a Windows EXE that is not signed with a "
+            "production Authenticode certificate (the supported $0 open-source path). "
+            "Signing evidence must still exist. See docs/windows-code-signing.md."
+        ),
     )
     parser.add_argument(
         "--dry-run",
