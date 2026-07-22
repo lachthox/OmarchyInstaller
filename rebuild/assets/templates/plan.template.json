@@ -100,8 +100,8 @@
   },
   "compatibility": {
     "schema_version": "1.0.0",
-    "minimum_windows_prep_version": "1.0.0",
-    "minimum_live_runtime_version": "1.0.0",
+    "minimum_windows_prep_version": "0.1.0",
+    "minimum_live_runtime_version": "0.1.0",
     "required_plan_schema_version": "1.0.0",
     "bootstrap_expectation": "post-install-only",
     "ventoy_handoff_path": "omarchy/plan.json"

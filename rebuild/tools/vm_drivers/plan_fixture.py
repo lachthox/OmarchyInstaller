@@ -26,9 +26,17 @@ from rebuild.installer.shared import PlanContract, validate_plan_contract  # noq
 from rebuild.installer.ui.live_state import confirmation_token  # noqa: E402
 
 
-# Low, easily-satisfied compatibility floors so the ISO's default
-# `--runtime-version 0.1.0-dev` entrypoint (unmodified) clears the gate.
-MINIMUM_COMPAT_VERSION = "0.0.1"
+# Use the shipped plan template's compatibility floors so VM tests exercise the
+# same gate a real release must clear (fixture-only floors previously masked a
+# release that blocked itself).
+_PLAN_TEMPLATE_PATH = (
+    WORKSPACE_ROOT / "rebuild" / "assets" / "templates" / "plan.template.json"
+)
+_TEMPLATE_COMPATIBILITY = json.loads(_PLAN_TEMPLATE_PATH.read_text(encoding="utf-8"))[
+    "compatibility"
+]
+MINIMUM_WINDOWS_PREP_VERSION = _TEMPLATE_COMPATIBILITY["minimum_windows_prep_version"]
+MINIMUM_LIVE_RUNTIME_VERSION = _TEMPLATE_COMPATIBILITY["minimum_live_runtime_version"]
 
 TEST_HOSTNAME = "omarchy-vmtest"
 TEST_USERNAME = "omarchy"
@@ -217,8 +225,8 @@ def build_plan_payload(
         },
         "compatibility": {
             "schema_version": "1.0.0",
-            "minimum_windows_prep_version": MINIMUM_COMPAT_VERSION,
-            "minimum_live_runtime_version": MINIMUM_COMPAT_VERSION,
+            "minimum_windows_prep_version": MINIMUM_WINDOWS_PREP_VERSION,
+            "minimum_live_runtime_version": MINIMUM_LIVE_RUNTIME_VERSION,
             "required_plan_schema_version": "1.0.0",
             "bootstrap_expectation": "post-install-only",
             "ventoy_handoff_path": "omarchy/plan.json",

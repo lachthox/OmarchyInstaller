@@ -3,12 +3,34 @@
 from __future__ import annotations
 
 import argparse
+import json
+from pathlib import Path
 
 from .ui.screens import (
     bootstrap_screen_ids,
     run_live_bootstrap_tui,
     validate_live_dependencies,
 )
+
+# Written by build_iso_pipeline.prepare_payload; carries the release version the
+# live image was actually built from.
+BUILD_METADATA_PATH = Path("/opt/omarchy-installer/build-metadata.json")
+FALLBACK_RUNTIME_VERSION = "0.1.0-dev"
+
+
+def resolve_runtime_version(
+    explicit: str | None,
+    metadata_path: Path = BUILD_METADATA_PATH,
+) -> str:
+    """Prefer an explicit override, then the baked build metadata, then the dev fallback."""
+    if explicit:
+        return explicit
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return FALLBACK_RUNTIME_VERSION
+    version = str(metadata.get("release_version") or "").strip()
+    return version or FALLBACK_RUNTIME_VERSION
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -23,8 +45,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--runtime-version",
-        default="0.1.0-dev",
-        help="Live runtime version used for handoff validation context.",
+        default=None,
+        help=(
+            "Live runtime version used for handoff validation context. "
+            "Defaults to the release version baked into the live image build metadata."
+        ),
     )
     parser.add_argument(
         "--max-plan-age-hours",
@@ -61,7 +86,7 @@ def main() -> int:
 
     max_plan_age_hours = None if args.max_plan_age_hours < 0 else args.max_plan_age_hours
     return run_live_bootstrap_tui(
-        live_runtime_version=args.runtime_version,
+        live_runtime_version=resolve_runtime_version(args.runtime_version),
         max_plan_age_hours=max_plan_age_hours,
         efi_mount=args.efi_mount,
     )

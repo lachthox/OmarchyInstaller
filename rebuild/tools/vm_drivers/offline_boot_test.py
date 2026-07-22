@@ -140,7 +140,7 @@ def run(iso_path: Path, work_dir: Path) -> dict:
         evidence["terminal_geometry_ok"] = "24 80" in stty_output
 
         console.send_line(
-            "/opt/omarchy-venv/bin/python -m installer.main --no-tui --runtime-version 1.0.0"
+            "/opt/omarchy-venv/bin/python -m installer.main --no-tui"
         )
         marker = console.wait_for(
             "Dependency check: PASS", "Dependency check: BLOCKED", "ModuleNotFoundError", "Traceback", timeout=25
@@ -150,7 +150,8 @@ def run(iso_path: Path, work_dir: Path) -> dict:
 
         console.send_line("echo LIVE_TUI_LAUNCHING_$$")
         console.wait_for("LIVE_TUI_LAUNCHING_", timeout=15)
-        console.send_line("cd / && /opt/omarchy-venv/bin/python -m installer.main --runtime-version 1.0.0")
+        # No --runtime-version override: exercise the real build-metadata resolution.
+        console.send_line("cd / && /opt/omarchy-venv/bin/python -m installer.main")
         time.sleep(6)
         screen = console.screen_text()
         evidence["tui_started"] = LIVE_INSTALLER_TITLE in screen

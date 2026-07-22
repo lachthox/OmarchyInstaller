@@ -49,7 +49,6 @@ OVMF_VARS_CANDIDATES = (
 LUKS_PASSPHRASE = "OmarchyVMTest-Luks-9f3c1a"
 SERIAL_PORT = 45101
 QMP_PORT = 45201
-LIVE_RUNTIME_VERSION = "1.0.0"
 
 
 REQUIRED_TRUE_FIELDS = (
@@ -206,7 +205,9 @@ def generate_handoff(
         release_tag=manifest["release_tag"],
         build_commit=manifest["git_commit"],
         workflow_run_id=str(manifest.get("github_run_id", "local")),
-        producer_version="1.0.0",
+        # Mirror a real paired handoff: the Windows prep exe stamps the release
+        # version of the same tag the ISO was built from.
+        producer_version=str(manifest["release_version"]),
         iso_name=manifest["output_iso"]["name"],
         iso_sha256=manifest["output_iso"]["sha256"],
         iso_path_on_ventoy=iso_on_ventoy,
@@ -233,10 +234,9 @@ def drive_handoff_and_install(
     # Must run in the foreground: a backgrounded process reading the
     # controlling tty would be stopped (SIGTTIN) the instant it tries to
     # read our keystrokes, so this line is never followed by `&`.
-    console.send_line(
-        "cd / && /opt/omarchy-venv/bin/python -m installer.main "
-        f"--runtime-version {LIVE_RUNTIME_VERSION}"
-    )
+    # No --runtime-version override: the installer must resolve its version from
+    # the ISO's baked build metadata, exactly as it does for a real user.
+    console.send_line("cd / && /opt/omarchy-venv/bin/python -m installer.main")
     time.sleep(5)
     evidence.note("launched live installer TUI in the foreground on ttyS0")
     evidence.set("python_live_tui_started", LIVE_INSTALLER_TITLE in console.screen_text())

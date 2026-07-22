@@ -25,13 +25,14 @@ def sha256(payload: bytes) -> str:
 
 
 class FakeDownloader:
-    def __init__(self, payloads: dict[str, bytes], sums: str) -> None:
+    def __init__(self, payloads: dict[str, bytes], sums: str, tag: str = TAG) -> None:
         self.payloads = payloads
         self.sums = sums
+        self.tag = tag
         self.downloads: list[str] = []
 
     def fetch_text(self, url: str) -> str:
-        assert url == asset_url(REPO, TAG, "sha256sums.txt")
+        assert url == asset_url(REPO, self.tag, "sha256sums.txt")
         return self.sums
 
     def download(self, url: str, dest: Path) -> None:
@@ -152,3 +153,39 @@ def test_checksum_parser_ignores_malformed_entries() -> None:
     assert parse_sha256sums("not-a-hash  bad.iso\n" + f"{'a' * 64}  good.iso\n") == {
         "good.iso": "a" * 64
     }
+
+
+def test_released_plan_is_self_compatible(tmp_path: Path) -> None:
+    """Regression: v0.1.9 shipped a plan whose hardcoded template minimums (1.0.0)
+    rejected its own producer (0.1.9.0) and the paired live runtime, blocking every
+    real install at preflight. A released plan must always clear its own gate when
+    paired with same-tag artifacts."""
+    tag = "v0.1.9"
+    iso_name = "omarchy-v0.1.9.iso"
+    producer_version = "0.1.9.0"
+    payloads, sums = release_payloads(tag=tag, iso_name=iso_name)
+    downloader = FakeDownloader(payloads, sums, tag=tag)
+
+    assets = provision_release_assets(
+        tag=tag,
+        repo=REPO,
+        template_path=REPO_ROOT / "rebuild" / "assets" / "templates" / "plan.template.json",
+        producer_version=producer_version,
+        cache_root=tmp_path,
+        downloader=downloader,
+    )
+    plan = json.loads(assets.plan_path.read_text(encoding="utf-8"))
+
+    from rebuild.installer.shared.compatibility import evaluate_runtime_compatibility
+    from rebuild.installer.shared.models import CompatibilityContract
+
+    contract = CompatibilityContract.model_validate(plan["compatibility"])
+    result = evaluate_runtime_compatibility(
+        contract,
+        windows_prep_version=plan["meta"]["producer_version"],
+        # The live runtime resolves the same-tag release version from the ISO's
+        # baked build metadata.
+        live_runtime_version=tag.lstrip("v"),
+        plan_schema_version=plan["meta"]["schema_version"],
+    )
+    assert result.is_compatible, result.reasons
