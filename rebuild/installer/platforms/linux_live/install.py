@@ -335,7 +335,14 @@ def _build_install_command_plan(
     efi_partition_path: str,
     subvolumes: tuple[tuple[str, str, tuple[str, ...]], ...],
     gpt_backup_path: Path,
+    esp_disk_path: str = "",
+    esp_partition_number: int = 1,
 ) -> list[list[str]]:
+    # For a single-disk install the ESP lives on the same disk as the new Linux
+    # partition. For a separate-disk install the Linux root goes on
+    # `target_disk_path` while the ESP (and Limine) stay on the Windows disk, so
+    # the efibootmgr entry must point at the ESP's disk, not the Linux disk.
+    esp_disk = esp_disk_path or target_disk_path
     mapper_path = f"/dev/mapper/{crypt_mapper_name}"
     commands = [
         ["sgdisk", f"--backup={gpt_backup_path}", target_disk_path],
@@ -407,8 +414,8 @@ def _build_install_command_plan(
                 f"root=/dev/mapper/{crypt_mapper_name} rootflags=subvol=@ rw quiet\n"
                 "    module_path: boot():/initramfs-linux.img\n"
                 "LIMINECONF\n"
-                f"arch-chroot {mount_root} efibootmgr --create --disk {target_disk_path} "
-                "--part 1 --loader '\\EFI\\BOOT\\BOOTX64.EFI' --label Limine || true",
+                f"arch-chroot {mount_root} efibootmgr --create --disk {esp_disk} "
+                f"--part {esp_partition_number} --loader '\\EFI\\BOOT\\BOOTX64.EFI' --label Limine || true",
             ],
         ]
     )
@@ -424,6 +431,7 @@ def execute_install_plan(
     encryption_passphrase: str = "",
     user_password_hash: str = "",
     efi_partition_path: str = "",
+    esp_disk_path: str = "",
     crypt_mapper_name: str = DEFAULT_CRYPT_MAPPER_NAME,
     mount_root: str = DEFAULT_MOUNT_ROOT,
     cleanup_after_success: bool = False,
@@ -459,8 +467,24 @@ def execute_install_plan(
             if not target_disk_path.strip():
                 raise LiveInstallError("target_disk_path is required when plan_payload is provided.")
 
-            start_sector = plan_contract.prepared_free_space_range.start_sector
-            end_sector = plan_contract.prepared_free_space_range.end_sector
+            # Single-disk: Linux goes in the free space on the Windows disk and
+            # the ESP is on that same disk. Separate-disk: Linux goes in the
+            # target disk's install_range while the ESP/Limine stay on the
+            # Windows disk (esp_disk_path), so the caller points target_disk_path
+            # at the Linux disk and esp_disk_path at the Windows disk.
+            linux_target = plan_contract.linux_install_target
+            if linux_target is not None:
+                install_range = linux_target.install_range
+                partition_disk_sector = linux_target.disk_identity.logical_sector_size
+                esp_disk = esp_disk_path or target_disk_path
+                esp_partition_number = plan_contract.efi_identity.partition_number
+            else:
+                install_range = plan_contract.prepared_free_space_range
+                partition_disk_sector = plan_contract.disk_identity.logical_sector_size
+                esp_disk = esp_disk_path or target_disk_path
+                esp_partition_number = 1
+            start_sector = install_range.start_sector
+            end_sector = install_range.end_sector
             target_partition_path = f"{target_disk_path}-planned-partition"
             archinstall_config = _build_archinstall_config(
                 plan_contract,
@@ -507,6 +531,8 @@ def execute_install_plan(
                 efi_partition_path=efi_partition_path,
                 subvolumes=subvolumes,
                 gpt_backup_path=gpt_backup_path,
+                esp_disk_path=esp_disk,
+                esp_partition_number=esp_partition_number,
             )
             commands = [" ".join(command) for command in command_plan]
 
@@ -526,7 +552,7 @@ def execute_install_plan(
                         disk_path=target_disk_path,
                         start_sector=start_sector,
                         end_sector=end_sector,
-                        logical_sector_size=plan_contract.disk_identity.logical_sector_size,
+                        logical_sector_size=partition_disk_sector,
                     )
                     snapshot_path = stage_live_runtime_artifact(
                         root,
@@ -545,7 +571,7 @@ def execute_install_plan(
                     created_partition = _discover_partition(
                         active_runner,
                         disk_path=target_disk_path,
-                        logical_sector_size=plan_contract.disk_identity.logical_sector_size,
+                        logical_sector_size=partition_disk_sector,
                     )
                     target_partition_path = created_partition.path
                     target_partition_start_sector = created_partition.start_sector
@@ -576,6 +602,8 @@ def execute_install_plan(
                         efi_partition_path=efi_partition_path,
                         subvolumes=subvolumes,
                         gpt_backup_path=gpt_backup_path,
+                        esp_disk_path=esp_disk,
+                        esp_partition_number=esp_partition_number,
                     )
                     commands = [" ".join(command) for command in command_plan]
 
@@ -619,11 +647,19 @@ def execute_install_plan(
                         crypttab_path.parent.mkdir(parents=True, exist_ok=True)
                         crypttab_path.write_text(crypttab, encoding="utf-8")
                         _run_checked(active_runner, ["arch-chroot", mount_root, "mkinitcpio", "-P"])
+                        # The guardian's expected disk is the one that actually
+                        # holds the encrypted root: the target disk for a
+                        # separate-disk install, else the Windows disk.
+                        root_disk_guid = (
+                            plan_contract.linux_install_target.disk_identity.gpt_disk_guid
+                            if plan_contract.linux_install_target is not None
+                            else plan_contract.disk_identity.gpt_disk_guid
+                        )
                         finalization = finalize_target_system(
                             mount_root,
                             TargetMachineState(
                                 username=plan_contract.user_choices.username,
-                                disk_guid=plan_contract.disk_identity.gpt_disk_guid,
+                                disk_guid=root_disk_guid,
                                 root_partuuid=target_partition_guid,
                                 root_fs_uuid=root_fs_uuid,
                                 luks_uuid=luks_uuid,
