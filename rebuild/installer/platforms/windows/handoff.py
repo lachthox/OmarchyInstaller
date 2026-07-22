@@ -331,8 +331,8 @@ def acquire_ventoy_cli(
     return VentoyCliInfo(path=str(path), source="official-github-release")
 
 
-def _collect_usb_layout(disk_number: int, runner: CommandRunner) -> dict[str, Any]:
-    script = rf"""
+def _usb_layout_script(disk_number: int) -> str:
+    return rf"""
 $disk = Get-Disk -Number {disk_number} -ErrorAction Stop
 $partitions = Get-Partition -DiskNumber $disk.Number -ErrorAction Stop | Sort-Object PartitionNumber
 $partitionPayload = foreach ($partition in $partitions) {{
@@ -360,7 +360,6 @@ $partitionPayload = foreach ($partition in $partitions) {{
   partition_count = [int]@($partitions).Count
   model = [string]$disk.FriendlyName
   serial = [string]$disk.SerialNumber
-  size_bytes = [int64]$disk.Size
   disk_guid = [string]$disk.Guid
   is_boot = [bool]$disk.IsBoot
   is_system = [bool]$disk.IsSystem
@@ -368,6 +367,10 @@ $partitionPayload = foreach ($partition in $partitions) {{
   partitions = $partitionPayload
 }} | ConvertTo-Json -Depth 8 -Compress
 """
+
+
+def _collect_usb_layout(disk_number: int, runner: CommandRunner) -> dict[str, Any]:
+    script = _usb_layout_script(disk_number)
     output = _run_powershell_checked(runner, script)
     try:
         payload = json.loads(output)

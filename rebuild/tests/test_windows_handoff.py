@@ -12,6 +12,7 @@ import pytest
 
 import rebuild.installer.platforms.windows.handoff as handoff
 from rebuild.installer.platforms.windows.handoff import (
+    _usb_layout_script,
     VentoyCliInfo,
     VentoyError,
     VentoyUsbValidation,
@@ -25,6 +26,12 @@ from rebuild.installer.shared.validation import validate_plan_contract
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_usb_layout_script_has_no_duplicate_disk_size_key() -> None:
+    script = _usb_layout_script(1)
+
+    assert script.count("size_bytes = [int64]$disk.Size") == 1
 
 
 def device_payload(
