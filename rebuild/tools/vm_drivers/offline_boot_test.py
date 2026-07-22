@@ -120,7 +120,16 @@ def run(iso_path: Path, work_dir: Path) -> dict:
         )
         console.wait_for("DEPCHECK_DONE", timeout=20)
         dep_output = console.scrollback_text(tail_bytes=3000)
-        missing = [line.split("MISSING:")[1].strip() for line in dep_output.splitlines() if "MISSING:" in line]
+        # The console echoes the typed command line back before it ever
+        # executes, and that source text itself contains "MISSING:$c" -- a
+        # naive substring scan matches that echoed input, not just genuine
+        # "command -v" failures. Only accept a real binary name from
+        # `required`; the literal, unexpanded "$c" can never be one.
+        missing = [
+            line.split("MISSING:")[1].strip()
+            for line in dep_output.splitlines()
+            if "MISSING:" in line and line.split("MISSING:")[1].strip() in required
+        ]
         evidence["missing_binaries"] = missing
         evidence["dependency_check_passed"] = not missing
 
