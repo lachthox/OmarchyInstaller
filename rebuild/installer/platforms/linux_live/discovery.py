@@ -322,6 +322,27 @@ class SubprocessMountRunner:
         return subprocess.run(command, capture_output=True, text=True, check=False)
 
 
+def _existing_mountpoints(device: str, runner: MountRunner) -> tuple[Path, ...]:
+    """Return usable mountpoints when Arch/Ventoy already mounted the USB."""
+    completed = runner.run(
+        ["findmnt", "--json", "--source", device, "--output", "TARGET,SOURCE"]
+    )
+    if completed.returncode != 0:
+        return tuple()
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        return tuple()
+    mountpoints: list[Path] = []
+    for filesystem in payload.get("filesystems", []) or []:
+        if not isinstance(filesystem, dict):
+            continue
+        target = str(filesystem.get("target", "")).strip()
+        if target:
+            mountpoints.append(Path(target))
+    return tuple(mountpoints)
+
+
 def enumerate_ventoy_data_partitions(*, runner: MountRunner | None = None) -> tuple[str, ...]:
     """Return unambiguous removable partitions labelled VENTOY."""
     active = runner or SubprocessMountRunner()
@@ -370,16 +391,43 @@ def open_validated_handoff(
         raise HandoffDiscoveryError(
             f"Expected exactly one removable Ventoy data partition, found {len(candidates)}."
         )
+    partition = candidates[0]
+    mapper = f"/dev/mapper/{Path(partition).name}"
+    # Ventoy holds the original ISO partition busy while booting an ISO stored
+    # on it. Its supported remount path is /dev/mapper/<partition>. Trigger
+    # udev first so the friendly mapper symlink is present on real hardware.
+    active.run(["udevadm", "trigger"])
+    active.run(["udevadm", "settle"])
+    mount_sources = (mapper, partition)
+
+    # Reuse an existing mount when the boot environment already exposed it.
+    existing_errors: list[str] = []
+    for source in mount_sources:
+        for existing in _existing_mountpoints(source, active):
+            try:
+                yield discover_and_validate_handoff_plan(context, search_roots=[existing])
+                return
+            except HandoffDiscoveryError as exc:
+                existing_errors.append(str(exc))
+
     controlled = Path(mountpoint)
     controlled.mkdir(parents=True, exist_ok=True)
     mounted = False
+    mount_errors: list[str] = []
     try:
-        completed = active.run(
-            ["mount", "-o", "ro,nosuid,nodev,noexec", candidates[0], str(controlled)]
-        )
-        if completed.returncode != 0:
-            raise HandoffDiscoveryError(completed.stderr.strip() or "read-only Ventoy mount failed")
-        mounted = True
+        for source in mount_sources:
+            completed = active.run(
+                ["mount", "-o", "ro,nosuid,nodev,noexec", source, str(controlled)]
+            )
+            if completed.returncode == 0:
+                mounted = True
+                break
+            mount_errors.append(f"{source}: {completed.stderr.strip() or 'mount failed'}")
+        if not mounted:
+            detail = "; ".join(mount_errors) or "read-only Ventoy mount failed"
+            if existing_errors:
+                detail = f"{detail}; existing mount validation: {'; '.join(existing_errors)}"
+            raise HandoffDiscoveryError(detail)
         yield discover_and_validate_handoff_plan(context, search_roots=[controlled])
     finally:
         if mounted:

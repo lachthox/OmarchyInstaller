@@ -19,9 +19,11 @@
    several are attached. If Ventoy is absent, the verified official Windows
    release is downloaded and cached automatically.
 4. Reboot from that Ventoy device in UEFI mode and select the paired ISO. The
-   live console launches `/opt/omarchy-venv/bin/python -m installer.main`.
-5. Review the rediscovered disk identity and destructive summary. Apply only
-   after every preflight passes and the typed confirmation matches.
+   live installer automatically checks the USB, prepared disk space, machine,
+   and network connection.
+5. Choose one password for disk unlock and login, review the plain-language
+   summary, and press Enter to install. Technical diagnostics remain hidden in
+   Advanced view unless they are needed.
 6. Reboot into the installed system. Log in as the target non-root user to run
    the one-time interactive Omarchy first-login flow.
 7. Review guardian status and preserve the Windows, GPT, ESP, and BCD backups.

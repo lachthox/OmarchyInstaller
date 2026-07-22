@@ -134,14 +134,14 @@ def test_linux_tui_refresh_runs_in_worker_and_stays_responsive(monkeypatch: pyte
 
     async def scenario() -> None:
         app = screens.LiveInstallerApp()
-        async with app.run_test(size=Size(80, 24)) as pilot:
+        async with app.run_test(size=Size(80, 24)) as _pilot:
             for _ in range(100):
                 if started.is_set():
                     break
                 await asyncio.sleep(0.01)
             assert started.is_set()
-            await pilot.press("n")
-            assert app._active_stage_index == 1
+            assert app._view == "wizard"
+            assert "Step 1 of 5" in str(app.query_one("#wiz-progress").render())
             release.set()
             await app.workers.wait_for_complete()
             assert app._snapshot.install_result is None
@@ -179,14 +179,68 @@ def test_linux_tui_apply_action_reaches_production_worker(monkeypatch: pytest.Mo
         app._install_worker = lambda *args: called.append(args)  # type: ignore[assignment]
         async with app.run_test(size=Size(100, 32)):
             await app.workers.wait_for_complete()
-            app.query_one("#install-confirmation", screens.Input).value = confirmation_token(plan)
-            app.query_one("#encryption-passphrase", screens.Input).value = "encryption-secret"
-            app.query_one("#user-password", screens.Input).value = "user-secret"
-            app.action_apply_install()
+            assert app._wizard_step() == 2
+            app.query_one("#password", screens.Input).value = "shared-secret"
+            app.query_one("#password-confirm", screens.Input).value = "shared-secret"
+            app.action_wizard_primary()
+            assert app._wizard_step() == 3
+            app.action_wizard_primary()
             assert called == [
-                (False, confirmation_token(plan), "encryption-secret", "user-secret")
+                (False, confirmation_token(plan), "shared-secret", "shared-secret")
             ]
-            assert app.query_one("#encryption-passphrase", screens.Input).value == ""
-            assert app.query_one("#user-password", screens.Input).value == ""
+            assert app.query_one("#password", screens.Input).value == ""
+            assert app.query_one("#password-confirm", screens.Input).value == ""
+
+    asyncio.run(scenario())
+
+
+def test_linux_tui_defaults_to_beginner_wizard_at_80x24(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from rebuild.installer.ui import screens
+
+    plan = payload_to_plan(plan_payload())
+    ready = screens.LiveRuntimeSnapshot(
+        generated_at_utc="2026-07-21T00:00:00Z",
+        dependencies_ok=True,
+        missing_dependencies=tuple(),
+        handoff_sources=("/mnt/ventoy",),
+        handoff_result=SimpleNamespace(plan=plan, plan_path="/mnt/ventoy/omarchy/plan.json"),  # type: ignore[arg-type]
+        handoff_error="",
+        network_result=SimpleNamespace(connected=True, requires_abort=False),  # type: ignore[arg-type]
+        network_error="",
+        install_result=None,
+        install_error="not started",
+        boot_policy_result=None,
+        boot_policy_error="not run",
+        identity_result=SimpleNamespace(disk=SimpleNamespace(path="/dev/vda")),  # type: ignore[arg-type]
+    )
+    monkeypatch.setattr(screens, "collect_live_runtime_snapshot", lambda **kwargs: ready)
+
+    async def scenario() -> None:
+        app = screens.LiveInstallerApp()
+        async with app.run_test(size=Size(80, 24)) as pilot:
+            await app.workers.wait_for_complete()
+            assert app._view == "wizard"
+            assert app.query_one("#wizard").display is True
+            assert app.query_one("#advanced").display is False
+            assert app._wizard_step() == 2
+            assert "Create your password" in str(app.query_one("#wiz-title").render())
+            assert app.query_one("#password", screens.Input).has_focus
+            assert len(app.query("#simulate-install")) == 0
+
+            for key in "beginner-password":
+                await pilot.press(key)
+            await pilot.press("tab")
+            for key in "beginner-password":
+                await pilot.press(key)
+            await pilot.press("enter")
+            assert app._wizard_step() == 3
+            assert "Ready to install Omarchy" in str(app.query_one("#wiz-title").render())
+            assert app.query_one("#password", screens.Input).display is False
+
+            await pilot.press("a")
+            assert app._view == "advanced"
+            assert app.query_one("#advanced").display is True
 
     asyncio.run(scenario())

@@ -10,7 +10,7 @@ import subprocess
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
-from textual.widgets import Button, Footer, Header, Input, Static
+from textual.widgets import Footer, Header, Input, Static
 from textual import work
 
 from ..platforms.linux_live.boot_policy import BootPolicySummary
@@ -50,6 +50,14 @@ LIVE_BOOTSTRAP_SCREEN_CONTRACT: tuple[str, ...] = (
     "install_progress",
     "finalize",
     "error",
+)
+
+LIVE_WIZARD_TITLES: tuple[str, ...] = (
+    "Check the installer USB",
+    "Connect to the internet",
+    "Create your password",
+    "Ready to install Omarchy",
+    "Installing Omarchy",
 )
 
 REQUIRED_LIVE_BINARIES: tuple[str, ...] = (
@@ -152,7 +160,7 @@ def collect_live_runtime_snapshot(
 
     install_result: LiveInstallExecutionResult | None = None
     install_error = ""
-    install_error = "Install not started; a validated plan and explicit simulation/apply action are required."
+    install_error = "Installation has not started yet."
 
     boot_policy_result: BootPolicySummary | None = None
     boot_policy_error = ""
@@ -325,46 +333,49 @@ def _status_marker(stage_id: str, snapshot: LiveRuntimeSnapshot) -> str:
 
 
 class LiveInstallerApp(App[int]):
-    """Interactive multi-stage TUI for Linux live installer readiness."""
+    """Beginner-first guided installer with diagnostics hidden by default."""
+
+    TITLE = "Omarchy Installer"
 
     CSS = """
     Screen {
       layout: vertical;
     }
     #body {
-      padding: 1 2;
+      padding: 0 1;
       height: 1fr;
     }
     #title {
       text-style: bold;
-      margin-bottom: 1;
+      height: 1;
     }
-    #stages {
-      margin-bottom: 1;
+    #wizard {
+      height: auto;
+      border: round $success;
+      padding: 1 2;
+    }
+    #wiz-progress { color: $text-muted; height: 1; }
+    #wiz-title { text-style: bold; height: auto; padding: 1 0 0 0; }
+    #wiz-body { height: auto; padding: 1 0; }
+    #wiz-status { height: auto; }
+    #wiz-actions { color: $accent; text-style: bold; height: auto; padding: 1 0 0 0; }
+    #password, #password-confirm { margin-top: 1; }
+    #advanced { height: 1fr; }
+    #stages { color: $text-muted; height: auto; }
+    #content { height: 1fr; border: round $primary; padding: 0 1; }
+    #advanced-hints {
       color: $text-muted;
-    }
-    #content {
-      height: 1fr;
-    }
-    #hints {
-      margin-top: 1;
-      color: $text-muted;
+      height: auto;
     }
     """
 
     BINDINGS = [
-        Binding("n,right", "next_stage", "Next Stage"),
-        Binding("p,left", "previous_stage", "Previous Stage"),
+        Binding("enter", "wizard_primary", "Continue"),
+        Binding("a", "toggle_view", "Advanced"),
         Binding("r", "refresh_runtime", "Refresh"),
-        Binding("1", "goto_preflight", "Preflight"),
-        Binding("2", "goto_network", "Network"),
-        Binding("3", "goto_install", "Install"),
-        Binding("4", "goto_finalize", "Finalize"),
-        Binding("5", "goto_error", "Errors"),
-        Binding("s", "simulate_install", "Simulate"),
-        Binding("a", "apply_install", "Apply"),
         Binding("w", "connect_network", "Connect Network"),
         Binding("q", "quit_flow", "Quit"),
+        Binding("escape", "quit_flow", "Quit", show=False),
     ]
 
     def __init__(
@@ -377,6 +388,12 @@ class LiveInstallerApp(App[int]):
         super().__init__()
         self._stage_ids = bootstrap_screen_ids()
         self._active_stage_index = 0
+        self._view = "wizard"
+        self._refreshing = False
+        self._installing = False
+        self._install_started = False
+        self._credentials_ready = False
+        self._install_password = ""
         self._live_runtime_version = live_runtime_version
         self._max_plan_age_hours = max_plan_age_hours
         self._efi_mount = efi_mount
@@ -398,29 +415,162 @@ class LiveInstallerApp(App[int]):
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         with Vertical(id="body"):
-            yield Static("Omarchy Arch Live Installer (Python TUI)", id="title")
-            yield Static("", id="stages", markup=False)
-            yield Button("Refresh USB handoff", id="validate-handoff")
-            yield Static("", id="content")
-            yield Input(placeholder="Type the disk-bound confirmation", id="install-confirmation")
-            yield Input(placeholder="Encryption passphrase", password=True, id="encryption-passphrase")
-            yield Input(placeholder="Target user password", password=True, id="user-password")
-            yield Button("Simulate", id="simulate-install", variant="primary")
-            yield Button("Apply installation", id="apply-install", variant="error")
-            yield Static(
-                "Keys: [1-5] stage  [W] network  [R] refresh  [S] simulate  [A] apply  [Q] quit",
-                id="hints",
-            )
+            yield Static("Omarchy Installer", id="title")
+            with Vertical(id="wizard"):
+                yield Static("", id="wiz-progress")
+                yield Static("", id="wiz-title")
+                yield Static("", id="wiz-body")
+                yield Input(placeholder="Choose a password", password=True, id="password")
+                yield Input(placeholder="Type the password again", password=True, id="password-confirm")
+                yield Static("", id="wiz-status")
+                yield Static("", id="wiz-actions")
+            with Vertical(id="advanced"):
+                yield Static("", id="stages", markup=False)
+                yield Static("", id="content")
+                yield Static("[A] Guided view   [R] Refresh checks   [W] Network setup   [Q] Quit", id="advanced-hints")
         yield Footer()
 
     def on_mount(self) -> None:
         for field in self.query(Input):
             field.can_focus = False
-        self.set_focus(None)
+            field.display = False
+        self._apply_view()
         self.action_refresh_runtime()
 
     def _active_stage_id(self) -> str:
         return self._stage_ids[self._active_stage_index]
+
+    def _preflight_ready(self) -> bool:
+        return bool(
+            self._snapshot.dependencies_ok
+            and self._snapshot.handoff_result
+            and self._snapshot.identity_result
+        )
+
+    def _network_ready(self) -> bool:
+        network = self._snapshot.network_result
+        return bool(network and network.connected and not network.requires_abort)
+
+    def _wizard_step(self) -> int:
+        if self._install_started:
+            return 4
+        if not self._preflight_ready():
+            return 0
+        if not self._network_ready():
+            return 1
+        if not self._credentials_ready:
+            return 2
+        return 3
+
+    def _apply_view(self) -> None:
+        guided = self._view == "wizard"
+        wizard = self.query_one("#wizard", Vertical)
+        advanced = self.query_one("#advanced", Vertical)
+        wizard.display = guided
+        advanced.display = not guided
+        if guided:
+            wizard.can_focus = True
+            wizard.focus(scroll_visible=False)
+        self._render()
+
+    def action_toggle_view(self) -> None:
+        self._view = "advanced" if self._view == "wizard" else "wizard"
+        self._apply_view()
+
+    def _wizard_body(self, step: int) -> str:
+        if step == 0:
+            return (
+                "We are checking the USB and matching it to the Windows setup. "
+                "This does not change your computer."
+            )
+        if step == 1:
+            return (
+                "Omarchy needs an internet connection to finish installing. "
+                "If Wi-Fi setup opens, choose your network and enter its password."
+            )
+        if step == 2:
+            return (
+                "Choose one password for unlocking Omarchy and signing in. "
+                "Use at least 8 characters. You will need this password whenever the computer starts."
+            )
+        if step == 3:
+            handoff = self._snapshot.handoff_result
+            size_gib = 0.0
+            if handoff is not None:
+                target = handoff.plan.linux_install_target
+                if target is not None:
+                    size_gib = target.disk_identity.disk_size_bytes / (1024**3)
+                else:
+                    size_gib = handoff.plan.prepared_free_space_range.size_bytes / (1024**3)
+            return (
+                f"Omarchy will use the {size_gib:.0f} GB space prepared by Windows.\n\n"
+                "Your Windows partition and Windows boot files will be kept. "
+                "Keep the computer plugged into power during installation."
+            )
+        if self._snapshot.install_result is not None:
+            return (
+                "Omarchy was installed successfully.\n\n"
+                "Remove the USB stick, then press Enter to restart your computer."
+            )
+        if self._snapshot.install_error and self._install_started and not self._installing:
+            return (
+                "Installation stopped before it could finish. Your diagnostic details are available "
+                "in Advanced view. Leave the computer on while you record the error."
+            )
+        return (
+            "Installing Omarchy now. This usually takes 15–40 minutes. "
+            "The screen may stay on one message for several minutes; do not turn off the computer."
+        )
+
+    def _wizard_status(self, step: int) -> str:
+        if step == 0:
+            if self._refreshing:
+                return "⏳ Checking the installer USB…"
+            if self._preflight_ready():
+                return "✔ Installer USB is ready."
+            if self._snapshot.handoff_error and self._snapshot.handoff_error != "Not collected yet.":
+                return "✖ We couldn't read the installer USB. Press Enter to try again."
+            return "Press Enter to check the installer USB."
+        if step == 1:
+            return "Press Enter to connect to the internet."
+        if step == 2:
+            return "Type the same password in both boxes, then press Enter."
+        if step == 3:
+            return "Press Enter to begin the real installation."
+        if self._installing:
+            return "⏳ Installation is running. Please wait."
+        if self._snapshot.install_result is not None:
+            return "✔ Installation complete."
+        return "✖ Installation did not finish. Press A to view details."
+
+    def _render_wizard(self) -> None:
+        step = self._wizard_step()
+        dots = " ".join("●" if index < step else ("◉" if index == step else "○") for index in range(5))
+        self.query_one("#wiz-progress", Static).update(f"Step {step + 1} of 5   {dots}")
+        self.query_one("#wiz-title", Static).update(LIVE_WIZARD_TITLES[step])
+        self.query_one("#wiz-body", Static).update(self._wizard_body(step))
+        self.query_one("#wiz-status", Static).update(self._wizard_status(step))
+
+        password = self.query_one("#password", Input)
+        confirmation = self.query_one("#password-confirm", Input)
+        show_passwords = step == 2 and self._view == "wizard"
+        for field in (password, confirmation):
+            field.display = show_passwords
+            field.can_focus = show_passwords
+        if show_passwords and not (password.has_focus or confirmation.has_focus):
+            password.focus()
+
+        primary = {
+            0: "Try again",
+            1: "Connect",
+            2: "Continue",
+            3: "Install Omarchy",
+            4: "Restart" if self._snapshot.install_result is not None else "Please wait",
+        }[step]
+        advanced = "   [A] Advanced details"
+        self.query_one("#wiz-actions", Static).update(
+            f"[Enter] {primary}{advanced}   [Q] Quit"
+        )
 
     def _render(self) -> None:
         stage_line_parts = []
@@ -430,19 +580,10 @@ class LiveInstallerApp(App[int]):
             stage_line_parts.append(f"{active}{idx}:{stage_id}[{marker}]")
         self.query_one("#stages", Static).update("  ".join(stage_line_parts))
         self.query_one("#content", Static).update(format_stage_content(self._active_stage_id(), self._snapshot))
+        self._render_wizard()
 
     def _set_stage(self, stage_id: str) -> None:
         self._active_stage_index = self._stage_ids.index(stage_id)
-        for field in self.query(Input):
-            field.can_focus = stage_id == "install_progress"
-        self._render()
-
-    def action_next_stage(self) -> None:
-        self._active_stage_index = (self._active_stage_index + 1) % len(self._stage_ids)
-        self._render()
-
-    def action_previous_stage(self) -> None:
-        self._active_stage_index = (self._active_stage_index - 1) % len(self._stage_ids)
         self._render()
 
     def action_goto_preflight(self) -> None:
@@ -473,6 +614,7 @@ class LiveInstallerApp(App[int]):
             self.call_from_thread(self._apply_refresh, None, str(exc))
 
     def _apply_refresh(self, snapshot: LiveRuntimeSnapshot | None, error: str | None) -> None:
+        self._refreshing = False
         if snapshot is None:
             self._snapshot = LiveRuntimeSnapshot(
                 generated_at_utc=_now_utc(),
@@ -496,6 +638,10 @@ class LiveInstallerApp(App[int]):
         self.notify("Runtime state refreshed.", severity="information")
 
     def action_refresh_runtime(self) -> None:
+        if self._refreshing or self._installing:
+            return
+        self._refreshing = True
+        self._render()
         self.notify("Refreshing runtime state…", severity="information")
         self._refresh_worker()
 
@@ -516,7 +662,7 @@ class LiveInstallerApp(App[int]):
             network_result=result,
             network_error=error,
         )
-        self._set_stage("network")
+        self._render()
         self.notify(
             "Network readiness passed." if result and not error else "Network readiness blocked.",
             severity="information" if result and not error else "error",
@@ -526,7 +672,7 @@ class LiveInstallerApp(App[int]):
         self.notify("Starting interactive NetworkManager fallback.")
         self._network_worker()
 
-    def _start_install(self, *, dry_run: bool) -> None:
+    def _start_install(self) -> None:
         snapshot = self._snapshot
         if not snapshot.dependencies_ok or snapshot.handoff_result is None or snapshot.identity_result is None:
             self.notify("Preflight, handoff, and machine identity must pass.", severity="error")
@@ -534,16 +680,17 @@ class LiveInstallerApp(App[int]):
         if snapshot.network_result is None or not snapshot.network_result.connected or snapshot.network_result.requires_abort:
             self.notify("Network readiness must pass before installation.", severity="error")
             return
-        confirmation = self.query_one("#install-confirmation", Input).value
-        encryption_passphrase = self.query_one("#encryption-passphrase", Input).value
-        user_password = self.query_one("#user-password", Input).value
-        if not dry_run and (not encryption_passphrase or not user_password):
-            self.notify("Both concealed passwords are required for apply mode.", severity="error")
+        if not self._credentials_ready or not self._install_password:
+            self.notify("Create your password before starting installation.", severity="error")
             return
-        self.query_one("#encryption-passphrase", Input).value = ""
-        self.query_one("#user-password", Input).value = ""
-        self.notify("Simulation started." if dry_run else "Installation started; cancellation is restricted after partitioning.")
-        self._install_worker(dry_run, confirmation, encryption_passphrase, user_password)
+        confirmation = confirmation_token(snapshot.handoff_result.plan)
+        password = self._install_password
+        self._install_password = ""
+        self._install_started = True
+        self._installing = True
+        self._render()
+        self.notify("Installation started. Keep the computer plugged into power.")
+        self._install_worker(False, confirmation, password, password)
 
     @work(thread=True, exclusive=True, group="live-install")
     def _install_worker(
@@ -599,30 +746,65 @@ class LiveInstallerApp(App[int]):
     def _apply_install_result(
         self, result: LiveInstallExecutionResult | None, error: str | None
     ) -> None:
+        self._installing = False
         self._snapshot = replace(
             self._snapshot,
             install_result=result,
             install_error=error or "",
         )
-        self._set_stage("install_progress" if result else "error")
+        self._active_stage_index = self._stage_ids.index("install_progress" if result else "error")
+        self._render()
         self.notify(
             "Installation orchestration completed." if result else "Installation failed.",
             severity="information" if result else "error",
         )
 
-    def action_simulate_install(self) -> None:
-        self._start_install(dry_run=True)
-
     def action_apply_install(self) -> None:
-        self._start_install(dry_run=False)
+        self._start_install()
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "simulate-install":
-            self.action_simulate_install()
-        elif event.button.id == "apply-install":
-            self.action_apply_install()
-        elif event.button.id == "validate-handoff":
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "password":
+            self.query_one("#password-confirm", Input).focus()
+            return
+        if event.input.id == "password-confirm":
+            self.action_wizard_primary()
+
+    def action_wizard_primary(self) -> None:
+        if self._view != "wizard" or self._refreshing or self._installing:
+            return
+        step = self._wizard_step()
+        if step == 0:
             self.action_refresh_runtime()
+            return
+        if step == 1:
+            self.action_connect_network()
+            return
+        if step == 2:
+            password_field = self.query_one("#password", Input)
+            confirmation_field = self.query_one("#password-confirm", Input)
+            password = password_field.value
+            repeated = confirmation_field.value
+            if len(password) < 8:
+                self.notify("Choose a password with at least 8 characters.", severity="error")
+                password_field.focus()
+                return
+            if password != repeated:
+                self.notify("The two passwords do not match. Please try again.", severity="error")
+                confirmation_field.value = ""
+                confirmation_field.focus()
+                return
+            self._install_password = password
+            self._credentials_ready = True
+            password_field.value = ""
+            confirmation_field.value = ""
+            self._render()
+            return
+        if step == 3:
+            self._start_install()
+            return
+        if self._snapshot.install_result is not None:
+            self.notify("Restarting… remove the USB stick now.")
+            subprocess.Popen(["systemctl", "reboot"])
 
     def action_quit_flow(self) -> None:
         self.exit(0)

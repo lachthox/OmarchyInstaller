@@ -46,7 +46,6 @@ OVMF_VARS_CANDIDATES = (
 )
 
 LUKS_PASSPHRASE = "OmarchyVMTest-Luks-9f3c1a"
-USER_PASSWORD = "OmarchyVMTest-User-7e2b6d"
 SERIAL_PORT = 45101
 QMP_PORT = 45201
 LIVE_RUNTIME_VERSION = "1.0.0"
@@ -229,8 +228,6 @@ def _sha256_of_url(url: str) -> str:
 def drive_handoff_and_install(
     console: SerialConsole,
     evidence: Evidence,
-    *,
-    confirmation: str,
 ) -> bool:
     # Must run in the foreground: a backgrounded process reading the
     # controlling tty would be stopped (SIGTTIN) the instant it tries to
@@ -241,25 +238,18 @@ def drive_handoff_and_install(
     )
     time.sleep(5)
     evidence.note("launched live installer TUI in the foreground on ttyS0")
-    evidence.set("python_live_tui_started", "Omarchy Arch Live Installer" in console.screen_text())
+    evidence.set("python_live_tui_started", "Omarchy Installer" in console.screen_text())
 
-    console.send_key("r")
-    evidence.note("triggered automatic USB handoff discovery and validation")
-
-    # The bracketed "[ok]"/"[blocked]" stage-summary annotations are parsed as
-    # Rich markup by Static.update() and silently dropped for unrecognized
-    # tag names (a real display bug, fixed separately in ui/screens.py). The
-    # per-field status lines in the actual stage content are reliable, so
-    # check those directly instead of the stage-summary line.
-    console.wait_for("Dependencies:", "Handoff:", timeout=60)
+    console.wait_for(
+        "Create your password",
+        "Connect to the internet",
+        "couldn't read the installer USB",
+        timeout=90,
+    )
 
     def _preflight_ready() -> tuple[bool, str]:
         text = console.screen_text()
-        ok = (
-            "Dependencies: PASS" in text
-            and "Handoff: PASS" in text
-            and "Machine identity: PASS" in text
-        )
+        ok = "Create your password" in text or "Connect to the internet" in text
         return ok, text
 
     deadline = time.monotonic() + 30
@@ -274,17 +264,14 @@ def drive_handoff_and_install(
         evidence.note(console.scrollback_text(tail_bytes=4000))
         return False
 
-    console.send("2")
-    time.sleep(1)
-
     def _network_ready() -> tuple[bool, str]:
         text = console.screen_text()
-        ok = "Connected: True" in text and "Requires Abort: False" in text
+        ok = "Create your password" in text
         return ok, text
 
     network_ok, snapshot = _network_ready()
     if not network_ok:
-        console.send_key("w")
+        console.send_key("enter")
         deadline = time.monotonic() + 90
         while not network_ok and time.monotonic() < deadline:
             time.sleep(3)
@@ -295,39 +282,26 @@ def drive_handoff_and_install(
         evidence.note(console.scrollback_text(tail_bytes=4000))
         return False
 
-    # Generous settle time between typing each masked field's content and
-    # tabbing away from it: the reboot phase's LUKS unlock repeatedly failed
-    # against the exact same LUKS_PASSPHRASE constant used here, suggesting
-    # a stray character (e.g. a fragment of the Tab escape sequence) can
-    # bleed into the password Input if the next keystroke follows too fast.
-    console.send("3")
-    time.sleep(0.5)
-    console.send_key("tab")
-    time.sleep(0.5)
-    console.send(confirmation)
+    # The guided UI asks for one password twice and uses it for both disk
+    # unlock and login. The first password field is focused automatically.
+    console.send(LUKS_PASSPHRASE)
     time.sleep(0.5)
     console.send_key("tab")
     time.sleep(0.5)
     console.send(LUKS_PASSPHRASE)
     time.sleep(0.5)
-    console.send_key("tab")
-    time.sleep(0.5)
-    console.send(USER_PASSWORD)
-    time.sleep(0.5)
-    console.send_key("tab")
-    time.sleep(0.5)
-    console.send_key("tab")
-    time.sleep(0.5)
     console.send_key("enter")
-    evidence.note("submitted disk-bound confirmation + credentials, triggered apply-install")
+    console.wait_for("Ready to install Omarchy", timeout=30)
+    console.send_key("enter")
+    evidence.note("confirmed one password and started installation through guided UI")
 
     result = console.wait_for(
-        "Status: completed", "Status: failed", "Installation failed", timeout=1200, poll=5.0
+        "Installation complete", "Installation did not finish", timeout=1200, poll=5.0
     )
     evidence.note(f"install result marker: {result}")
-    evidence.set("installation_completed", result == "Status: completed")
+    evidence.set("installation_completed", result == "Installation complete")
     evidence.note(console.screen_text())
-    if result != "Status: completed":
+    if result != "Installation complete":
         console.send_key("q")
         time.sleep(3)
         console.send_line("echo SHELL_BACK_$$")
@@ -512,12 +486,11 @@ def run(args: argparse.Namespace) -> Evidence:
         )
 
     disk_fixture.write_plan_files_onto_ventoy(ventoy_img, _write_handoff)
-    from rebuild.tools.vm_drivers.plan_fixture import confirmation_token, validated_plan
+    from rebuild.tools.vm_drivers.plan_fixture import validated_plan
 
     plan = validated_plan(plan_payload)
-    confirmation = confirmation_token(plan)
     evidence.set("plan_id", plan.meta.plan_id)
-    evidence.note(f"generated authenticated handoff plan; confirmation token={confirmation}")
+    evidence.note("generated validated handoff plan for the guided installer")
 
     qemu_args = qemu_base_args(ovmf_code=ovmf_code, ovmf_vars=ovmf_vars, disk_img=disk_img)
     qemu_args += [
@@ -547,7 +520,7 @@ def run(args: argparse.Namespace) -> Evidence:
         evidence.set("uefi_iso_booted", True)
         login_as_root(console, evidence)
 
-        install_ok = drive_handoff_and_install(console, evidence, confirmation=confirmation)
+        install_ok = drive_handoff_and_install(console, evidence)
 
         if install_ok:
             mounted_ok, hash_output, limine_listing = patch_installed_cmdline_and_check_efi(console, evidence)

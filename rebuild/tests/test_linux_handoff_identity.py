@@ -109,6 +109,10 @@ class FakeMountRunner:
                 ]
             }
             return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+        if command[0] == "findmnt":
+            return subprocess.CompletedProcess(command, 1, "", "not mounted")
+        if command[0] == "udevadm":
+            return subprocess.CompletedProcess(command, 0, "", "")
         if command[0] == "mount":
             shutil.copytree(self.source, Path(command[-1]), dirs_exist_ok=True)
             return subprocess.CompletedProcess(command, 0, "", "")
@@ -124,7 +128,56 @@ def test_controlled_read_only_mount_is_always_unmounted(tmp_path: Path) -> None:
     with open_validated_handoff(context(), runner=runner, mountpoint=mountpoint) as result:
         assert result.plan.meta.schema_version == "1.0.0"
     assert runner.commands[-1] == ["umount", str(mountpoint)]
-    assert runner.commands[1][0:3] == ["mount", "-o", "ro,nosuid,nodev,noexec"]
+    mount_command = next(command for command in runner.commands if command[0] == "mount")
+    assert mount_command[0:3] == ["mount", "-o", "ro,nosuid,nodev,noexec"]
+    assert mount_command[3] == "/dev/mapper/sdz1"
+
+
+def test_existing_ventoy_mount_is_reused_without_remount(tmp_path: Path) -> None:
+    source = make_bundle(tmp_path / "already-mounted")
+
+    class ExistingMountRunner(FakeMountRunner):
+        def run(self, command: list[str]) -> subprocess.CompletedProcess[str]:
+            self.commands.append(command)
+            if command[0] == "lsblk":
+                self.commands.pop()
+                return super().run(command)
+            if command[0] == "findmnt":
+                return subprocess.CompletedProcess(
+                    command,
+                    0,
+                    json.dumps(
+                        {"filesystems": [{"target": str(source), "source": "/dev/sdz1"}]}
+                    ),
+                    "",
+                )
+            if command[0] == "udevadm":
+                return subprocess.CompletedProcess(command, 0, "", "")
+            raise AssertionError(command)
+
+    runner = ExistingMountRunner(source)
+    with open_validated_handoff(context(), runner=runner) as result:
+        assert result.plan.meta.schema_version == "1.0.0"
+    assert not any(command[0] in {"mount", "umount"} for command in runner.commands)
+
+
+def test_direct_partition_is_fallback_when_ventoy_mapper_is_absent(tmp_path: Path) -> None:
+    source = make_bundle(tmp_path / "source")
+
+    class MissingMapperRunner(FakeMountRunner):
+        def run(self, command: list[str]) -> subprocess.CompletedProcess[str]:
+            if command[0] == "mount" and command[3] == "/dev/mapper/sdz1":
+                self.commands.append(command)
+                return subprocess.CompletedProcess(command, 32, "", "mapper missing")
+            return super().run(command)
+
+    runner = MissingMapperRunner(source)
+    with open_validated_handoff(
+        context(), runner=runner, mountpoint=tmp_path / "runtime" / "handoff"
+    ) as result:
+        assert result.plan.meta.schema_version == "1.0.0"
+    mount_sources = [command[3] for command in runner.commands if command[0] == "mount"]
+    assert mount_sources == ["/dev/mapper/sdz1", "/dev/sdz1"]
 
 
 class IdentityProbe:
