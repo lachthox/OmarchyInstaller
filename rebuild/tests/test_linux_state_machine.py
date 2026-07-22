@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import threading
 import asyncio
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -244,3 +245,31 @@ def test_linux_tui_defaults_to_beginner_wizard_at_80x24(
             assert app.query_one("#advanced").display is True
 
     asyncio.run(scenario())
+
+
+def test_live_handoff_discovery_retries_transient_usb_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from rebuild.installer.ui import screens
+
+    attempts = 0
+    expected = SimpleNamespace(plan_path="/mnt/ventoy/omarchy/plan.json")
+
+    @contextmanager
+    def flaky_handoff(_context):
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise screens.HandoffDiscoveryError("USB device is still settling")
+        yield expected
+
+    monkeypatch.setattr(screens, "enumerate_ventoy_data_partitions", lambda: ("/dev/sdz1",))
+    monkeypatch.setattr(screens, "open_validated_handoff", flaky_handoff)
+    monkeypatch.setattr(screens.time, "sleep", lambda _seconds: None)
+
+    sources, result, error = screens._discover_live_handoff(SimpleNamespace())  # type: ignore[arg-type]
+
+    assert attempts == 3
+    assert sources == ("/dev/sdz1",)
+    assert result is expected
+    assert error == ""

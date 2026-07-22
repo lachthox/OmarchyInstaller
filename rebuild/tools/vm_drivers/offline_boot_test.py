@@ -25,6 +25,7 @@ if str(WORKSPACE_ROOT) not in sys.path:
     sys.path.insert(0, str(WORKSPACE_ROOT))
 
 from rebuild.tools.vm_drivers.console import SerialConsole  # noqa: E402
+from rebuild.installer.ui.screens import LIVE_INSTALLER_TITLE  # noqa: E402
 
 
 OVMF_CODE_CANDIDATES = (
@@ -152,7 +153,7 @@ def run(iso_path: Path, work_dir: Path) -> dict:
         console.send_line("cd / && /opt/omarchy-venv/bin/python -m installer.main --runtime-version 1.0.0")
         time.sleep(6)
         screen = console.screen_text()
-        evidence["tui_started"] = "Omarchy Arch Live Installer" in screen
+        evidence["tui_started"] = LIVE_INSTALLER_TITLE in screen
         evidence["tui_screen_snapshot"] = screen
 
         console.send_key("q")

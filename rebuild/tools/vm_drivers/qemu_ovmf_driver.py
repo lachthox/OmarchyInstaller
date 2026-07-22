@@ -32,6 +32,7 @@ if str(WORKSPACE_ROOT) not in sys.path:
 
 from rebuild.tools.vm_drivers import disk_fixture, plan_fixture  # noqa: E402
 from rebuild.tools.vm_drivers.console import SerialConsole  # noqa: E402
+from rebuild.installer.ui.screens import LIVE_INSTALLER_TITLE  # noqa: E402
 
 
 OVMF_CODE_CANDIDATES = (
@@ -238,7 +239,7 @@ def drive_handoff_and_install(
     )
     time.sleep(5)
     evidence.note("launched live installer TUI in the foreground on ttyS0")
-    evidence.set("python_live_tui_started", "Omarchy Installer" in console.screen_text())
+    evidence.set("python_live_tui_started", LIVE_INSTALLER_TITLE in console.screen_text())
 
     console.wait_for(
         "Create your password",
@@ -252,13 +253,21 @@ def drive_handoff_and_install(
         ok = "Create your password" in text or "Connect to the internet" in text
         return ok, text
 
-    deadline = time.monotonic() + 30
     preflight_ok, snapshot = _preflight_ready()
-    while not preflight_ok and time.monotonic() < deadline:
-        time.sleep(2)
-        preflight_ok, snapshot = _preflight_ready()
+    for retry in range(3):
+        deadline = time.monotonic() + 20
+        while not preflight_ok and time.monotonic() < deadline:
+            time.sleep(2)
+            preflight_ok, snapshot = _preflight_ready()
+        if preflight_ok:
+            break
+        console.send_key("enter")
+        evidence.note(f"guided USB check retry {retry + 1}")
     evidence.note(f"preflight ready: {preflight_ok}")
     if not preflight_ok:
+        console.send_key("a")
+        time.sleep(1)
+        snapshot = console.screen_text()
         evidence.note("preflight failed; screen snapshot follows")
         evidence.note(snapshot)
         evidence.note(console.scrollback_text(tail_bytes=4000))

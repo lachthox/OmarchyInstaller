@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 import shutil
 import subprocess
+import time
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -17,6 +18,7 @@ from ..platforms.linux_live.boot_policy import BootPolicySummary
 from ..platforms.linux_live.discovery import (
     HandoffDiscoveryError,
     HandoffDiscoveryResult,
+    HandoffValidationContext,
     build_validation_context_from_runtime,
     enumerate_ventoy_data_partitions,
     open_validated_handoff,
@@ -59,6 +61,7 @@ LIVE_WIZARD_TITLES: tuple[str, ...] = (
     "Ready to install Omarchy",
     "Installing Omarchy",
 )
+LIVE_INSTALLER_TITLE = "Omarchy Installer"
 
 REQUIRED_LIVE_BINARIES: tuple[str, ...] = (
     "python3",
@@ -111,6 +114,27 @@ def _now_utc() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _discover_live_handoff(
+    context: HandoffValidationContext,
+    *,
+    attempts: int = 3,
+    retry_delay_seconds: float = 1.0,
+) -> tuple[tuple[str, ...], HandoffDiscoveryResult | None, str]:
+    """Retry removable-media discovery to absorb USB/udev startup races."""
+    sources: tuple[str, ...] = tuple()
+    last_error = ""
+    for attempt in range(max(1, attempts)):
+        try:
+            sources = enumerate_ventoy_data_partitions()
+            with open_validated_handoff(context) as validated_handoff:
+                return sources, validated_handoff, ""
+        except (HandoffDiscoveryError, OSError, ValueError) as exc:
+            last_error = str(exc)
+            if attempt + 1 < attempts:
+                time.sleep(retry_delay_seconds)
+    return sources, None, last_error
+
+
 def collect_live_runtime_snapshot(
     *,
     live_runtime_version: str = "0.1.0-dev",
@@ -129,12 +153,7 @@ def collect_live_runtime_snapshot(
         max_plan_age_hours=max_plan_age_hours,
         integrity_key=integrity_key,
     )
-    try:
-        handoff_sources = enumerate_ventoy_data_partitions()
-        with open_validated_handoff(context) as validated_handoff:
-            handoff_result = validated_handoff
-    except (HandoffDiscoveryError, OSError, ValueError) as exc:
-        handoff_error = str(exc)
+    handoff_sources, handoff_result, handoff_error = _discover_live_handoff(context)
 
     identity_result: IdentityMatchResult | None = None
     identity_error = ""
@@ -335,7 +354,7 @@ def _status_marker(stage_id: str, snapshot: LiveRuntimeSnapshot) -> str:
 class LiveInstallerApp(App[int]):
     """Beginner-first guided installer with diagnostics hidden by default."""
 
-    TITLE = "Omarchy Installer"
+    TITLE = LIVE_INSTALLER_TITLE
 
     CSS = """
     Screen {
@@ -415,7 +434,7 @@ class LiveInstallerApp(App[int]):
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         with Vertical(id="body"):
-            yield Static("Omarchy Installer", id="title")
+            yield Static(LIVE_INSTALLER_TITLE, id="title")
             with Vertical(id="wizard"):
                 yield Static("", id="wiz-progress")
                 yield Static("", id="wiz-title")
