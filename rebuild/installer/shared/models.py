@@ -218,6 +218,23 @@ class CompatibilityContract(ContractBaseModel):
     ventoy_handoff_path: Literal["omarchy/plan.json"] = "omarchy/plan.json"
 
 
+class LinuxInstallTarget(ContractBaseModel):
+    """Optional: install the Linux root onto a disk other than the Windows disk.
+
+    When present, the encrypted LUKS/Btrfs root is created in `install_range`
+    on `disk_identity` (a separate physical disk). The ESP and bootloader stay
+    on the Windows disk (the plan's top-level `efi_identity`), so Limine still
+    presents the OS-picker menu and chainloads Windows exactly as in the
+    single-disk case — only the Linux root relocates. Absent = single-disk
+    install into `prepared_free_space_range` on the Windows disk.
+    """
+
+    disk_identity: DiskIdentity
+    install_range: FreeSpaceRange
+    mode: Literal["whole_disk", "free_space"]
+    erases_existing_data: bool = False
+
+
 class PlanContract(ContractBaseModel):
     meta: VersionedMeta
     provenance: ArtifactProvenance
@@ -229,19 +246,34 @@ class PlanContract(ContractBaseModel):
     network: NetworkProfile
     omarchy_assumptions: OmarchyAssumptions
     compatibility: CompatibilityContract
+    linux_install_target: LinuxInstallTarget | None = None
 
     @model_validator(mode="after")
     def validate_cross_contract_invariants(self) -> "PlanContract":
         sector_size = self.disk_identity.logical_sector_size
-        ranges = (
-            self.efi_identity,
-            self.windows_partition_identity,
-            self.prepared_free_space_range,
-        )
-        if any(item.logical_sector_size != sector_size for item in ranges):
-            raise ValueError("all sector ranges must use the disk logical sector size")
-        if self.prepared_free_space_range.size_bytes < self.user_choices.target_free_space.minimum_bytes:
-            raise ValueError("prepared free space is smaller than the requested minimum")
+        if (
+            self.efi_identity.logical_sector_size != sector_size
+            or self.windows_partition_identity.logical_sector_size != sector_size
+        ):
+            raise ValueError("ESP and Windows partition must use the disk logical sector size")
+        minimum_bytes = self.user_choices.target_free_space.minimum_bytes
+        if self.linux_install_target is None:
+            # Single-disk install: Linux lives in the free space on the Windows disk.
+            if self.prepared_free_space_range.logical_sector_size != sector_size:
+                raise ValueError("prepared free space must use the disk logical sector size")
+            if self.prepared_free_space_range.size_bytes < minimum_bytes:
+                raise ValueError("prepared free space is smaller than the requested minimum")
+        else:
+            # Separate-disk install: Linux lives on its own disk; the Windows
+            # disk (and its free space) is not used for the root.
+            target = self.linux_install_target
+            target_sector = target.disk_identity.logical_sector_size
+            if target.install_range.logical_sector_size != target_sector:
+                raise ValueError("Linux install range must use the target disk logical sector size")
+            if target.install_range.size_bytes < minimum_bytes:
+                raise ValueError("Linux install target is smaller than the requested minimum")
+            if target.disk_identity.gpt_disk_guid.casefold() == self.disk_identity.gpt_disk_guid.casefold():
+                raise ValueError("Linux install target disk must differ from the Windows disk")
         if self.meta.release_tag != self.provenance.release_tag:
             raise ValueError("metadata and provenance release tags must match")
         if self.meta.build_commit != self.provenance.build_commit:
