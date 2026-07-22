@@ -24,6 +24,12 @@ Apply mode creates and verifies:
 - deterministic per-file ESP SHA256 entries and an aggregate hash;
 - artifact hashes, source identities, tool version, and restore warning.
 
+The live `EFI\\Microsoft\\Boot\\BCD` database and transaction logs are excluded
+from the raw ESP tree copy because Windows can keep them locked even for an
+elevated process. They are preserved through the verified `bcdedit /export`
+artifact created earlier in the same transaction; other BCD-related files such
+as `BCD-Template` remain in the ESP tree copy.
+
 The release EXE always launches the guided apply workflow. Windows requests
 Administrator approval automatically at startup. When no development override
 is supplied, the verified recovery set is stored under

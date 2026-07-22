@@ -149,12 +149,34 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _file_manifest(root: Path) -> tuple[list[dict[str, object]], str]:
+def _is_live_bcd_database(relative_path: Path) -> bool:
+    """Return whether an ESP-relative path is the live, locked BCD database.
+
+    Windows may deny normal file reads of ``EFI/Microsoft/Boot/BCD`` and its
+    transaction logs even to an elevated process. The backup transaction has
+    already captured that database through the supported ``bcdedit /export``
+    API, so these redundant locked files must not make the independent ESP tree
+    copy fail.
+    """
+    parts = tuple(part.casefold() for part in relative_path.parts)
+    if len(parts) != 3 or parts[:2] != ("microsoft", "boot"):
+        return False
+    return parts[2] == "bcd" or parts[2].startswith("bcd.log")
+
+
+def _file_manifest(
+    root: Path,
+    *,
+    exclude_live_bcd: bool = False,
+) -> tuple[list[dict[str, object]], str]:
     entries: list[dict[str, object]] = []
     for path in sorted((item for item in root.rglob("*") if item.is_file())):
+        relative_path = path.relative_to(root)
+        if exclude_live_bcd and _is_live_bcd_database(relative_path):
+            continue
         entries.append(
             {
-                "path": path.relative_to(root).as_posix(),
+                "path": relative_path.as_posix(),
                 "size_bytes": path.stat().st_size,
                 "sha256": _sha256(path),
             }
@@ -171,8 +193,17 @@ def _copy_and_verify_efi(source_mount: Path, destination: Path) -> tuple[list[di
     source = source_mount / "EFI"
     if not source.is_dir():
         raise BackupError("Selected ESP mount does not contain an EFI directory.")
-    source_entries, source_hash = _file_manifest(source)
-    shutil.copytree(source, destination, dirs_exist_ok=True)
+    source_entries, source_hash = _file_manifest(source, exclude_live_bcd=True)
+    for source_path in sorted(source.rglob("*")):
+        relative_path = source_path.relative_to(source)
+        if _is_live_bcd_database(relative_path):
+            continue
+        destination_path = destination / relative_path
+        if source_path.is_dir():
+            destination_path.mkdir(parents=True, exist_ok=True)
+        elif source_path.is_file():
+            destination_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_path, destination_path)
     destination_entries, destination_hash = _file_manifest(destination)
     if source_entries != destination_entries or source_hash != destination_hash:
         raise BackupError("Copied ESP tree failed per-file hash verification.")

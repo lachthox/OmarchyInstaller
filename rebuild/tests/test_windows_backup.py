@@ -31,6 +31,14 @@ def test_backup_verifies_selected_esp_and_per_file_manifest(tmp_path: Path) -> N
     source_mount = tmp_path / "selected-esp"
     (source_mount / "EFI" / "Microsoft" / "Boot").mkdir(parents=True)
     (source_mount / "EFI" / "Microsoft" / "Boot" / "bootmgfw.efi").write_bytes(b"windows")
+    # The live Windows BCD database is commonly locked even for an elevated
+    # process. It is exported separately through bcdedit and must not be read a
+    # second time by the ESP tree copier.
+    (source_mount / "EFI" / "Microsoft" / "Boot" / "BCD").write_bytes(b"locked live hive")
+    (source_mount / "EFI" / "Microsoft" / "Boot" / "BCD.LOG1").write_bytes(b"locked log")
+    (source_mount / "EFI" / "Microsoft" / "Boot" / "BCD-Template").write_bytes(
+        b"readable template"
+    )
     (source_mount / "EFI" / "Boot").mkdir(parents=True)
     (source_mount / "EFI" / "Boot" / "bootx64.efi").write_bytes(b"fallback")
 
@@ -52,6 +60,7 @@ def test_backup_verifies_selected_esp_and_per_file_manifest(tmp_path: Path) -> N
     )
     assert [item["path"] for item in efi_manifest["files"]] == [
         "Boot/bootx64.efi",
+        "Microsoft/Boot/BCD-Template",
         "Microsoft/Boot/bootmgfw.efi",
     ]
     assert len(efi_manifest["aggregate_sha256"]) == 64
