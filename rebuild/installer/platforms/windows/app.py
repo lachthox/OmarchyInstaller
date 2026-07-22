@@ -14,8 +14,15 @@ from textual.containers import Vertical
 from textual.widgets import DataTable, Footer, Header, Static
 
 from .checks import run_windows_preflight
-from .disk_probe import DiskProbeError, DiskProbeSnapshot, collect_disk_probe_snapshot
+from .disk_inventory import DiskInfo, DiskInventoryError, collect_disk_inventory, install_target_candidates
+from .disk_probe import (
+    DiskProbeError,
+    DiskProbeSnapshot,
+    collect_disk_probe_snapshot,
+    collect_target_disk_snapshot,
+)
 from .flow import FlowStepResult, WindowsMigrationFlow
+from .target_disk_prep import TargetDiskPrepError, TargetDiskPrepResult, prepare_target_disk
 
 
 EXIT_QUIT = 0
@@ -175,6 +182,9 @@ class WindowsPreflightApp(App[int]):
         Binding("equals_sign", "size_up", "Bigger", show=False),
         Binding("minus", "size_down", "Smaller", show=False),
         Binding("underscore", "size_down", "Smaller", show=False),
+        # Target-disk chooser on the "Make room" step. No-ops off that step.
+        Binding("up", "target_prev", "Prev disk", show=False),
+        Binding("down", "target_next", "Next disk", show=False),
         Binding("r", "refresh", "Refresh", show=False),
         Binding("b", "run_backup_step", "Backup", show=False),
         Binding("p", "run_partition_step", "Partition", show=False),
@@ -198,6 +208,14 @@ class WindowsPreflightApp(App[int]):
         self._busy = False
         self._cancel_requested = threading.Event()
         self._checks: list[dict[str, str]] = []
+        # Multi-disk: all physical disks, and which one Linux is targeted at.
+        # index 0 is always the Windows disk (shrink model); >0 are separate
+        # internal disks (whole-disk / free-space model).
+        self._disks: tuple[DiskInfo, ...] = ()
+        self._target_index = 0
+        # Result of preparing a separate target disk (None for the Windows-disk
+        # shrink path); consumed when building the handoff plan.
+        self._target_prep: TargetDiskPrepResult | None = None
         self._snapshot: DiskProbeSnapshot | None = None
         self._snapshot_summary = "Disk snapshot not collected yet."
         self._notes: list[str] = []
@@ -353,10 +371,17 @@ class WindowsPreflightApp(App[int]):
             action_hint = "[Enter] Continue"
         else:
             action_hint = f"[Enter] {action_label}"
-        size_hint = "   [←/→] change size" if index == 2 and not self._busy else ""
+        hints = ""
+        if index == 2 and not self._busy:
+            target = self._selected_target()
+            if len(self._target_choices()) > 1:
+                hints += "   [↑/↓] choose disk"
+            # The size chooser is meaningless for a whole empty target disk.
+            if target is not None and not self._target_is_whole_disk(target):
+                hints += "   [←/→] change size"
         cancel_hint = "   [X] Cancel" if self._busy and not self._flow.apply_changes else ""
         self.query_one("#wiz-actions", Static).update(
-            f"{action_hint}{size_hint}   [A] Advanced view{cancel_hint}   [Esc] Quit"
+            f"{action_hint}{hints}   [A] Advanced view{cancel_hint}   [Esc] Quit"
         )
 
     # -- Disk-space plan and Linux-size chooser (the "Make room" step) -----
@@ -365,15 +390,68 @@ class WindowsPreflightApp(App[int]):
     def _to_gib(value_bytes: int) -> int:
         return int(value_bytes // GIB)
 
-    def _max_linux_gib(self) -> int:
-        """Upper bound for the picker: existing free space plus what Windows
-        can give up while keeping a reserve. The real shrink limit is enforced
-        for real at apply time by Get-PartitionSupportedSize."""
+    def _target_choices(self) -> list[dict[str, Any]]:
+        """Where Linux can be installed: the Windows disk (shrink), then each
+        other internal disk (USB excluded). Index 0 is always the Windows disk.
+        """
+        choices: list[dict[str, Any]] = []
         if self._snapshot is None:
+            return choices
+        win_num = self._snapshot.disk_identity.runtime_disk_number
+        win_info = next((d for d in self._disks if d.number == win_num), None)
+        win_kind = win_info.kind_label if win_info else "system disk"
+        choices.append(
+            {
+                "kind": "windows",
+                "disk_number": win_num,
+                "label": f"Windows disk — Disk {win_num} ({win_kind})",
+                "info": win_info,
+            }
+        )
+        for info in install_target_candidates(self._disks):
+            if info.number == win_num:
+                continue
+            choices.append(
+                {
+                    "kind": "separate",
+                    "disk_number": info.number,
+                    "label": f"Disk {info.number} ({info.kind_label}, {info.size_gib} GB)"
+                    + (" — empty" if info.is_empty else f", {info.free_gib} GB free"),
+                    "info": info,
+                }
+            )
+        return choices
+
+    def _selected_target(self) -> dict[str, Any] | None:
+        choices = self._target_choices()
+        if not choices:
+            return None
+        self._target_index = max(0, min(self._target_index, len(choices) - 1))
+        return choices[self._target_index]
+
+    def _target_is_whole_disk(self, target: dict[str, Any]) -> bool:
+        """A separate empty disk is used whole; size is fixed at the disk size."""
+        info: DiskInfo | None = target.get("info")
+        return target["kind"] == "separate" and info is not None and info.is_empty
+
+    def _max_linux_gib(self) -> int:
+        """Upper bound for the size chooser, adapted to the selected target.
+
+        The real limits are enforced for real at apply time (shrink range on
+        the Windows disk, or the target disk's actual free extent)."""
+        target = self._selected_target()
+        if target is None or self._snapshot is None:
             return MIN_LINUX_GIB
-        free = self._to_gib(self._snapshot.prepared_free_space_range.size_bytes)
-        windows = self._to_gib(self._snapshot.windows_partition_identity.size_bytes)
-        return max(MIN_LINUX_GIB, free + max(0, windows - MIN_WINDOWS_RESERVE_GIB))
+        if target["kind"] == "windows":
+            free = self._to_gib(self._snapshot.prepared_free_space_range.size_bytes)
+            windows = self._to_gib(self._snapshot.windows_partition_identity.size_bytes)
+            return max(MIN_LINUX_GIB, free + max(0, windows - MIN_WINDOWS_RESERVE_GIB))
+        info: DiskInfo | None = target.get("info")
+        if info is None:
+            return MIN_LINUX_GIB
+        if info.is_empty:
+            return max(MIN_LINUX_GIB, info.size_gib)  # whole disk
+        return max(MIN_LINUX_GIB, info.free_gib)  # free space on a data disk
 
     def _clamp_linux_gib(self) -> None:
         upper = self._max_linux_gib()
@@ -384,33 +462,63 @@ class WindowsPreflightApp(App[int]):
 
     def _partition_plan_lines(self) -> list[str]:
         snap = self._snapshot
-        if snap is None:
+        target = self._selected_target()
+        if snap is None or target is None:
             return ["(Disk details unavailable — go back to step 1 and re-check.)"]
-        total = self._to_gib(snap.disk_identity.disk_size_bytes)
-        windows = self._to_gib(snap.windows_partition_identity.size_bytes)
-        free = self._to_gib(snap.prepared_free_space_range.size_bytes)
-        linux = self._linux_gib
-        shrink = max(0, linux - free)
-        lines = [
-            f"Your disk: {total} GB total",
-            f"  Windows now: {windows} GB      Already free (unallocated): {free} GB",
-            "",
-            f"Linux will get: {linux} GB",
-        ]
-        if shrink <= 0:
-            lines.append(
-                "  -> Windows will NOT be shrunk — you already have enough free space."
-            )
+
+        choices = self._target_choices()
+        lines: list[str] = ["Install Linux to:"]
+        for i, choice in enumerate(choices):
+            marker = ">" if i == self._target_index else " "
+            lines.append(f"  {marker} {choice['label']}")
+        if len(choices) == 1:
+            lines.append("    (no other internal disks detected; USB drives are excluded)")
+        lines.append("")
+
+        if target["kind"] == "windows":
+            total = self._to_gib(snap.disk_identity.disk_size_bytes)
+            windows = self._to_gib(snap.windows_partition_identity.size_bytes)
+            free = self._to_gib(snap.prepared_free_space_range.size_bytes)
+            linux = self._linux_gib
+            shrink = max(0, linux - free)
+            lines += [
+                f"Your disk: {total} GB total",
+                f"  Windows now: {windows} GB      Already free (unallocated): {free} GB",
+                "",
+                f"Linux will get: {linux} GB",
+            ]
+            if shrink <= 0:
+                lines.append("  -> Windows will NOT be shrunk — you already have enough free space.")
+            else:
+                lines.append(
+                    f"  -> Windows will shrink from {windows} GB to {windows - shrink} GB "
+                    f"(frees {shrink} GB more)."
+                )
+            return lines
+
+        info: DiskInfo | None = target.get("info")
+        if info is None:
+            return lines + ["(Target disk details unavailable.)"]
+        if info.is_empty:
+            lines += [
+                f"Disk {info.number} is empty — Linux will use the whole disk.",
+                f"Linux will get: {info.size_gib} GB (all of Disk {info.number}).",
+                "  -> Your Windows disk is not touched at all (no shrink).",
+            ]
         else:
-            lines.append(
-                f"  -> Windows will shrink from {windows} GB to {windows - shrink} GB "
-                f"(frees {shrink} GB more)."
-            )
+            lines += [
+                f"Disk {info.number} has data — Linux will use its free space only.",
+                f"Linux will get: {self._linux_gib} GB of {info.free_gib} GB free.",
+                "  -> Windows and this disk's existing files are left in place.",
+            ]
         return lines
 
     def _adjust_linux_size(self, delta_gib: int) -> None:
         if self._view != "wizard" or self._current_step_index() != 2 or self._busy:
             return
+        target = self._selected_target()
+        if target is not None and self._target_is_whole_disk(target):
+            return  # a whole empty target disk uses all of itself; size is fixed
         self._linux_gib += delta_gib
         self._clamp_linux_gib()
         self._render_wizard()
@@ -421,6 +529,22 @@ class WindowsPreflightApp(App[int]):
     def action_size_down(self) -> None:
         self._adjust_linux_size(-LINUX_SIZE_STEP_GIB)
 
+    def _cycle_target(self, delta: int) -> None:
+        if self._view != "wizard" or self._current_step_index() != 2 or self._busy:
+            return
+        choices = self._target_choices()
+        if len(choices) <= 1:
+            return
+        self._target_index = (self._target_index + delta) % len(choices)
+        self._clamp_linux_gib()
+        self._render_wizard()
+
+    def action_target_prev(self) -> None:
+        self._cycle_target(-1)
+
+    def action_target_next(self) -> None:
+        self._cycle_target(1)
+
     def action_wizard_primary(self) -> None:
         """Enter key: run whatever the current guided step needs."""
         index = self._current_step_index()
@@ -429,11 +553,95 @@ class WindowsPreflightApp(App[int]):
         elif index == 1:
             self.action_run_backup_step()
         elif index == 2:
-            self.action_run_partition_step()
+            target = self._selected_target()
+            if target is not None and target["kind"] == "separate":
+                self.action_run_target_disk_step()
+            else:
+                self.action_run_partition_step()
         elif index == 3:
             self.action_run_ventoy_step()
         else:
             self.action_continue_flow()
+
+    def action_run_target_disk_step(self) -> None:
+        """Prepare a separate target disk (no Windows shrink) for the Linux root."""
+        if self._busy:
+            self.notify("An operation is already running.", severity="warning")
+            return
+        required_backup = StageState.SUCCEEDED if self._flow.apply_changes else StageState.SIMULATED
+        if self.stage_states["backup"] != required_backup:
+            self.notify("Complete the current-mode backup stage first.", severity="warning")
+            return
+        target = self._selected_target()
+        if target is None or target["kind"] != "separate":
+            self.notify("Select a separate target disk first.", severity="warning")
+            return
+        info: DiskInfo | None = target.get("info")
+        mode = "whole_disk" if (info is not None and info.is_empty) else "free_space"
+        self._set_busy(True)
+        self._target_prep = None
+        self.stage_states["partition"] = StageState.RUNNING
+        self.stage_states["handoff"] = StageState.IDLE
+        self._handoff_result = None
+        self._refresh_views()
+        self._target_disk_worker(int(target["disk_number"]), mode, self._linux_gib)
+
+    @work(thread=True, exclusive=True, group="partition")
+    def _target_disk_worker(self, disk_number: int, mode: str, requested_gib: int) -> None:
+        apply_mode = self._flow.apply_changes
+        try:
+            snapshot = collect_target_disk_snapshot(disk_number, mode=mode)
+            prep = prepare_target_disk(
+                snapshot,
+                requested_linux_bytes=requested_gib * GIB,
+                minimum_linux_bytes=MIN_LINUX_GIB * GIB,
+            )
+            if not prep.fits:
+                failure = FlowStepResult(
+                    "partition",
+                    False,
+                    apply_mode,
+                    f"Disk {disk_number} does not have enough free space for Linux "
+                    f"({MIN_LINUX_GIB} GB minimum).",
+                )
+                self.call_from_thread(self._apply_target_result, None, failure, failure.summary)
+                return
+            gib = prep.linux_bytes // GIB
+            erase = " (existing data on it will be erased)" if prep.would_erase_existing_data else ""
+            mode_tag = "APPLY" if apply_mode else "SIMULATION"
+            success = FlowStepResult(
+                "partition",
+                True,
+                apply_mode,
+                f"[{mode_tag}] Linux will use {gib} GB on Disk {disk_number}{erase}.",
+                payload={"disk_number": disk_number, "mode": mode},
+            )
+            self.call_from_thread(self._apply_target_result, prep, success, None)
+        except (DiskProbeError, TargetDiskPrepError, OSError, ValueError) as exc:
+            failure = FlowStepResult("partition", False, apply_mode, str(exc))
+            self.call_from_thread(self._apply_target_result, None, failure, str(exc))
+
+    def _apply_target_result(
+        self,
+        prep: TargetDiskPrepResult | None,
+        result: FlowStepResult,
+        error: str | None,
+    ) -> None:
+        if error or not result.ok:
+            self.stage_states["partition"] = StageState.FAILED
+            self._partition_result = None
+            self._target_prep = None
+            self.notify(error or result.summary, severity="error")
+        else:
+            self.stage_states["partition"] = (
+                StageState.SUCCEEDED if self._flow.apply_changes else StageState.SIMULATED
+            )
+            self._partition_result = result
+            self._target_prep = prep
+            self.notify(result.summary, severity="information")
+        self._set_busy(False)
+        self._append_note(result.summary)
+        self._refresh_views()
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
@@ -486,15 +694,24 @@ class WindowsPreflightApp(App[int]):
         snapshot = collect_disk_probe_snapshot()
         return checks, snapshot
 
+    @staticmethod
+    def _collect_disk_inventory_safe() -> tuple[DiskInfo, ...]:
+        """Best-effort physical-disk inventory; never blocks preflight on failure."""
+        try:
+            return collect_disk_inventory()
+        except (DiskInventoryError, OSError, ValueError):
+            return ()
+
     @work(thread=True, exclusive=True, group="preflight")
     def _refresh_worker(self) -> None:
         try:
             report = run_windows_preflight()
             checks, can_proceed = _coerce_report(report)
             snapshot = collect_disk_probe_snapshot() if can_proceed else None
-            self.call_from_thread(self._apply_refresh, checks, can_proceed, snapshot, None)
+            disks = self._collect_disk_inventory_safe() if can_proceed else ()
+            self.call_from_thread(self._apply_refresh, checks, can_proceed, snapshot, None, disks)
         except (DiskProbeError, OSError, RuntimeError, ValueError) as exc:
-            self.call_from_thread(self._apply_refresh, [], False, None, str(exc))
+            self.call_from_thread(self._apply_refresh, [], False, None, str(exc), ())
 
     def _apply_refresh(
         self,
@@ -502,6 +719,7 @@ class WindowsPreflightApp(App[int]):
         can_proceed: bool,
         snapshot: DiskProbeSnapshot | None,
         error: str | None,
+        disks: tuple[DiskInfo, ...] = (),
     ) -> None:
         table = self.query_one("#checks", DataTable)
         table.clear()
@@ -514,6 +732,8 @@ class WindowsPreflightApp(App[int]):
             )
         self._checks = checks
         self._snapshot = snapshot
+        self._disks = disks
+        self._target_index = 0  # default back to the Windows disk on every refresh
         self._can_continue = can_proceed and snapshot is not None and error is None
         self.stage_states["preflight"] = (
             StageState.SUCCEEDED if self._can_continue else StageState.BLOCKED

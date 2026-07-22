@@ -167,6 +167,77 @@ def test_wizard_partition_step_shows_disk_and_allows_resize(
     run(scenario())
 
 
+def test_wizard_disk_picker_selects_and_prepares_a_second_disk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from rebuild.installer.platforms.windows.disk_inventory import DiskInfo
+    from rebuild.installer.platforms.windows.disk_probe import collect_target_disk_snapshot
+
+    GIB = 1024**3
+    win_num = snapshot().disk_identity.runtime_disk_number
+    spare_num = win_num + 1
+    disks = (
+        DiskInfo(
+            number=win_num, model="Windows NVMe", serial="W", size_bytes=512 * GIB,
+            bus_type="NVMe", media_type="SSD", partition_style="GPT", is_system=True,
+            is_boot=True, is_read_only=False, partition_count=4, largest_free_extent_bytes=40 * GIB,
+        ),
+        DiskInfo(
+            number=spare_num, model="Spare SSD", serial="S", size_bytes=1000 * GIB,
+            bus_type="SATA", media_type="SSD", partition_style="RAW", is_system=False,
+            is_boot=False, is_read_only=False, partition_count=0, largest_free_extent_bytes=0,
+        ),
+    )
+
+    class FakeDiskProbe:
+        def collect_disk_layout(self, disk_number: int) -> dict:
+            return {
+                "model": "Spare SSD", "serial": "S", "size_bytes": 1000 * GIB,
+                "partition_style": "RAW", "gpt_disk_guid": "", "logical_sector_size": 512,
+                "partitions": [],
+            }
+
+    def fake_target_snapshot(disk_number, *, mode="auto", probe=None):
+        return collect_target_disk_snapshot(disk_number, mode=mode, probe=FakeDiskProbe())
+
+    monkeypatch.setattr(app_module, "run_windows_preflight", ready_report)
+    monkeypatch.setattr(app_module, "collect_disk_probe_snapshot", snapshot)
+    monkeypatch.setattr(app_module, "collect_disk_inventory", lambda: disks)
+    monkeypatch.setattr(app_module, "collect_target_disk_snapshot", fake_target_snapshot)
+    monkeypatch.setattr(
+        WindowsMigrationFlow, "run_backup",
+        lambda self: FlowStepResult("backup", True, self.apply_changes, "simulated backup"),
+    )
+
+    async def scenario() -> None:
+        app = WindowsPreflightApp()
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.press("enter")  # backup -> reach "Make room"
+            await app.workers.wait_for_complete()
+            assert app._current_step_index() == 2
+            # Both disks are offered; the Windows disk is the default target.
+            assert len(app._target_choices()) == 2
+            assert app._selected_target()["kind"] == "windows"
+            body = str(app.query_one("#wiz-body").render())
+            assert "Install Linux to:" in body
+            # Choose the spare disk and confirm the display switches to it.
+            await pilot.press("down")
+            assert app._selected_target()["kind"] == "separate"
+            assert app._selected_target()["disk_number"] == spare_num
+            body = str(app.query_one("#wiz-body").render())
+            assert "whole disk" in body
+            # Enter now prepares the target disk (no Windows shrink).
+            await pilot.press("enter")
+            await app.workers.wait_for_complete()
+            assert app.stage_states["partition"] == StageState.SIMULATED
+            assert app._target_prep is not None
+            assert app._target_prep.disk_number == spare_num
+            assert app._target_prep.would_erase_existing_data is False
+
+    run(scenario())
+
+
 def test_toggle_between_wizard_and_advanced(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(app_module, "run_windows_preflight", ready_report)
     monkeypatch.setattr(app_module, "collect_disk_probe_snapshot", snapshot)
