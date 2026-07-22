@@ -581,7 +581,15 @@ def execute_install_plan(
 
                     for command in command_plan[4:]:
                         if command[:2] in (["cryptsetup", "luksFormat"], ["cryptsetup", "open"]):
-                            _run_checked(active_runner, command, input_text=encryption_passphrase + "\n")
+                            # `--key-file -` reads stdin as raw key material up
+                            # to EOF with NO line-ending stripping (unlike an
+                            # interactive terminal passphrase prompt, which
+                            # never includes the terminating Enter keystroke
+                            # in the submitted value). Appending "\n" here
+                            # silently baked it into the real LUKS key, so no
+                            # interactive unlock -- a real console or this
+                            # driver's automation -- could ever reproduce it.
+                            _run_checked(active_runner, command, input_text=encryption_passphrase)
                         else:
                             _run_checked(active_runner, command)
                         if command[:2] == ["cryptsetup", "open"]:
