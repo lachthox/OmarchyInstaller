@@ -58,6 +58,10 @@ class WindowsMigrationFlow:
     _verified_backup_manifest: str | None = None
     _backup_root: str | None = None
     _prepared_snapshot: DiskProbeSnapshot | None = None
+    # Set for a separate-disk install: the plan gains this linux_install_target
+    # block so the Linux root is created on the target disk while the ESP stays
+    # on the Windows disk.
+    _linux_install_target: dict[str, Any] | None = None
 
     @property
     def prepared_snapshot(self) -> DiskProbeSnapshot | None:
@@ -135,6 +139,11 @@ class WindowsMigrationFlow:
                 raise ValueError("Plan, ISO, and release manifest files are all required.")
             plan = validate_plan_contract(json.loads(plan_file.read_text(encoding="utf-8")))
             plan = apply_partition_metadata_to_plan(plan, self._prepared_snapshot)
+            if self._linux_install_target is not None:
+                # Re-validate the plan with the separate-disk target attached.
+                payload = plan.model_dump(mode="json")
+                payload["linux_install_target"] = self._linux_install_target
+                plan = validate_plan_contract(payload)
             iso_sha = _sha256(iso_file)
             release_sha = _sha256(release_file)
             if plan.provenance.iso_name != iso_file.name or plan.provenance.iso_sha256 != iso_sha:

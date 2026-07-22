@@ -234,6 +234,10 @@ def test_wizard_disk_picker_selects_and_prepares_a_second_disk(
             assert app._target_prep is not None
             assert app._target_prep.disk_number == spare_num
             assert app._target_prep.would_erase_existing_data is False
+            # The handoff plan will carry a separate-disk target on the spare.
+            assert app._flow._linux_install_target is not None
+            assert app._flow._linux_install_target["disk_identity"]["runtime_disk_number"] == spare_num
+            assert app._flow._prepared_snapshot is not None
 
     run(scenario())
 

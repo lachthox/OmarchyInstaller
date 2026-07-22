@@ -18,6 +18,7 @@ from .disk_inventory import DiskInfo, DiskInventoryError, collect_disk_inventory
 from .disk_probe import (
     DiskProbeError,
     DiskProbeSnapshot,
+    TargetDiskSnapshot,
     collect_disk_probe_snapshot,
     collect_target_disk_snapshot,
 )
@@ -604,7 +605,7 @@ class WindowsPreflightApp(App[int]):
                     f"Disk {disk_number} does not have enough free space for Linux "
                     f"({MIN_LINUX_GIB} GB minimum).",
                 )
-                self.call_from_thread(self._apply_target_result, None, failure, failure.summary)
+                self.call_from_thread(self._apply_target_result, None, None, failure, failure.summary)
                 return
             gib = prep.linux_bytes // GIB
             erase = " (existing data on it will be erased)" if prep.would_erase_existing_data else ""
@@ -616,21 +617,46 @@ class WindowsPreflightApp(App[int]):
                 f"[{mode_tag}] Linux will use {gib} GB on Disk {disk_number}{erase}.",
                 payload={"disk_number": disk_number, "mode": mode},
             )
-            self.call_from_thread(self._apply_target_result, prep, success, None)
+            self.call_from_thread(self._apply_target_result, snapshot, prep, success, None)
         except (DiskProbeError, TargetDiskPrepError, OSError, ValueError) as exc:
             failure = FlowStepResult("partition", False, apply_mode, str(exc))
-            self.call_from_thread(self._apply_target_result, None, failure, str(exc))
+            self.call_from_thread(self._apply_target_result, None, None, failure, str(exc))
+
+    @staticmethod
+    def _linux_install_target_dict(
+        snapshot: TargetDiskSnapshot, prep: TargetDiskPrepResult
+    ) -> dict[str, Any]:
+        # A RAW/empty disk has no GPT GUID yet (it is created at install time);
+        # synthesise a stable placeholder so the plan validates. The target is
+        # resolved on the live side by serial+size as well as GUID.
+        guid = snapshot.gpt_disk_guid or f"00000000-0000-4000-8000-{snapshot.disk_number:012d}"
+        return {
+            "disk_identity": {
+                "gpt_disk_guid": guid,
+                "disk_size_bytes": snapshot.disk_size_bytes,
+                "logical_sector_size": snapshot.logical_sector_size,
+                "disk_model": snapshot.model,
+                "disk_serial": snapshot.serial,
+                "runtime_disk_number": snapshot.disk_number,
+                "partition_style": "GPT",
+            },
+            "install_range": prep.install_partition_range.model_dump(mode="json"),
+            "mode": prep.mode,
+            "erases_existing_data": prep.would_erase_existing_data,
+        }
 
     def _apply_target_result(
         self,
+        snapshot: TargetDiskSnapshot | None,
         prep: TargetDiskPrepResult | None,
         result: FlowStepResult,
         error: str | None,
     ) -> None:
-        if error or not result.ok:
+        if error or not result.ok or snapshot is None or prep is None:
             self.stage_states["partition"] = StageState.FAILED
             self._partition_result = None
             self._target_prep = None
+            self._flow._linux_install_target = None
             self.notify(error or result.summary, severity="error")
         else:
             self.stage_states["partition"] = (
@@ -638,6 +664,11 @@ class WindowsPreflightApp(App[int]):
             )
             self._partition_result = result
             self._target_prep = prep
+            # For a separate-disk install the Windows disk is left as-is, so its
+            # "prepared" snapshot is simply the current snapshot; attach the
+            # target so the handoff plan carries linux_install_target.
+            self._flow._prepared_snapshot = self._snapshot
+            self._flow._linux_install_target = self._linux_install_target_dict(snapshot, prep)
             self.notify(result.summary, severity="information")
         self._set_busy(False)
         self._append_note(result.summary)
