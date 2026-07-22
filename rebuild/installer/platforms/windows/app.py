@@ -65,6 +65,15 @@ class WindowsTuiConfig:
     allow_ventoy_install: bool = False
 
 
+GIB = 1024**3
+# Guided-step size chooser bounds (GiB). The apply path still validates the
+# chosen size against Windows' real supported shrink range; these only bound
+# the on-screen picker.
+LINUX_SIZE_STEP_GIB = 10
+MIN_LINUX_GIB = 40
+MIN_WINDOWS_RESERVE_GIB = 40
+
+
 # Plain-language guided steps. Each maps onto a stage of the underlying
 # WindowsMigrationFlow; the wizard never bypasses that engine, it just narrates
 # it. `stage` is the stage_states key the step waits on (None = final step).
@@ -158,6 +167,14 @@ class WindowsPreflightApp(App[int]):
     BINDINGS = [
         Binding("enter", "wizard_primary", "Next step"),
         Binding("a", "toggle_view", "Advanced"),
+        # Linux-size chooser on the "Make room" step (arrows are reliable
+        # everywhere; +/- are convenience aliases). No-ops off that step.
+        Binding("right", "size_up", "Bigger", show=False),
+        Binding("left", "size_down", "Smaller", show=False),
+        Binding("plus", "size_up", "Bigger", show=False),
+        Binding("equals_sign", "size_up", "Bigger", show=False),
+        Binding("minus", "size_down", "Smaller", show=False),
+        Binding("underscore", "size_down", "Smaller", show=False),
         Binding("r", "refresh", "Refresh", show=False),
         Binding("b", "run_backup_step", "Backup", show=False),
         Binding("p", "run_partition_step", "Partition", show=False),
@@ -174,6 +191,9 @@ class WindowsPreflightApp(App[int]):
         super().__init__()
         self._config = config or WindowsTuiConfig()
         self._view = "wizard"  # "wizard" (default) | "advanced"
+        # Chosen size (GiB) for the new Linux partition; seeded from config and
+        # kept in sync with the flow's shrink target as the user adjusts it.
+        self._linux_gib = max(MIN_LINUX_GIB, int((config or self._config).target_free_gib))
         self._can_continue = False
         self._busy = False
         self._cancel_requested = threading.Event()
@@ -318,7 +338,14 @@ class WindowsPreflightApp(App[int]):
         else:
             mode_note = "Practice run (SIMULATION) — no real changes are made."
         self.query_one("#wiz-title", Static).update(f"{step['title']}")
-        self.query_one("#wiz-body", Static).update(f"{step['what']}\n\n{mode_note}")
+        if index == 2:
+            # "Make room" step: show real disk numbers and the size chooser.
+            self._clamp_linux_gib()
+            plan = "\n".join(self._partition_plan_lines())
+            body = f"{step['what']}\n\n{plan}\n\n{mode_note}"
+        else:
+            body = f"{step['what']}\n\n{mode_note}"
+        self.query_one("#wiz-body", Static).update(body)
         self.query_one("#wiz-status", Static).update(self._wizard_status_line(index, step))
 
         action_label = step["action"]
@@ -326,10 +353,73 @@ class WindowsPreflightApp(App[int]):
             action_hint = "[Enter] Continue"
         else:
             action_hint = f"[Enter] {action_label}"
+        size_hint = "   [←/→] change size" if index == 2 and not self._busy else ""
         cancel_hint = "   [X] Cancel" if self._busy and not self._flow.apply_changes else ""
         self.query_one("#wiz-actions", Static).update(
-            f"{action_hint}   [A] Advanced view{cancel_hint}   [Esc] Quit"
+            f"{action_hint}{size_hint}   [A] Advanced view{cancel_hint}   [Esc] Quit"
         )
+
+    # -- Disk-space plan and Linux-size chooser (the "Make room" step) -----
+
+    @staticmethod
+    def _to_gib(value_bytes: int) -> int:
+        return int(value_bytes // GIB)
+
+    def _max_linux_gib(self) -> int:
+        """Upper bound for the picker: existing free space plus what Windows
+        can give up while keeping a reserve. The real shrink limit is enforced
+        for real at apply time by Get-PartitionSupportedSize."""
+        if self._snapshot is None:
+            return MIN_LINUX_GIB
+        free = self._to_gib(self._snapshot.prepared_free_space_range.size_bytes)
+        windows = self._to_gib(self._snapshot.windows_partition_identity.size_bytes)
+        return max(MIN_LINUX_GIB, free + max(0, windows - MIN_WINDOWS_RESERVE_GIB))
+
+    def _clamp_linux_gib(self) -> None:
+        upper = self._max_linux_gib()
+        lower = min(MIN_LINUX_GIB, upper)
+        self._linux_gib = max(lower, min(self._linux_gib, upper))
+        # Keep the engine's shrink target in lock-step with the chosen size.
+        self._flow.target_free_gib = self._linux_gib
+
+    def _partition_plan_lines(self) -> list[str]:
+        snap = self._snapshot
+        if snap is None:
+            return ["(Disk details unavailable — go back to step 1 and re-check.)"]
+        total = self._to_gib(snap.disk_identity.disk_size_bytes)
+        windows = self._to_gib(snap.windows_partition_identity.size_bytes)
+        free = self._to_gib(snap.prepared_free_space_range.size_bytes)
+        linux = self._linux_gib
+        shrink = max(0, linux - free)
+        lines = [
+            f"Your disk: {total} GB total",
+            f"  Windows now: {windows} GB      Already free (unallocated): {free} GB",
+            "",
+            f"Linux will get: {linux} GB",
+        ]
+        if shrink <= 0:
+            lines.append(
+                "  -> Windows will NOT be shrunk — you already have enough free space."
+            )
+        else:
+            lines.append(
+                f"  -> Windows will shrink from {windows} GB to {windows - shrink} GB "
+                f"(frees {shrink} GB more)."
+            )
+        return lines
+
+    def _adjust_linux_size(self, delta_gib: int) -> None:
+        if self._view != "wizard" or self._current_step_index() != 2 or self._busy:
+            return
+        self._linux_gib += delta_gib
+        self._clamp_linux_gib()
+        self._render_wizard()
+
+    def action_size_up(self) -> None:
+        self._adjust_linux_size(LINUX_SIZE_STEP_GIB)
+
+    def action_size_down(self) -> None:
+        self._adjust_linux_size(-LINUX_SIZE_STEP_GIB)
 
     def action_wizard_primary(self) -> None:
         """Enter key: run whatever the current guided step needs."""

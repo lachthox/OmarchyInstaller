@@ -128,6 +128,45 @@ def test_wizard_enter_key_drives_the_underlying_flow(monkeypatch: pytest.MonkeyP
     run(scenario())
 
 
+def test_wizard_partition_step_shows_disk_and_allows_resize(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(app_module, "run_windows_preflight", ready_report)
+    monkeypatch.setattr(app_module, "collect_disk_probe_snapshot", snapshot)
+    monkeypatch.setattr(
+        WindowsMigrationFlow,
+        "run_backup",
+        lambda self: FlowStepResult("backup", True, self.apply_changes, "simulated backup"),
+    )
+
+    async def scenario() -> None:
+        app = WindowsPreflightApp()
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            # Advance to the "Make room" step.
+            await pilot.press("enter")
+            await app.workers.wait_for_complete()
+            assert app._current_step_index() == 2
+            body = str(app.query_one("#wiz-body").render())
+            # Real disk numbers and the chosen Linux size are shown.
+            assert "Your disk:" in body
+            assert "Already free (unallocated)" in body
+            assert "Linux will get:" in body
+            # The size chooser adjusts the value and keeps the engine target in
+            # sync, staying within bounds.
+            baseline = app._linux_gib
+            await pilot.press("left")
+            assert app._linux_gib <= baseline
+            assert app._flow.target_free_gib == app._linux_gib
+            assert app._linux_gib >= app_module.MIN_LINUX_GIB or app._linux_gib == app._max_linux_gib()
+            lowered = app._linux_gib
+            await pilot.press("right")
+            assert app._linux_gib >= lowered
+            assert app._flow.target_free_gib == app._linux_gib
+
+    run(scenario())
+
+
 def test_toggle_between_wizard_and_advanced(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(app_module, "run_windows_preflight", ready_report)
     monkeypatch.setattr(app_module, "collect_disk_probe_snapshot", snapshot)
