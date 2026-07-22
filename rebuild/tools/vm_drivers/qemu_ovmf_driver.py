@@ -588,6 +588,7 @@ def run(args: argparse.Namespace) -> Evidence:
             ovmf_code=ovmf_code,
             ovmf_vars=ovmf_vars,
             disk_img=disk_img,
+            spare_img=spare_img if separate_disk else None,
             evidence=evidence,
         )
 
@@ -600,10 +601,18 @@ def run_reboot_phase(
     ovmf_code: str,
     ovmf_vars: Path,
     disk_img: Path,
+    spare_img: Path | None = None,
     evidence: Evidence,
 ) -> None:
     qemu_args = qemu_base_args(ovmf_code=ovmf_code, ovmf_vars=ovmf_vars, disk_img=disk_img)
     qemu_args += ["-netdev", "user,id=net0", "-device", "virtio-net-pci,netdev=net0"]
+    if spare_img is not None:
+        # Separate-disk install: the LUKS root lives on the spare disk, so it
+        # must be re-attached for the installed system to find and unlock root.
+        qemu_args += [
+            "-drive", f"file={spare_img},format=raw,if=none,id=spare,cache=writeback",
+            "-device", f"virtio-blk-pci,drive=spare,serial={disk_fixture.SPARE_DISK_SERIAL}",
+        ]
     console = SerialConsole("127.0.0.1", SERIAL_PORT + 1, columns=200, rows=50)
     args = [a if a != f"tcp:127.0.0.1:{SERIAL_PORT},server=on,wait=off" else f"tcp:127.0.0.1:{SERIAL_PORT + 1},server=on,wait=off" for a in qemu_args]
     args = [a if a != f"tcp:127.0.0.1:{QMP_PORT},server=on,wait=off" else f"tcp:127.0.0.1:{QMP_PORT + 1},server=on,wait=off" for a in args]
