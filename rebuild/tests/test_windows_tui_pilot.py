@@ -95,18 +95,31 @@ def test_wizard_is_default_and_shows_first_step(monkeypatch: pytest.MonkeyPatch)
 def test_wizard_enter_key_drives_the_underlying_flow(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(app_module, "run_windows_preflight", ready_report)
     monkeypatch.setattr(app_module, "collect_disk_probe_snapshot", snapshot)
+    # Stub the platform operations (real backup/partition are Windows-only and
+    # not the subject of this test): we are verifying that the wizard's Enter
+    # key dispatches to the correct stage and advances, not the flow internals.
+    monkeypatch.setattr(
+        WindowsMigrationFlow,
+        "run_backup",
+        lambda self: FlowStepResult("backup", True, self.apply_changes, "simulated backup"),
+    )
+    monkeypatch.setattr(
+        WindowsMigrationFlow,
+        "run_partition_prep",
+        lambda self: FlowStepResult("partition", True, self.apply_changes, "simulated partition"),
+    )
 
     async def scenario() -> None:
         app = WindowsPreflightApp()
         async with app.run_test() as pilot:
             await app.workers.wait_for_complete()
-            # Enter on step 2 runs the real backup stage (simulation mode).
+            # Enter on step 2 runs the backup stage.
             await pilot.press("enter")
             await app.workers.wait_for_complete()
             assert app.stage_states["backup"] == StageState.SIMULATED
             # The wizard has now advanced to the partition step.
             assert app._current_step_index() == 2
-            # Enter again runs partition prep.
+            # Enter again runs partition prep and advances to the USB step.
             await pilot.press("enter")
             await app.workers.wait_for_complete()
             assert app.stage_states["partition"] == StageState.SIMULATED
