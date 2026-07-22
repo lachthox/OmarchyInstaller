@@ -84,7 +84,14 @@ class WindowsMigrationFlow:
         if self.backup_destination and self.backup_destination.strip():
             return resolve_and_validate(self.backup_destination)
         if self.apply_changes:
-            raise BackupError("Apply mode requires an explicit off-system-disk backup destination.")
+            # The release EXE must be usable by double-clicking it. Keep an
+            # app-managed, verified recovery set when the user has not supplied
+            # an off-system destination through a development override. The EXE
+            # runs elevated, so ProgramData is the stable machine-wide location.
+            program_data = os.environ.get("ProgramData")
+            if program_data and program_data.strip():
+                return str(Path(program_data).resolve())
+            return str(Path(f"{system_drive.upper()}\\ProgramData").resolve())
         return str((Path.cwd() / "media").resolve())
 
     def run_backup(self) -> FlowStepResult:

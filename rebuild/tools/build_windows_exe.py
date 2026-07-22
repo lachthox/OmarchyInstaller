@@ -183,6 +183,7 @@ def run_pipeline(args: argparse.Namespace) -> int:
             "--noconfirm",
             "--clean",
             "--onefile",
+            "--uac-admin",
             "--name",
             "OmarchyInstaller",
             "--distpath",

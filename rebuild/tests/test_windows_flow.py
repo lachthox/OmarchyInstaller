@@ -61,9 +61,30 @@ def test_run_backup_success(monkeypatch: pytest.MonkeyPatch) -> None:
     assert calls["dry_run"] is True
 
 
-def test_apply_backup_requires_explicit_off_system_disk(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_apply_backup_uses_managed_recovery_destination(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: dict[str, object] = {}
+    flow_module = WindowsMigrationFlow.__module__
+
+    def _fake_backup(**kwargs: object) -> _BackupStub:
+        calls.update(kwargs)
+        return _BackupStub()
+
+    monkeypatch.setattr(f"{flow_module}.run_windows_backup_subsystem", _fake_backup)
     monkeypatch.setenv("SystemDrive", "C:")
-    assert WindowsMigrationFlow(apply_changes=True).run_backup().ok is False
+    monkeypatch.setenv("ProgramData", "C:/ProgramData")
+
+    result = WindowsMigrationFlow(apply_changes=True).run_backup()
+
+    assert result.ok is True
+    destination = str(calls["primary_destination"]).replace("\\", "/")
+    assert destination.endswith("C:/ProgramData")
+    assert calls["dry_run"] is False
+
+
+def test_apply_backup_rejects_explicit_system_disk_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SystemDrive", "C:")
     result = WindowsMigrationFlow(
         apply_changes=True, backup_destination="C:/same-disk-backup"
     ).run_backup()

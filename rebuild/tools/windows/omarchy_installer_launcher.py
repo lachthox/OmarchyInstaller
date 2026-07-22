@@ -42,7 +42,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--python-apply",
         action="store_true",
-        help="Apply Python backup/partition steps (default is dry-run simulation).",
+        default=True,
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--python-target-free-gib",
@@ -134,7 +135,9 @@ def main() -> int:
 
     try:
         tui_result = run_python_tui(
-            apply_changes=args.python_apply,
+            # The packaged end-user executable is always a real guided run.
+            # Simulation remains an internal test capability, not a launch mode.
+            apply_changes=True,
             target_free_gib=max(40, int(args.python_target_free_gib)),
             backup_destination=args.python_backup_destination,
             backup_fallback_destination=args.python_backup_fallback_destination,

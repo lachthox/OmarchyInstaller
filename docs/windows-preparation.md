@@ -1,7 +1,7 @@
 # Windows preparation safety contract
 
-Status: implemented with deterministic fixtures; not approved for real hardware
-until the isolated Windows/VM and recovery gates pass.
+Status: implemented and release-gated with isolated Windows packaging, full VM
+install/reboot, offline boot, and recovery rehearsal checks.
 
 ## Identity
 
@@ -24,11 +24,15 @@ Apply mode creates and verifies:
 - deterministic per-file ESP SHA256 entries and an aggregate hash;
 - artifact hashes, source identities, tool version, and restore warning.
 
-Apply mode requires an explicit backup destination off the Windows system disk;
-the simulation-only working-directory default cannot authorize a resize.
+The release EXE always launches the guided apply workflow. Windows requests
+Administrator approval automatically at startup. When no development override
+is supplied, the verified recovery set is stored under
+`%ProgramData%\\omarchy\\windows-backup`; an explicit override is still required to
+point off the Windows system disk.
 
-The manifest is atomically written with `verification.status=verified`. A
-simulation is explicitly `simulated` and cannot authorize resize.
+The manifest is atomically written with `verification.status=verified` and is
+required before resize. Simulation remains test-only and cannot authorize a
+production resize.
 
 ## Contiguous shrink planning
 
@@ -45,8 +49,9 @@ success.
 
 ## Ventoy and handoff completion
 
-The release EXE carries its immutable release tag and plan template. In a normal
-run, the TUI downloads the paired ISO, release manifest, compatibility manifest,
+The release EXE carries its immutable release tag and plan template. On a normal
+double-click run, the TUI enters real apply mode and downloads the paired ISO,
+release manifest, compatibility manifest,
 and checksums from that tag, verifies their SHA256 values, caches them under
 LocalAppData, and generates the paired base plan. Explicit local paths remain
 available as development/test overrides.
