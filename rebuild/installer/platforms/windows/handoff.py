@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 import json
 import hashlib
-import hmac
 import os
 from pathlib import Path
 import shutil
@@ -547,9 +546,6 @@ def stage_ventoy_handoff_bundle(
 
     if wifi_profile is not None:
         raise VentoyError("Plaintext Wi-Fi handoff is disabled; enter credentials interactively in the live TUI.")
-    if not integrity_key or len(integrity_key) < 32:
-        raise VentoyError("A one-time handoff integrity key of at least 32 bytes is required.")
-
     iso_destination = copy_iso_to_ventoy_root(source_iso, root, filesystem=filesystem)
     plan_path = root / "omarchy" / "plan.json"
     normalized_plan = _normalize_plan_contract(plan_contract)
@@ -578,7 +574,7 @@ def stage_ventoy_handoff_bundle(
     if backup_info_path is not None:
         file_hashes["backup_info"] = _sha256(backup_info_path)
     authenticated_payload = {
-        "schema_version": "1.0.0",
+        "schema_version": "1.1.0",
         "release_tag": normalized_plan["provenance"]["release_tag"],
         "build_commit": normalized_plan["provenance"]["build_commit"],
         "workflow_run_id": normalized_plan["provenance"]["workflow_run_id"],
@@ -591,8 +587,6 @@ def stage_ventoy_handoff_bundle(
         },
         "file_sha256": file_hashes,
     }
-    canonical = json.dumps(authenticated_payload, sort_keys=True, separators=(",", ":")).encode()
-    authenticated_payload["hmac_sha256"] = hmac.new(integrity_key, canonical, hashlib.sha256).hexdigest()
     handoff_manifest_path = root / "omarchy" / "handoff-manifest.json"
     _write_json_file(handoff_manifest_path, authenticated_payload)
 

@@ -18,12 +18,9 @@ second time immediately before the write. Any mismatch blocks.
 - The plan and every optional handoff artifact are hashed after writing.
 - `omarchy/handoff-manifest.json` binds plan/ISO hashes, release tag, commit,
   workflow run, producer/schema versions, and GPT disk/partition identities.
-- The manifest has an HMAC-SHA256 made with a one-time key of at least 256 bits.
-  The key is never written to the USB and must be entered/transported separately.
-- The Windows TUI displays the generated key after verified staging; the user
-  enters its 64 hexadecimal characters into the concealed live-TUI field. Linux
-  mounts exactly one removable Ventoy data partition read-only, verifies the
-  HMAC and every bound identity/hash, then unmounts it.
+- The user boots the prepared USB and Linux mounts exactly one removable Ventoy
+  data partition read-only, verifies every bound identity and file hash, then
+  unmounts it. No manually transferred key or pairing code is required.
 
 ## Secrets
 

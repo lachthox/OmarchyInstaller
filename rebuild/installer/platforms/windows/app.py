@@ -243,7 +243,6 @@ class WindowsPreflightApp(App[int]):
         self._backup_result: FlowStepResult | None = None
         self._partition_result: FlowStepResult | None = None
         self._handoff_result: FlowStepResult | None = None
-        self._handoff_key = ""
         self.stage_states: dict[str, StageState] = {
             "preflight": StageState.IDLE,
             "backup": StageState.IDLE,
@@ -802,7 +801,7 @@ class WindowsPreflightApp(App[int]):
                     f"Backup: {self.stage_states['backup'].value}",
                     f"Partition: {self.stage_states['partition'].value}",
                     f"Ventoy/handoff: {self.stage_states['handoff'].value}",
-                    f"One-time live key: {self._handoff_key or 'not generated'}",
+                    "Live handoff: automatic (no key required)",
                     f"Recent: {recent_notes}",
                     "Continue only hands off after explicit backup and partition stages.",
                 ]
@@ -817,7 +816,6 @@ class WindowsPreflightApp(App[int]):
         self._backup_result = None
         self._partition_result = None
         self._handoff_result = None
-        self._handoff_key = ""
         self.stage_states["backup"] = StageState.IDLE
         self.stage_states["partition"] = StageState.IDLE
         self.stage_states["handoff"] = StageState.IDLE
@@ -1056,8 +1054,6 @@ class WindowsPreflightApp(App[int]):
             summary = result.summary
             if stage == "partition" and self._flow.prepared_snapshot is not None:
                 self._snapshot = self._flow.prepared_snapshot
-            if stage == "handoff" and result.payload:
-                self._handoff_key = str(result.payload.get("integrity_key_hex", ""))
             self.notify(summary, severity="information")
         self._set_busy(False)
         self._cancel_requested.clear()

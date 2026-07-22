@@ -73,7 +73,6 @@ digest, verified, safely extracted, and cached. Apply mode performs two USB
 identity checks around the write, validates the resulting data partition, copies
 and re-hashes the ISO, and writes the authenticated plan bundle.
 
-The TUI displays a newly generated 32-byte one-time key only after the handoff
-stage. Record its 64 hexadecimal characters and enter them in the live TUI using
-`H`; the key is never written to removable media. Network credentials are
+The live TUI discovers and validates the prepared handoff automatically; no
+key, pairing code, or command-line step is required. Network credentials are
 entered interactively only in the live environment.

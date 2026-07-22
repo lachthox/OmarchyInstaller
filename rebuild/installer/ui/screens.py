@@ -363,7 +363,6 @@ class LiveInstallerApp(App[int]):
         Binding("5", "goto_error", "Errors"),
         Binding("s", "simulate_install", "Simulate"),
         Binding("a", "apply_install", "Apply"),
-        Binding("h", "focus_handoff_key", "Handoff Key"),
         Binding("w", "connect_network", "Connect Network"),
         Binding("q", "quit_flow", "Quit"),
     ]
@@ -401,8 +400,7 @@ class LiveInstallerApp(App[int]):
         with Vertical(id="body"):
             yield Static("Omarchy Arch Live Installer (Python TUI)", id="title")
             yield Static("", id="stages", markup=False)
-            yield Input(placeholder="One-time handoff key (64 hex characters)", password=True, id="handoff-key")
-            yield Button("Validate handoff", id="validate-handoff")
+            yield Button("Refresh USB handoff", id="validate-handoff")
             yield Static("", id="content")
             yield Input(placeholder="Type the disk-bound confirmation", id="install-confirmation")
             yield Input(placeholder="Encryption passphrase", password=True, id="encryption-passphrase")
@@ -410,7 +408,7 @@ class LiveInstallerApp(App[int]):
             yield Button("Simulate", id="simulate-install", variant="primary")
             yield Button("Apply installation", id="apply-install", variant="error")
             yield Static(
-                "Keys: [1-5] stage  [H] handoff key  [W] network  [R] refresh  [S] simulate  [A] apply  [Q] quit",
+                "Keys: [1-5] stage  [W] network  [R] refresh  [S] simulate  [A] apply  [Q] quit",
                 id="hints",
             )
         yield Footer()
@@ -463,13 +461,12 @@ class LiveInstallerApp(App[int]):
         self._set_stage("error")
 
     @work(thread=True, exclusive=True, group="live-refresh")
-    def _refresh_worker(self, integrity_key: bytes | None) -> None:
+    def _refresh_worker(self) -> None:
         try:
             snapshot = collect_live_runtime_snapshot(
                 live_runtime_version=self._live_runtime_version,
                 max_plan_age_hours=self._max_plan_age_hours,
                 efi_mount=self._efi_mount,
-                integrity_key=integrity_key,
             )
             self.call_from_thread(self._apply_refresh, snapshot, None)
         except Exception as exc:  # pragma: no cover - defensive worker boundary
@@ -499,26 +496,8 @@ class LiveInstallerApp(App[int]):
         self.notify("Runtime state refreshed.", severity="information")
 
     def action_refresh_runtime(self) -> None:
-        key_field = self.query_one("#handoff-key", Input)
-        key_text = key_field.value.strip()
-        integrity_key: bytes | None = None
-        if key_text:
-            try:
-                integrity_key = bytes.fromhex(key_text)
-            except ValueError:
-                self.notify("The one-time handoff key must be hexadecimal.", severity="error")
-                return
-            if len(integrity_key) < 32:
-                self.notify("The one-time handoff key must contain at least 32 bytes.", severity="error")
-                return
-        key_field.value = ""
         self.notify("Refreshing runtime state…", severity="information")
-        self._refresh_worker(integrity_key)
-
-    def action_focus_handoff_key(self) -> None:
-        field = self.query_one("#handoff-key", Input)
-        field.can_focus = True
-        field.focus()
+        self._refresh_worker()
 
     @work(thread=True, exclusive=True, group="live-network")
     def _network_worker(self) -> None:

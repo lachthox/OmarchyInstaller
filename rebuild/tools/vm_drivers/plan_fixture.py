@@ -9,7 +9,6 @@ it through the identical discovery/validation code path as a real user.
 from __future__ import annotations
 
 import hashlib
-import hmac
 import json
 import secrets
 import sys
@@ -242,7 +241,7 @@ def build_manifest(
     integrity_key: bytes,
 ) -> dict[str, Any]:
     unsigned = {
-        "schema_version": "1.0.0",
+        "schema_version": "1.1.0",
         "file_sha256": {
             "plan": hashlib.sha256(plan_path.read_bytes()).hexdigest(),
             "iso": hashlib.sha256(iso_path.read_bytes()).hexdigest(),
@@ -258,9 +257,7 @@ def build_manifest(
             "windows": plan.windows_partition_identity.partition_guid,
         },
     }
-    canonical = json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode()
-    digest = hmac.new(integrity_key, canonical, hashlib.sha256).hexdigest()
-    return {**unsigned, "hmac_sha256": digest}
+    return unsigned
 
 
 def new_integrity_key() -> bytes:

@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 import hashlib
-import hmac
 import json
 from pathlib import Path
 import subprocess
@@ -115,16 +114,9 @@ def _validate_authenticated_manifest(
     plan: PlanContract,
     context: HandoffValidationContext,
 ) -> None:
-    if not context.integrity_key or len(context.integrity_key) < 32:
-        raise HandoffDiscoveryError("A one-time handoff integrity key of at least 32 bytes is required.")
     manifest_path = source_root / DEFAULT_HANDOFF_MANIFEST_RELATIVE_PATH
     manifest = _load_json(manifest_path)
-    supplied_hmac = str(manifest.pop("hmac_sha256", "")).strip().lower()
-    canonical = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
-    expected_hmac = hmac.new(context.integrity_key, canonical, hashlib.sha256).hexdigest()
-    if not supplied_hmac or not hmac.compare_digest(supplied_hmac, expected_hmac):
-        raise HandoffDiscoveryError("Handoff manifest HMAC verification failed.")
-    if manifest.get("schema_version") != "1.0.0":
+    if manifest.get("schema_version") != "1.1.0":
         raise HandoffDiscoveryError("Unsupported handoff manifest schema.")
 
     file_hashes = manifest.get("file_sha256")

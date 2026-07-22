@@ -7,7 +7,6 @@ import hashlib
 import json
 import os
 from pathlib import Path, PureWindowsPath
-import secrets
 from typing import Any
 
 from .backup import BackupError, BackupResult, run_windows_backup_subsystem
@@ -157,14 +156,13 @@ class WindowsMigrationFlow:
                 raise ValueError("ISO does not match the plan provenance.")
             if plan.provenance.release_manifest_sha256 != release_sha:
                 raise ValueError("Release manifest does not match the plan provenance.")
-            integrity_key = secrets.token_bytes(32)
             if not self.apply_changes:
                 return FlowStepResult(
                     name="ventoy_handoff",
                     ok=True,
                     apply_mode=False,
                     summary="[DRY-RUN] Paired ISO, plan, target identity, and Ventoy inputs validated.",
-                    payload={"integrity_key_hex": integrity_key.hex(), "plan": plan.model_dump(mode="json")},
+                    payload={"plan": plan.model_dump(mode="json")},
                 )
             prep = install_ventoy_to_usb(
                 usb_disk_number,
@@ -178,15 +176,13 @@ class WindowsMigrationFlow:
                 plan,
                 backup_info={"backup_manifest": self._verified_backup_manifest},
                 filesystem=prep.validation.filesystem,
-                integrity_key=integrity_key,
             )
             return FlowStepResult(
                 name="ventoy_handoff",
                 ok=True,
                 apply_mode=True,
-                summary="[APPLY] Ventoy and authenticated handoff verified; record the one-time key.",
+                summary="[APPLY] Ventoy and handoff verified; USB is ready to boot.",
                 payload={
-                    "integrity_key_hex": integrity_key.hex(),
                     "ventoy": prep.to_dict(),
                     "handoff": bundle.to_dict(),
                 },

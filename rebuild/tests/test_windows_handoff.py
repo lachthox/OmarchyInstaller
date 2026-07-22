@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import hmac
 import io
 import json
 from pathlib import Path
@@ -263,24 +262,20 @@ def test_fat32_rejects_sparse_file_over_four_gib(tmp_path: Path) -> None:
         copy_iso_to_ventoy_root(source, tmp_path / "ventoy", filesystem="FAT32")
 
 
-def test_handoff_is_hash_bound_and_hmac_authenticated(tmp_path: Path) -> None:
+def test_handoff_is_hash_bound_without_manual_key(tmp_path: Path) -> None:
     source = tmp_path / "release.iso"
     source.write_bytes(b"release")
-    key = b"k" * 32
-
     result = stage_ventoy_handoff_bundle(
         tmp_path / "ventoy",
         source,
         plan(),
         filesystem="EXFAT",
-        integrity_key=key,
     )
 
     manifest_path = Path(result.handoff_manifest_path or "")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    supplied_hmac = manifest.pop("hmac_sha256")
-    canonical = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
-    assert hmac.compare_digest(supplied_hmac, hmac.new(key, canonical, hashlib.sha256).hexdigest())
+    assert manifest["schema_version"] == "1.1.0"
+    assert "hmac_sha256" not in manifest
     assert manifest["file_sha256"]["iso"] == hashlib.sha256(source.read_bytes()).hexdigest()
     assert manifest["file_sha256"]["plan"] == hashlib.sha256(
         Path(result.plan_path).read_bytes()

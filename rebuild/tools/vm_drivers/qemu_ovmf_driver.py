@@ -230,11 +230,8 @@ def drive_handoff_and_install(
     console: SerialConsole,
     evidence: Evidence,
     *,
-    integrity_key: bytes,
     confirmation: str,
 ) -> bool:
-    hex_key = integrity_key.hex()
-
     # Must run in the foreground: a backgrounded process reading the
     # controlling tty would be stopped (SIGTTIN) the instant it tries to
     # read our keystrokes, so this line is never followed by `&`.
@@ -246,14 +243,8 @@ def drive_handoff_and_install(
     evidence.note("launched live installer TUI in the foreground on ttyS0")
     evidence.set("python_live_tui_started", "Omarchy Arch Live Installer" in console.screen_text())
 
-    console.send_key("h")
-    time.sleep(0.5)
-    console.send(hex_key)
-    time.sleep(0.5)
-    console.send_key("tab")
-    time.sleep(0.3)
-    console.send_key("enter")
-    evidence.note("submitted one-time handoff key, triggered validate-handoff")
+    console.send_key("r")
+    evidence.note("triggered automatic USB handoff discovery and validation")
 
     # The bracketed "[ok]"/"[blocked]" stage-summary annotations are parsed as
     # Rich markup by Static.update() and silently dropped for unrecognized
@@ -556,9 +547,7 @@ def run(args: argparse.Namespace) -> Evidence:
         evidence.set("uefi_iso_booted", True)
         login_as_root(console, evidence)
 
-        install_ok = drive_handoff_and_install(
-            console, evidence, integrity_key=integrity_key, confirmation=confirmation
-        )
+        install_ok = drive_handoff_and_install(console, evidence, confirmation=confirmation)
 
         if install_ok:
             mounted_ok, hash_output, limine_listing = patch_installed_cmdline_and_check_efi(console, evidence)

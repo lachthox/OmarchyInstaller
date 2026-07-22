@@ -163,4 +163,4 @@ def test_dry_run_handoff_validates_pair_and_emits_out_of_band_key(tmp_path: Path
 
     assert result.ok is True
     assert result.payload is not None
-    assert len(str(result.payload["integrity_key_hex"])) == 64
+    assert "integrity_key_hex" not in result.payload
