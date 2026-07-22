@@ -368,6 +368,11 @@ def match_machine_identity(
         device_type = str(_value(record, "type")).strip().lower()
         if device_type != "disk":
             continue
+        if not any(True for _ in _iter_partitions(record)):
+            # An empty disk (e.g. a blank separate-disk install target) is
+            # never the Windows disk we are identifying here; skip it instead
+            # of failing the whole match on its missing partition records.
+            continue
         snapshot = _disk_snapshot(record)
         if _match_disk_identity(plan, snapshot):
             disk_candidates.append(snapshot)

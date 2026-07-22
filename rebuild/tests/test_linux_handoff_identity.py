@@ -189,6 +189,29 @@ def test_gpt_guid_namespaces_geometry_and_usable_end_are_independent() -> None:
         match_machine_identity(plan_payload(), probe=IdentityProbe([wrong_guid]))
 
 
+def test_empty_extra_disk_does_not_break_windows_identity() -> None:
+    # A blank separate-disk install target (no partitions) is present alongside
+    # the Windows disk; identity resolution must skip it rather than fail on its
+    # missing partition records.
+    spare = {
+        "name": "sdb",
+        "path": "/dev/sdb",
+        "type": "disk",
+        "size": 64 * 1024**3,
+        "model": "OMARCHY SPARE",
+        "serial": "OMARCHYSPARE0",
+        "ptuuid": "00000000-0000-4000-8000-000000000020",
+        "log-sec": 512,
+        "first_usable_sector": 34,
+        "last_usable_sector": 64 * 1024**3 // 512 - 34,
+        "children": [],
+    }
+    result = match_machine_identity(
+        plan_payload(), probe=IdentityProbe([spare, disk_record()])
+    )
+    assert result.disk.path == "/dev/nvme0n1"
+
+
 def test_absent_serial_is_safe_but_duplicate_exact_identities_are_ambiguous() -> None:
     match_machine_identity(plan_payload(), probe=IdentityProbe([disk_record(serial="")]))
     with pytest.raises(MachineIdentityError, match="ambiguous"):
