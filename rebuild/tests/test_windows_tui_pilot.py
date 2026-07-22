@@ -57,10 +57,79 @@ def test_small_terminal_navigation_and_refresh(monkeypatch: pytest.MonkeyPatch) 
             await app.workers.wait_for_complete()
             assert app.stage_states["preflight"] == StageState.SUCCEEDED
             assert app._can_continue is True
+            # Guided wizard is the default face; the check table lives in the
+            # advanced view, revealed with "a".
+            assert app._view == "wizard"
+            assert app.query_one("#wizard").display is True
+            assert app.query_one("#advanced").display is False
+            await pilot.press("a")
+            assert app._view == "advanced"
             assert app.query_one("#checks").has_focus
             await pilot.press("j", "k", "tab", "shift+tab")
             assert app.screen.size.width == 80
             assert app.screen.size.height == 24
+
+    run(scenario())
+
+
+def test_wizard_is_default_and_shows_first_step(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(app_module, "run_windows_preflight", ready_report)
+    monkeypatch.setattr(app_module, "collect_disk_probe_snapshot", snapshot)
+
+    async def scenario() -> None:
+        app = WindowsPreflightApp()
+        async with app.run_test() as _pilot:
+            await app.workers.wait_for_complete()
+            assert app._view == "wizard"
+            # After a passing preflight the guided flow sits on the first
+            # actionable step ("Back up..."), and the title uses plain language.
+            assert app._current_step_index() == 1
+            title = app.query_one("#wiz-title").render()
+            assert "Back up" in str(title)
+            progress = str(app.query_one("#wiz-progress").render())
+            assert "Step 2 of 5" in progress
+
+    run(scenario())
+
+
+def test_wizard_enter_key_drives_the_underlying_flow(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(app_module, "run_windows_preflight", ready_report)
+    monkeypatch.setattr(app_module, "collect_disk_probe_snapshot", snapshot)
+
+    async def scenario() -> None:
+        app = WindowsPreflightApp()
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            # Enter on step 2 runs the real backup stage (simulation mode).
+            await pilot.press("enter")
+            await app.workers.wait_for_complete()
+            assert app.stage_states["backup"] == StageState.SIMULATED
+            # The wizard has now advanced to the partition step.
+            assert app._current_step_index() == 2
+            # Enter again runs partition prep.
+            await pilot.press("enter")
+            await app.workers.wait_for_complete()
+            assert app.stage_states["partition"] == StageState.SIMULATED
+            assert app._current_step_index() == 3
+
+    run(scenario())
+
+
+def test_toggle_between_wizard_and_advanced(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(app_module, "run_windows_preflight", ready_report)
+    monkeypatch.setattr(app_module, "collect_disk_probe_snapshot", snapshot)
+
+    async def scenario() -> None:
+        app = WindowsPreflightApp()
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            assert app._view == "wizard"
+            await pilot.press("a")
+            assert app._view == "advanced"
+            assert app.query_one("#advanced").display is True
+            await pilot.press("a")
+            assert app._view == "wizard"
+            assert app.query_one("#wizard").display is True
 
     run(scenario())
 
