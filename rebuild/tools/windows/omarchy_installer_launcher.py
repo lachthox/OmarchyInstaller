@@ -65,9 +65,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--release-manifest", default="", help="Paired release manifest path.")
     parser.add_argument("--usb-disk-number", type=int, default=-1, help="Explicit Ventoy USB disk number.")
     parser.add_argument("--usb-confirmation", default="", help="Exact ERASE <stable-id> confirmation.")
-    parser.add_argument(
-        "--allow-ventoy-install", action="store_true", help="Allow acquisition of Ventoy through winget."
+    ventoy = parser.add_mutually_exclusive_group()
+    ventoy.add_argument(
+        "--allow-ventoy-install",
+        dest="allow_ventoy_install",
+        action="store_true",
+        help="Allow verified download of the official Ventoy release (the default).",
     )
+    ventoy.add_argument(
+        "--no-ventoy-install",
+        dest="allow_ventoy_install",
+        action="store_false",
+        help="Require Ventoy to be installed already.",
+    )
+    parser.set_defaults(allow_ventoy_install=True)
     return parser
 
 

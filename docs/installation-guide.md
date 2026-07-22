@@ -6,12 +6,17 @@
 
 ## Supported journey
 
-1. Download the paired `OmarchyInstaller.exe`, customized Arch ISO, checksum
-   file, release manifest, and compatibility manifest from one immutable tag.
-2. Verify the published hashes and attestation.
-3. Run `OmarchyInstaller.exe` from an elevated Windows session. Complete the
+1. Download `OmarchyInstaller.exe` from an immutable release tag and verify its
+   published hash and attestation.
+2. Run `OmarchyInstaller.exe` from an elevated Windows session. It downloads
+   the customized ISO and paired manifests for its baked-in release tag,
+   verifies every SHA-256 entry, and caches them under LocalAppData.
+3. Complete the
    preflight, verified backups, shrink, Ventoy, ISO-copy, and authenticated
-   handoff stages in order.
+   handoff stages in order. The USB step detects removable disks, selects the
+   only safe candidate automatically, or lets you choose with Up/Down when
+   several are attached. If Ventoy is absent, the verified official Windows
+   release is downloaded and cached automatically.
 4. Reboot from that Ventoy device in UEFI mode and select the paired ISO. The
    live console launches `/opt/omarchy-venv/bin/python -m installer.main`.
 5. Review the rediscovered disk identity and destructive summary. Apply only

@@ -7,6 +7,7 @@ from rebuild.installer.platforms.windows.disk_inventory import (
     classify_disk_kind,
     enumerate_disks,
     install_target_candidates,
+    usb_drive_candidates,
 )
 
 
@@ -94,6 +95,22 @@ def test_install_candidates_exclude_usb_and_readonly() -> None:
     )
     candidates = install_target_candidates(enumerate_disks(probe))
     assert [d.number for d in candidates] == [0, 1]
+
+
+def test_usb_candidates_exclude_protected_and_readonly_disks() -> None:
+    probe = FakeProbe(
+        [
+            disk_row(0, bus_type="NVMe", is_system=True),
+            disk_row(1, bus_type="USB"),
+            disk_row(2, bus_type="USB", is_read_only=True),
+            disk_row(3, bus_type="USB", is_boot=True),
+            disk_row(4, bus_type="USB", size_bytes=0),
+        ]
+    )
+
+    candidates = usb_drive_candidates(enumerate_disks(probe))
+
+    assert [disk.number for disk in candidates] == [1]
 
 
 def test_missing_number_and_empty_inventory_raise() -> None:

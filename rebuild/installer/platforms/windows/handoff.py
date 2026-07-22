@@ -11,12 +11,14 @@ from pathlib import Path
 import shutil
 import subprocess
 from typing import Any, Protocol, Sequence
+import urllib.request
+import zipfile
 
 from ...shared import PlanContract, validate_plan_contract
 from ...shared.atomic_io import atomic_write_json, atomic_write_text
 
 
-DEFAULT_VENTOY_WINGET_ID = "Ventoy.Ventoy"
+VENTOY_LATEST_RELEASE_API = "https://api.github.com/repos/ventoy/Ventoy/releases/latest"
 DEFAULT_VENTOY_MIN_FREE_BYTES = 64 * 1024 * 1024
 DEFAULT_VENTOY_DATA_FILESYSTEMS = {"EXFAT", "NTFS", "FAT32"}
 FAT32_MAX_FILE_BYTES = 4 * 1024**3 - 1
@@ -42,6 +44,52 @@ class SubprocessCommandRunner:
             text=True,
             check=False,
         )
+
+
+class VentoyReleaseDownloader(Protocol):
+    def fetch_json(self, url: str) -> dict[str, Any]: ...
+
+    def fetch_text(self, url: str) -> str: ...
+
+    def download(self, url: str, destination: Path) -> None: ...
+
+
+class UrllibVentoyReleaseDownloader:
+    """Download official Ventoy release metadata and assets over HTTPS."""
+
+    @staticmethod
+    def _request(url: str) -> urllib.request.Request:
+        return urllib.request.Request(url, headers={"User-Agent": "OmarchyInstaller/1"})
+
+    def fetch_json(self, url: str) -> dict[str, Any]:
+        try:
+            with urllib.request.urlopen(self._request(url), timeout=60) as response:  # noqa: S310
+                payload = json.loads(response.read().decode("utf-8"))
+        except (OSError, ValueError) as exc:
+            raise VentoyError(f"Could not fetch Ventoy release metadata: {exc}") from exc
+        if not isinstance(payload, dict):
+            raise VentoyError("Ventoy release metadata was not a JSON object.")
+        return payload
+
+    def fetch_text(self, url: str) -> str:
+        try:
+            with urllib.request.urlopen(self._request(url), timeout=60) as response:  # noqa: S310
+                return response.read().decode("utf-8")
+        except OSError as exc:
+            raise VentoyError(f"Could not fetch Ventoy checksums: {exc}") from exc
+
+    def download(self, url: str, destination: Path) -> None:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        partial = destination.with_name(destination.name + ".part")
+        try:
+            with urllib.request.urlopen(self._request(url), timeout=900) as response, partial.open(
+                "wb"
+            ) as handle:  # noqa: S310
+                shutil.copyfileobj(response, handle, length=1024 * 1024)
+        except OSError as exc:
+            partial.unlink(missing_ok=True)
+            raise VentoyError(f"Could not download Ventoy: {exc}") from exc
+        partial.replace(destination)
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,6 +194,12 @@ def _default_ventoy_roots() -> tuple[Path, ...]:
     return tuple(roots)
 
 
+def _ventoy_cache_root() -> Path:
+    local = os.environ.get("LOCALAPPDATA")
+    base = Path(local) if local else Path.home() / ".omarchy"
+    return base / "Omarchy" / "ventoy"
+
+
 def find_ventoy_cli_path(search_roots: Sequence[str | Path] | None = None) -> Path | None:
     """Locate Ventoy2Disk.exe via PATH or known installation roots."""
     candidate = shutil.which("Ventoy2Disk.exe")
@@ -165,42 +219,116 @@ def find_ventoy_cli_path(search_roots: Sequence[str | Path] | None = None) -> Pa
     return None
 
 
+def _release_asset(payload: dict[str, Any], predicate: Any) -> dict[str, Any]:
+    assets = payload.get("assets", [])
+    if not isinstance(assets, list):
+        raise VentoyError("Ventoy release metadata has no asset list.")
+    matches = [asset for asset in assets if isinstance(asset, dict) and predicate(str(asset.get("name", "")))]
+    if len(matches) != 1:
+        raise VentoyError(f"Expected one Ventoy release asset, found {len(matches)}.")
+    return matches[0]
+
+
+def _checksum_from_text(text: str, filename: str) -> str:
+    for line in text.splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) != 2 or parts[1].lstrip("*").strip() != filename:
+            continue
+        digest = parts[0].lower()
+        if len(digest) == 64 and all(character in "0123456789abcdef" for character in digest):
+            return digest
+    raise VentoyError(f"Ventoy checksum file does not list {filename}.")
+
+
+def _extract_ventoy_archive(archive_path: Path, destination: Path) -> Path:
+    staging = destination.with_name(destination.name + ".part")
+    if staging.exists():
+        shutil.rmtree(staging)
+    staging.mkdir(parents=True)
+    staging_root = staging.resolve()
+    try:
+        with zipfile.ZipFile(archive_path) as archive:
+            corrupt = archive.testzip()
+            if corrupt:
+                raise VentoyError(f"Ventoy archive contains a corrupt member: {corrupt}")
+            for member in archive.infolist():
+                target = (staging / member.filename).resolve()
+                if not target.is_relative_to(staging_root):
+                    raise VentoyError("Ventoy archive contains an unsafe path.")
+            archive.extractall(staging)
+        executables = tuple(staging.rglob("Ventoy2Disk.exe"))
+        if len(executables) != 1:
+            raise VentoyError(f"Expected one Ventoy2Disk.exe, found {len(executables)}.")
+        if destination.exists():
+            shutil.rmtree(destination)
+        staging.replace(destination)
+    except (OSError, zipfile.BadZipFile) as exc:
+        raise VentoyError(f"Could not extract Ventoy: {exc}") from exc
+    executables = tuple(destination.rglob("Ventoy2Disk.exe"))
+    if len(executables) != 1:
+        raise VentoyError("Ventoy2Disk.exe was not present after extraction.")
+    return executables[0]
+
+
+def download_official_ventoy_cli(
+    *,
+    downloader: VentoyReleaseDownloader | None = None,
+    cache_root: Path | None = None,
+) -> Path:
+    """Download, hash-verify, cache, and extract the official Windows release."""
+    active = downloader or UrllibVentoyReleaseDownloader()
+    release = active.fetch_json(VENTOY_LATEST_RELEASE_API)
+    tag = str(release.get("tag_name", "")).strip()
+    if not tag or Path(tag).name != tag:
+        raise VentoyError("Ventoy release metadata has an invalid tag.")
+    windows_asset = _release_asset(
+        release,
+        lambda name: name.startswith("ventoy-") and name.endswith("-windows.zip"),
+    )
+    checksum_asset = _release_asset(release, lambda name: name == "sha256.txt")
+    archive_name = str(windows_asset.get("name", ""))
+    archive_url = str(windows_asset.get("browser_download_url", ""))
+    checksum_url = str(checksum_asset.get("browser_download_url", ""))
+    if Path(archive_name).name != archive_name or not archive_url.startswith("https://github.com/"):
+        raise VentoyError("Ventoy Windows asset metadata is unsafe or incomplete.")
+    if not checksum_url.startswith("https://github.com/"):
+        raise VentoyError("Ventoy checksum asset metadata is unsafe or incomplete.")
+
+    expected = _checksum_from_text(active.fetch_text(checksum_url), archive_name)
+    raw_api_digest = windows_asset.get("digest")
+    api_digest = str(raw_api_digest) if raw_api_digest is not None else ""
+    if api_digest and api_digest != f"sha256:{expected}":
+        raise VentoyError("Ventoy API digest disagrees with sha256.txt.")
+
+    root = cache_root or _ventoy_cache_root()
+    version_root = root / tag
+    archive_path = root / archive_name
+    if not archive_path.is_file() or _sha256(archive_path) != expected:
+        active.download(archive_url, archive_path)
+    actual = _sha256(archive_path)
+    if actual != expected:
+        archive_path.unlink(missing_ok=True)
+        raise VentoyError(f"Ventoy SHA256 mismatch: expected {expected}, got {actual}.")
+    return _extract_ventoy_archive(archive_path, version_root)
+
+
 def acquire_ventoy_cli(
     *,
     allow_install: bool = False,
     runner: CommandRunner | None = None,
+    downloader: VentoyReleaseDownloader | None = None,
+    cache_root: Path | None = None,
 ) -> VentoyCliInfo:
-    """Locate Ventoy2Disk.exe or install Ventoy via winget when explicitly allowed."""
+    """Locate Ventoy2Disk.exe or download the verified official release."""
     path = find_ventoy_cli_path()
     if path:
         return VentoyCliInfo(path=str(path), source="existing")
 
     if not allow_install:
-        raise VentoyError("Ventoy2Disk.exe was not found. Install Ventoy or enable allow_install to acquire it.")
+        raise VentoyError("Ventoy2Disk.exe was not found. Enable automatic Ventoy acquisition.")
 
-    winget = shutil.which("winget")
-    if not winget:
-        raise VentoyError("Ventoy2Disk.exe was not found and winget is unavailable.")
-
-    active_runner = runner or SubprocessCommandRunner()
-    _run_checked(
-        active_runner,
-        [
-            winget,
-            "install",
-            "--id",
-            DEFAULT_VENTOY_WINGET_ID,
-            "--exact",
-            "--silent",
-            "--accept-package-agreements",
-            "--accept-source-agreements",
-        ],
-    )
-
-    path = find_ventoy_cli_path()
-    if not path:
-        raise VentoyError("Ventoy appears installed but Ventoy2Disk.exe was not found afterward.")
-    return VentoyCliInfo(path=str(path), source="winget")
+    path = download_official_ventoy_cli(downloader=downloader, cache_root=cache_root)
+    return VentoyCliInfo(path=str(path), source="official-github-release")
 
 
 def _collect_usb_layout(disk_number: int, runner: CommandRunner) -> dict[str, Any]:
@@ -335,6 +463,22 @@ def _validate_prewrite_target(payload: dict[str, Any], disk_number: int) -> str:
     if not str(payload.get("serial", "")).strip() and not str(payload.get("disk_guid", "")).strip():
         raise VentoyError("Ventoy target lacks both serial and disk GUID; identity is unstable.")
     return _stable_device_identifier(payload)
+
+
+def build_usb_erase_confirmation(
+    disk_number: int,
+    *,
+    runner: CommandRunner | None = None,
+) -> str:
+    """Read and validate a USB target, then return its exact erase challenge.
+
+    The caller may present this challenge as part of a guided confirmation.
+    ``install_ventoy_to_usb`` still performs two further identity reads before
+    invoking Ventoy, so unplug/replug and disk-number races remain fail-closed.
+    """
+    active_runner = runner or SubprocessCommandRunner()
+    payload = _collect_usb_layout(disk_number, active_runner)
+    return f"ERASE {_validate_prewrite_target(payload, disk_number)}"
 
 
 def _write_json_file(path: Path, payload: dict[str, Any]) -> None:

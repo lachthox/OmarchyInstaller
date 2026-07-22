@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import Path
 import threading
 from typing import Any, Callable
 
@@ -14,7 +15,14 @@ from textual.containers import Vertical
 from textual.widgets import DataTable, Footer, Header, Static
 
 from .checks import run_windows_preflight
-from .disk_inventory import DiskInfo, DiskInventoryError, collect_disk_inventory, install_target_candidates
+from .build_info import BuildInfo, load_build_info
+from .disk_inventory import (
+    DiskInfo,
+    DiskInventoryError,
+    collect_disk_inventory,
+    install_target_candidates,
+    usb_drive_candidates,
+)
 from .disk_probe import (
     DiskProbeError,
     DiskProbeSnapshot,
@@ -23,6 +31,12 @@ from .disk_probe import (
     collect_target_disk_snapshot,
 )
 from .flow import FlowStepResult, WindowsMigrationFlow
+from .handoff import build_usb_erase_confirmation
+from .release_provisioning import (
+    ProvisionedAssets,
+    ProvisioningError,
+    provision_release_assets,
+)
 from .target_disk_prep import TargetDiskPrepError, TargetDiskPrepResult, prepare_target_disk
 
 
@@ -70,7 +84,7 @@ class WindowsTuiConfig:
     release_manifest_path: str = ""
     usb_disk_number: int = -1
     usb_confirmation: str = ""
-    allow_ventoy_install: bool = False
+    allow_ventoy_install: bool = True
 
 
 GIB = 1024**3
@@ -214,6 +228,12 @@ class WindowsPreflightApp(App[int]):
         # internal disks (whole-disk / free-space model).
         self._disks: tuple[DiskInfo, ...] = ()
         self._target_index = 0
+        self._usb_index = 0
+        self._usb_scanning = False
+        self._usb_confirm_pending: int | None = None
+        self._build_info: BuildInfo = load_build_info()
+        self._provision_state = StageState.IDLE
+        self._provision_error = ""
         # Result of preparing a separate target disk (None for the Windows-disk
         # shrink path); consumed when building the handoff plan.
         self._target_prep: TargetDiskPrepResult | None = None
@@ -262,6 +282,10 @@ class WindowsPreflightApp(App[int]):
         table.add_columns("Check", "State", "Value", "Details")
         self._apply_view()
         self.action_refresh()
+        if not all(
+            (self._config.plan_path, self._config.iso_path, self._config.release_manifest_path)
+        ):
+            self._start_provisioning()
 
     # -- View management ---------------------------------------------------
 
@@ -314,6 +338,62 @@ class WindowsPreflightApp(App[int]):
             and cfg.usb_disk_number >= 0
         )
 
+    def _usb_choices(self) -> tuple[DiskInfo, ...]:
+        return usb_drive_candidates(self._disks)
+
+    def _sync_usb_selection(self, *, clear_missing: bool = False) -> None:
+        choices = self._usb_choices()
+        if not choices:
+            self._usb_index = 0
+            if clear_missing:
+                self._config.usb_disk_number = -1
+            return
+        configured = next(
+            (index for index, disk in enumerate(choices) if disk.number == self._config.usb_disk_number),
+            None,
+        )
+        if configured is not None:
+            self._usb_index = configured
+        else:
+            self._usb_index = max(0, min(self._usb_index, len(choices) - 1))
+            self._config.usb_disk_number = choices[self._usb_index].number
+        self._usb_confirm_pending = None
+
+    def _selected_usb(self) -> DiskInfo | None:
+        choices = self._usb_choices()
+        if not choices:
+            return None
+        self._usb_index = max(0, min(self._usb_index, len(choices) - 1))
+        selected = choices[self._usb_index]
+        self._config.usb_disk_number = selected.number
+        return selected
+
+    def _usb_plan_lines(self) -> list[str]:
+        if self._provision_state == StageState.RUNNING:
+            release_line = f"Release: downloading and verifying {self._build_info.release_tag}…"
+        elif self._provision_state == StageState.FAILED:
+            release_line = f"Release: download failed — {self._provision_error}"
+        elif all((self._config.plan_path, self._config.iso_path, self._config.release_manifest_path)):
+            release_line = f"Release: ready — {Path(self._config.iso_path).name}"
+        else:
+            release_line = "Release: not ready"
+
+        choices = self._usb_choices()
+        lines = [release_line, "", "USB target (THIS DISK WILL BE ERASED):"]
+        if self._usb_scanning:
+            lines.append("  Scanning for USB drives…")
+        elif not choices:
+            lines.append("  No safe USB drive detected. Insert one, then press Enter to scan again.")
+        else:
+            selected = self._selected_usb()
+            for disk in choices:
+                marker = ">" if selected is not None and disk.number == selected.number else " "
+                serial = f", serial {disk.serial}" if disk.serial else ""
+                lines.append(
+                    f"{marker} Disk {disk.number}: {disk.model} ({disk.size_gib} GB{serial})"
+                )
+        return lines
+
     def _wizard_status_line(self, index: int, step: dict[str, str | None]) -> str:
         stage = step["stage"]
         if self._busy and stage is not None and self.stage_states.get(stage) == StageState.RUNNING:
@@ -334,10 +414,17 @@ class WindowsPreflightApp(App[int]):
             if state == StageState.CANCELLED:
                 return "■ Cancelled — no changes were made. Press Enter to run it again."
             if index == 3 and not self._usb_inputs_ready():
+                if self._provision_state == StageState.RUNNING:
+                    return "Downloading and SHA-256-verifying the paired release ISO…"
+                if self._provision_state == StageState.FAILED:
+                    return "Release download failed. Press Enter to retry."
+                if self._usb_scanning:
+                    return "Scanning for USB drives…"
+                return "Insert a USB stick, then press Enter to detect it."
+            if index == 3 and self._usb_confirm_pending == self._config.usb_disk_number:
                 return (
-                    "This step needs the Linux ISO and a chosen USB stick. Those "
-                    "normally come from the release bundle — if the button does "
-                    "nothing, open Advanced (A) or relaunch with the ISO/USB set."
+                    f"⚠ Disk {self._config.usb_disk_number} will be completely erased. "
+                    "Check the model and size above, then press Enter again to confirm."
                 )
             return "Press Enter to start this step."
         return "All steps are complete. Press Enter to finish."
@@ -362,6 +449,9 @@ class WindowsPreflightApp(App[int]):
             self._clamp_linux_gib()
             plan = "\n".join(self._partition_plan_lines())
             body = f"{step['what']}\n\n{plan}\n\n{mode_note}"
+        elif index == 3:
+            usb_plan = "\n".join(self._usb_plan_lines())
+            body = f"{step['what']}\n\n{usb_plan}\n\n{mode_note}"
         else:
             body = f"{step['what']}\n\n{mode_note}"
         self.query_one("#wiz-body", Static).update(body)
@@ -380,6 +470,8 @@ class WindowsPreflightApp(App[int]):
             # The size chooser is meaningless for a whole empty target disk.
             if target is not None and not self._target_is_whole_disk(target):
                 hints += "   [←/→] change size"
+        elif index == 3 and not self._busy and len(self._usb_choices()) > 1:
+            hints += "   [↑/↓] choose USB"
         cancel_hint = "   [X] Cancel" if self._busy and not self._flow.apply_changes else ""
         self.query_one("#wiz-actions", Static).update(
             f"{action_hint}{hints}   [A] Advanced view{cancel_hint}   [Esc] Quit"
@@ -531,12 +623,23 @@ class WindowsPreflightApp(App[int]):
         self._adjust_linux_size(-LINUX_SIZE_STEP_GIB)
 
     def _cycle_target(self, delta: int) -> None:
-        if self._view != "wizard" or self._current_step_index() != 2 or self._busy:
+        if self._view != "wizard" or self._busy:
             return
-        choices = self._target_choices()
-        if len(choices) <= 1:
+        if self._current_step_index() == 3:
+            usb_choices = self._usb_choices()
+            if len(usb_choices) <= 1:
+                return
+            self._usb_index = (self._usb_index + delta) % len(usb_choices)
+            self._config.usb_disk_number = usb_choices[self._usb_index].number
+            self._usb_confirm_pending = None
+            self._render_wizard()
             return
-        self._target_index = (self._target_index + delta) % len(choices)
+        if self._current_step_index() != 2:
+            return
+        target_choices = self._target_choices()
+        if len(target_choices) <= 1:
+            return
+        self._target_index = (self._target_index + delta) % len(target_choices)
         self._clamp_linux_gib()
         self._render_wizard()
 
@@ -673,6 +776,8 @@ class WindowsPreflightApp(App[int]):
         self._set_busy(False)
         self._append_note(result.summary)
         self._refresh_views()
+        if not error and result.ok:
+            self._start_usb_scan()
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
@@ -733,6 +838,92 @@ class WindowsPreflightApp(App[int]):
         except (DiskInventoryError, OSError, ValueError):
             return ()
 
+    def _start_provisioning(self) -> None:
+        if self._provision_state == StageState.RUNNING:
+            return
+        if not self._build_info.can_provision:
+            self._provision_state = StageState.FAILED
+            self._provision_error = (
+                "this build has no release tag or bundled plan template; use a release EXE"
+            )
+            self._refresh_views()
+            return
+        self._provision_state = StageState.RUNNING
+        self._provision_error = ""
+        self.notify(
+            f"Downloading and verifying the paired ISO for {self._build_info.release_tag}…",
+            severity="information",
+        )
+        self._refresh_views()
+        self._provision_worker()
+
+    @work(thread=True, exclusive=True, group="provisioning")
+    def _provision_worker(self) -> None:
+        try:
+            assets = provision_release_assets(
+                tag=self._build_info.release_tag,
+                repo=self._build_info.release_repo,
+                template_path=self._build_info.template_path,
+                producer_version=self._build_info.producer_version,
+            )
+            self.call_from_thread(self._apply_provisioning, assets, None)
+        except (OSError, ProvisioningError, RuntimeError, ValueError) as exc:
+            self.call_from_thread(self._apply_provisioning, None, str(exc))
+
+    def _apply_provisioning(
+        self,
+        assets: ProvisionedAssets | None,
+        error: str | None,
+    ) -> None:
+        if error or assets is None:
+            self._provision_state = StageState.FAILED
+            self._provision_error = error or "release provisioning failed"
+            self.notify(self._provision_error, severity="error")
+        else:
+            self._config.plan_path = str(assets.plan_path)
+            self._config.iso_path = str(assets.iso_path)
+            self._config.release_manifest_path = str(assets.release_manifest_path)
+            self._provision_state = StageState.SUCCEEDED
+            self._provision_error = ""
+            self.notify(
+                f"Release {assets.tag} is ready: {assets.iso_path.name}",
+                severity="information",
+            )
+        self._refresh_views()
+
+    def _start_usb_scan(self) -> None:
+        if self._usb_scanning:
+            return
+        self._usb_scanning = True
+        self._usb_confirm_pending = None
+        self._refresh_views()
+        self._usb_scan_worker()
+
+    @work(thread=True, exclusive=True, group="usb-scan")
+    def _usb_scan_worker(self) -> None:
+        try:
+            disks = collect_disk_inventory()
+            self.call_from_thread(self._apply_usb_scan, disks, None)
+        except (DiskInventoryError, OSError, RuntimeError, ValueError) as exc:
+            self.call_from_thread(self._apply_usb_scan, (), str(exc))
+
+    def _apply_usb_scan(self, disks: tuple[DiskInfo, ...], error: str | None) -> None:
+        self._usb_scanning = False
+        if error:
+            self.notify(f"USB scan failed: {error}", severity="error")
+        else:
+            self._disks = disks
+            self._sync_usb_selection(clear_missing=True)
+            choices = self._usb_choices()
+            if len(choices) == 1:
+                self.notify(
+                    f"USB Disk {choices[0].number} selected automatically.",
+                    severity="information",
+                )
+            elif len(choices) > 1:
+                self.notify("Multiple USB drives found; choose one with ↑/↓.", severity="warning")
+        self._refresh_views()
+
     @work(thread=True, exclusive=True, group="preflight")
     def _refresh_worker(self) -> None:
         try:
@@ -765,6 +956,7 @@ class WindowsPreflightApp(App[int]):
         self._snapshot = snapshot
         self._disks = disks
         self._target_index = 0  # default back to the Windows disk on every refresh
+        self._sync_usb_selection()
         self._can_continue = can_proceed and snapshot is not None and error is None
         self.stage_states["preflight"] = (
             StageState.SUCCEEDED if self._can_continue else StageState.BLOCKED
@@ -819,16 +1011,22 @@ class WindowsPreflightApp(App[int]):
 
     @work(thread=True, exclusive=True, group="handoff")
     def _handoff_worker(self) -> None:
-        self._run_flow_worker(
-            "handoff",
-            lambda: self._flow.run_ventoy_handoff(
+        def run_handoff() -> FlowStepResult:
+            confirmation = self._config.usb_confirmation
+            if self._flow.apply_changes and not confirmation:
+                confirmation = build_usb_erase_confirmation(self._config.usb_disk_number)
+            return self._flow.run_ventoy_handoff(
                 plan_path=self._config.plan_path,
                 iso_path=self._config.iso_path,
                 release_manifest_path=self._config.release_manifest_path,
                 usb_disk_number=self._config.usb_disk_number,
-                usb_confirmation=self._config.usb_confirmation,
+                usb_confirmation=confirmation,
                 allow_ventoy_install=self._config.allow_ventoy_install,
-            ),
+            )
+
+        self._run_flow_worker(
+            "handoff",
+            run_handoff,
         )
 
     def _apply_flow_result(
@@ -865,6 +1063,8 @@ class WindowsPreflightApp(App[int]):
         self._cancel_requested.clear()
         self._append_note(summary)
         self._refresh_views()
+        if stage == "partition" and not error and result is not None and result.ok:
+            self._start_usb_scan()
 
     def action_run_backup_step(self) -> None:
         if self._busy:
@@ -907,12 +1107,27 @@ class WindowsPreflightApp(App[int]):
         if self.stage_states["partition"] != required:
             self.notify("Complete the current-mode partition stage first.", severity="warning")
             return
-        if not all(
-            (self._config.plan_path, self._config.iso_path, self._config.release_manifest_path)
-        ) or self._config.usb_disk_number < 0:
-            self.notify("Plan, ISO, release manifest, and USB disk number are required.", severity="error")
+        if not all((self._config.plan_path, self._config.iso_path, self._config.release_manifest_path)):
+            self.notify("The paired release ISO is not ready yet.", severity="warning")
+            self._start_provisioning()
+            return
+        if self._selected_usb() is None and self._config.usb_disk_number < 0:
+            self.notify("Insert a USB drive; scanning again now.", severity="warning")
+            self._start_usb_scan()
+            return
+        if (
+            self._flow.apply_changes
+            and self._usb_confirm_pending != self._config.usb_disk_number
+        ):
+            self._usb_confirm_pending = self._config.usb_disk_number
+            self.notify(
+                f"Confirm the selected USB: press Enter again to erase Disk {self._config.usb_disk_number}.",
+                severity="warning",
+            )
+            self._render_wizard()
             return
         self._set_busy(True)
+        self._usb_confirm_pending = None
         self.stage_states["handoff"] = StageState.RUNNING
         self._refresh_views()
         self._handoff_worker()
@@ -962,7 +1177,7 @@ def run_windows_preflight_tui(
     release_manifest_path: str = "",
     usb_disk_number: int = -1,
     usb_confirmation: str = "",
-    allow_ventoy_install: bool = False,
+    allow_ventoy_install: bool = True,
 ) -> int:
     app = WindowsPreflightApp(
         WindowsTuiConfig(

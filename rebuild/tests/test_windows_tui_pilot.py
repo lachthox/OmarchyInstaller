@@ -244,6 +244,58 @@ def test_wizard_disk_picker_selects_and_prepares_a_second_disk(
     run(scenario())
 
 
+def test_usb_picker_auto_selects_one_and_cycles_multiple(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from rebuild.installer.platforms.windows.app import WindowsTuiConfig
+    from rebuild.installer.platforms.windows.disk_inventory import DiskInfo
+
+    gib = 1024**3
+    win_num = snapshot().disk_identity.runtime_disk_number
+    disks = (
+        DiskInfo(
+            number=win_num, model="Windows NVMe", serial="WIN", size_bytes=512 * gib,
+            bus_type="NVMe", media_type="SSD", partition_style="GPT", is_system=True,
+            is_boot=True, is_read_only=False, partition_count=4, largest_free_extent_bytes=0,
+        ),
+        DiskInfo(
+            number=5, model="USB Alpha", serial="USB-A", size_bytes=32 * gib,
+            bus_type="USB", media_type="", partition_style="GPT", is_system=False,
+            is_boot=False, is_read_only=False, partition_count=2, largest_free_extent_bytes=0,
+        ),
+        DiskInfo(
+            number=7, model="USB Beta", serial="USB-B", size_bytes=64 * gib,
+            bus_type="USB", media_type="", partition_style="GPT", is_system=False,
+            is_boot=False, is_read_only=False, partition_count=2, largest_free_extent_bytes=0,
+        ),
+    )
+    monkeypatch.setattr(app_module, "run_windows_preflight", ready_report)
+    monkeypatch.setattr(app_module, "collect_disk_probe_snapshot", snapshot)
+    monkeypatch.setattr(app_module, "collect_disk_inventory", lambda: disks)
+
+    async def scenario() -> None:
+        config = WindowsTuiConfig(
+            plan_path="plan.json",
+            iso_path="paired.iso",
+            release_manifest_path="release_manifest.json",
+        )
+        app = WindowsPreflightApp(config)
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            app.stage_states["backup"] = StageState.SIMULATED
+            app.stage_states["partition"] = StageState.SIMULATED
+            app._refresh_views()
+            assert app._current_step_index() == 3
+            assert app._config.usb_disk_number == 5
+            assert app._selected_usb() is not None
+            await pilot.press("down")
+            assert app._config.usb_disk_number == 7
+            body = str(app.query_one("#wiz-body").render())
+            assert "> Disk 7: USB Beta" in body
+
+    run(scenario())
+
+
 def test_toggle_between_wizard_and_advanced(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(app_module, "run_windows_preflight", ready_report)
     monkeypatch.setattr(app_module, "collect_disk_probe_snapshot", snapshot)

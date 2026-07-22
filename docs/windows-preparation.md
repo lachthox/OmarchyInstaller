@@ -45,10 +45,20 @@ success.
 
 ## Ventoy and handoff completion
 
-The same TUI requires local paths for the paired plan, ISO, and release manifest,
-plus an explicit USB disk number. It revalidates the target disk after shrink,
-checks the ISO and release-manifest hashes against plan provenance, then requires
-Ventoy's exact `ERASE <stable-id>` confirmation. Apply mode performs two USB
+The release EXE carries its immutable release tag and plan template. In a normal
+run, the TUI downloads the paired ISO, release manifest, compatibility manifest,
+and checksums from that tag, verifies their SHA256 values, caches them under
+LocalAppData, and generates the paired base plan. Explicit local paths remain
+available as development/test overrides.
+
+The USB step re-enumerates removable disks, excludes read-only and protected
+system/boot devices, auto-selects a sole candidate, and provides an Up/Down
+picker when several safe USB disks are attached. It revalidates the target disk
+after shrink, checks the ISO and release-manifest hashes against plan provenance,
+then requires a second guided erase confirmation bound to Ventoy's exact
+`ERASE <stable-id>` challenge. If Ventoy is absent, its official GitHub Windows
+release and `sha256.txt` are downloaded, cross-checked against GitHub's asset
+digest, verified, safely extracted, and cached. Apply mode performs two USB
 identity checks around the write, validates the resulting data partition, copies
 and re-hashes the ISO, and writes the authenticated plan bundle.
 

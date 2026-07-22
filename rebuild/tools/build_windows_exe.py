@@ -76,6 +76,23 @@ def ensure_paths(workspace: Path) -> Path:
     return launcher
 
 
+def plan_template_path(workspace: Path) -> Path:
+    template = workspace / "rebuild" / "assets" / "templates" / "plan.template.json"
+    if not template.exists():
+        raise RuntimeError(f"Missing required packaging input path: {template}")
+    return template
+
+
+def write_build_info(path: Path, *, release_tag: str, release_repo: str, stamp: VersionStamp, commit: str) -> None:
+    payload = {
+        "release_tag": release_tag,
+        "release_repo": release_repo,
+        "producer_version": stamp.product_version,
+        "build_commit": commit,
+    }
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
 def write_version_file(path: Path, stamp: VersionStamp) -> None:
     content = (
         "VSVersionInfo(\n"
@@ -139,34 +156,50 @@ def run_pipeline(args: argparse.Namespace) -> int:
     version_file = work_dir / "version_info.txt"
     write_version_file(version_file, stamp)
 
+    template = plan_template_path(workspace)
+    build_info = work_dir / "build_info.json"
+    write_build_info(
+        build_info,
+        release_tag=args.release_tag,
+        release_repo=args.release_repo,
+        stamp=stamp,
+        commit=commit_sha,
+    )
+    # PyInstaller --add-data uses "src{os.pathsep}dest"; on Windows that is ";".
+    data_sep = os.pathsep
+    add_data = [
+        f"{build_info}{data_sep}.",
+        f"{template}{data_sep}assets/templates",
+    ]
+
     output_exe = output_dir / "OmarchyInstaller.exe"
     if args.dry_run:
         output_exe.write_bytes(b"dry-run-exe")
     else:
-        run_command(
-            [
-                sys.executable,
-                "-m",
-                "PyInstaller",
-                "--noconfirm",
-                "--clean",
-                "--onefile",
-                "--name",
-                "OmarchyInstaller",
-                "--distpath",
-                str(output_dir),
-                "--workpath",
-                str(build_dir),
-                "--specpath",
-                str(spec_dir),
-                "--paths",
-                str(workspace / "rebuild"),
-                "--version-file",
-                str(version_file),
-                str(launcher),
-            ],
-            cwd=workspace,
-        )
+        pyinstaller_command = [
+            sys.executable,
+            "-m",
+            "PyInstaller",
+            "--noconfirm",
+            "--clean",
+            "--onefile",
+            "--name",
+            "OmarchyInstaller",
+            "--distpath",
+            str(output_dir),
+            "--workpath",
+            str(build_dir),
+            "--specpath",
+            str(spec_dir),
+            "--paths",
+            str(workspace / "rebuild"),
+            "--version-file",
+            str(version_file),
+        ]
+        for entry in add_data:
+            pyinstaller_command += ["--add-data", entry]
+        pyinstaller_command.append(str(launcher))
+        run_command(pyinstaller_command, cwd=workspace)
 
     if not output_exe.exists():
         raise RuntimeError(f"PyInstaller did not produce expected executable: {output_exe}")
@@ -194,6 +227,8 @@ def run_pipeline(args: argparse.Namespace) -> int:
         "packaging_inputs": {
             "launcher": str(launcher),
             "version_file": str(version_file),
+            "plan_template": str(template),
+            "build_info": str(build_info),
         },
         "output": {
             "exe_path": str(output_exe),
@@ -235,6 +270,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--release-tag",
         required=True,
         help="Immutable release tag paired with this artifact.",
+    )
+    parser.add_argument(
+        "--release-repo",
+        default="lachthox/OmarchyInstaller",
+        help="GitHub owner/repository containing this release's paired assets.",
     )
     parser.add_argument(
         "--dry-run",

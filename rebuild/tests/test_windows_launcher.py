@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import sys
+import json
+
+import rebuild.tools.build_windows_exe as exe_builder
 
 from rebuild.tools.windows import omarchy_installer_launcher as launcher
 
@@ -9,6 +12,8 @@ def test_parser_has_no_legacy_powershell_bypass() -> None:
     options = {action.dest for action in launcher.build_parser()._actions}
 
     assert "legacy_powershell" not in options
+    assert launcher.build_parser().parse_args([]).allow_ventoy_install is True
+    assert launcher.build_parser().parse_args(["--no-ventoy-install"]).allow_ventoy_install is False
 
 
 def test_startup_failure_is_fatal_and_does_not_fallback(
@@ -40,3 +45,42 @@ def test_executable_builder_does_not_require_legacy_script(tmp_path) -> None:
     from rebuild.tools.build_windows_exe import ensure_paths
 
     assert ensure_paths(tmp_path) == launcher_path
+
+
+def test_executable_builder_bakes_release_provisioning_metadata(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    launcher_path = tmp_path / "rebuild" / "tools" / "windows" / "omarchy_installer_launcher.py"
+    template_path = tmp_path / "rebuild" / "assets" / "templates" / "plan.template.json"
+    launcher_path.parent.mkdir(parents=True)
+    template_path.parent.mkdir(parents=True)
+    launcher_path.write_text("raise SystemExit(0)\n", encoding="utf-8")
+    template_path.write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(exe_builder, "detect_git_commit", lambda _workspace: "a" * 40)
+
+    output_dir = tmp_path / "output"
+    work_dir = tmp_path / "work"
+    args = exe_builder.build_parser().parse_args(
+        [
+            "--workspace",
+            str(tmp_path),
+            "--output-dir",
+            str(output_dir),
+            "--work-dir",
+            str(work_dir),
+            "--release-version",
+            "1.2.3",
+            "--release-tag",
+            "v1.2.3",
+            "--release-repo",
+            "owner/repo",
+            "--dry-run",
+        ]
+    )
+
+    assert exe_builder.run_pipeline(args) == 0
+    build_info = json.loads((work_dir / "build_info.json").read_text(encoding="utf-8"))
+    assert build_info["release_tag"] == "v1.2.3"
+    assert build_info["release_repo"] == "owner/repo"
+    assert build_info["producer_version"] == "1.2.3.0"

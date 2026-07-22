@@ -139,7 +139,16 @@ jobs:
       - uses: actions/setup-python@v6
         with: {python-version: "3.12", cache: pip}
       - run: python -m pip install -r rebuild/requirements.txt -r rebuild/requirements-dev.txt pyinstaller
-      - run: python -m pytest rebuild/tests/test_windows_launcher.py rebuild/tests/test_windows_flow.py rebuild/tests/test_windows_disk_safety.py rebuild/tests/test_windows_handoff.py -q
+      - run: >-
+          python -m pytest
+          rebuild/tests/test_release_provisioning.py
+          rebuild/tests/test_disk_inventory.py
+          rebuild/tests/test_windows_launcher.py
+          rebuild/tests/test_windows_tui_pilot.py
+          rebuild/tests/test_windows_flow.py
+          rebuild/tests/test_windows_disk_safety.py
+          rebuild/tests/test_windows_handoff.py
+          -q
       - shell: pwsh
         run: python rebuild/tools/build_windows_exe.py --workspace "$env:GITHUB_WORKSPACE" --output-dir rebuild/dist/release-windows-exe --work-dir rebuild/dist/release-windows-exe-work --release-version "${{ needs.detect-arch-release.outputs.release_version }}" --release-tag "${{ needs.detect-arch-release.outputs.tag }}"
       - name: Sign Windows EXE

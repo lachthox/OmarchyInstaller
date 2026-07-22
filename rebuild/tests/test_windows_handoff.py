@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import io
 import json
 from pathlib import Path
 import subprocess
+import zipfile
 
 import pytest
 
@@ -13,7 +15,9 @@ from rebuild.installer.platforms.windows.handoff import (
     VentoyCliInfo,
     VentoyError,
     VentoyUsbValidation,
+    build_usb_erase_confirmation,
     copy_iso_to_ventoy_root,
+    download_official_ventoy_cli,
     install_ventoy_to_usb,
     stage_ventoy_handoff_bundle,
 )
@@ -59,6 +63,52 @@ class LayoutRunner:
         return subprocess.CompletedProcess(command, 0, "installed", "")
 
 
+class FakeVentoyDownloader:
+    def __init__(self, archive: bytes, *, advertised_hash: str | None = None) -> None:
+        self.archive = archive
+        digest = advertised_hash or hashlib.sha256(archive).hexdigest()
+        self.release = {
+            "tag_name": "v1.2.3",
+            "assets": [
+                {
+                    "name": "ventoy-1.2.3-windows.zip",
+                    "browser_download_url": (
+                        "https://github.com/ventoy/Ventoy/releases/download/"
+                        "v1.2.3/ventoy-1.2.3-windows.zip"
+                    ),
+                    "digest": f"sha256:{digest}",
+                },
+                {
+                    "name": "sha256.txt",
+                    "browser_download_url": (
+                        "https://github.com/ventoy/Ventoy/releases/download/v1.2.3/sha256.txt"
+                    ),
+                },
+            ],
+        }
+        self.checksums = f"{digest}  ventoy-1.2.3-windows.zip\n"
+        self.download_count = 0
+
+    def fetch_json(self, _url: str) -> dict:
+        return self.release
+
+    def fetch_text(self, _url: str) -> str:
+        return self.checksums
+
+    def download(self, _url: str, destination: Path) -> None:
+        self.download_count += 1
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(self.archive)
+
+
+def ventoy_zip() -> bytes:
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, "w") as archive:
+        archive.writestr("ventoy-1.2.3/Ventoy2Disk.exe", b"fixture executable")
+        archive.writestr("ventoy-1.2.3/ventoy/ventoy.disk.img.xz", b"fixture image")
+    return payload.getvalue()
+
+
 def plan():
     payload = json.loads(
         (REPO_ROOT / "rebuild" / "assets" / "templates" / "plan.template.json").read_text(
@@ -84,6 +134,39 @@ def test_wrong_typed_confirmation_blocks_before_acquisition() -> None:
     with pytest.raises(VentoyError, match="Typed confirmation"):
         install_ventoy_to_usb(7, runner=runner, confirmation="ERASE WRONG")
     assert len(runner.commands) == 1
+
+
+def test_guided_erase_confirmation_is_bound_to_live_usb_identity() -> None:
+    payload = device_payload()
+    runner = LayoutRunner(payload)
+
+    confirmation = build_usb_erase_confirmation(7, runner=runner)
+
+    assert confirmation == f"ERASE {handoff._stable_device_identifier(payload)}"
+    assert len(runner.commands) == 1
+
+
+def test_official_ventoy_download_is_verified_cached_and_extracted(tmp_path: Path) -> None:
+    downloader = FakeVentoyDownloader(ventoy_zip())
+
+    executable = download_official_ventoy_cli(downloader=downloader, cache_root=tmp_path)
+
+    assert executable.read_bytes() == b"fixture executable"
+    assert (executable.parent / "ventoy" / "ventoy.disk.img.xz").is_file()
+    assert downloader.download_count == 1
+
+    second = download_official_ventoy_cli(downloader=downloader, cache_root=tmp_path)
+    assert second == executable
+    assert downloader.download_count == 1
+
+
+def test_official_ventoy_download_rejects_hash_mismatch(tmp_path: Path) -> None:
+    downloader = FakeVentoyDownloader(ventoy_zip(), advertised_hash="0" * 64)
+
+    with pytest.raises(VentoyError, match="SHA256 mismatch"):
+        download_official_ventoy_cli(downloader=downloader, cache_root=tmp_path)
+
+    assert not (tmp_path / "ventoy-1.2.3-windows.zip").exists()
 
 
 def test_identity_change_immediately_before_write_blocks(

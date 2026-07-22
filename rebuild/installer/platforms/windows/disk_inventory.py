@@ -123,6 +123,19 @@ def install_target_candidates(disks: tuple[DiskInfo, ...]) -> tuple[DiskInfo, ..
     return tuple(disk for disk in disks if not disk.is_usb and not disk.is_read_only)
 
 
+def usb_drive_candidates(disks: tuple[DiskInfo, ...]) -> tuple[DiskInfo, ...]:
+    """Removable USB disks that are safe to offer as destructive Ventoy targets."""
+    return tuple(
+        disk
+        for disk in disks
+        if disk.is_usb
+        and not disk.is_read_only
+        and not disk.is_system
+        and not disk.is_boot
+        and disk.size_bytes > 0
+    )
+
+
 class PowerShellDiskInventoryProbe:
     """Enumerate physical disks via Get-Disk joined with Get-PhysicalDisk."""
 
