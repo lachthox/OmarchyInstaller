@@ -350,7 +350,10 @@ def drive_handoff_and_install(
         # point -- remount it read-only to inspect exactly what archinstall
         # actually wrote, rather than guessing from the error string alone.
         console.send_line(
-            f"echo '{LUKS_PASSPHRASE}' | cryptsetup open /dev/disk/by-partlabel/omarchy-linux "
+            # `echo` appends a trailing newline that `--key-file -` reads as
+            # part of the raw key; the real LUKS key (set by install.py) no
+            # longer has one, so this must match exactly via `printf '%s'`.
+            f"printf '%s' '{LUKS_PASSPHRASE}' | cryptsetup open /dev/disk/by-partlabel/omarchy-linux "
             "omarchy-diag --key-file - && echo DIAG_LUKS_OPENED || echo DIAG_LUKS_OPEN_FAILED"
         )
         diag_luks = console.wait_for("DIAG_LUKS_OPENED", "DIAG_LUKS_OPEN_FAILED", timeout=20)
@@ -392,7 +395,10 @@ def patch_installed_cmdline_and_check_efi(
     console.wait_for("SHELL_BACK_", timeout=20)
 
     console.send_line(
-        f"echo '{LUKS_PASSPHRASE}' | cryptsetup open /dev/disk/by-partlabel/omarchy-linux "
+        # `printf '%s'` (not `echo`) to match the real key exactly -- `echo`
+        # appends a trailing newline that `--key-file -` would read as part
+        # of the raw key, and install.py's real LUKS key no longer has one.
+        f"printf '%s' '{LUKS_PASSPHRASE}' | cryptsetup open /dev/disk/by-partlabel/omarchy-linux "
         "omarchy-recheck --key-file - && echo LUKS_OPENED || echo LUKS_OPEN_FAILED"
     )
     luks_result = console.wait_for("LUKS_OPENED", "LUKS_OPEN_FAILED", timeout=20)
