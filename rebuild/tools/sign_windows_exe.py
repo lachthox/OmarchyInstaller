@@ -63,31 +63,55 @@ def sign_with_pfx(exe_path: Path, pfx_path: Path, password: str, timestamp_url: 
 
 
 def verify_signature(exe_path: Path, signtool: str) -> str:
+    """Full Authenticode policy verification, requiring a real trust chain.
+
+    Only appropriate for a managed, real certificate -- a self-signed
+    ephemeral cert has no chain to any trusted root and would always fail
+    this, which is a property of trust, not a defect in the signing.
+    """
     completed = _run([signtool, "verify", "/pa", "/v", str(exe_path)])
     return completed.stdout
 
 
-def make_ephemeral_test_cert(work_dir: Path) -> tuple[Path, str, str]:
-    """Generate a throwaway self-signed codesign cert via PowerShell, export to PFX.
+def verify_ephemeral_signature(exe_path: Path, expected_thumbprint: str) -> str:
+    """Confirm a well-formed signature from our own ephemeral cert, without
+    requiring OS trust-chain validation.
 
-    Also temporarily trusts it (CurrentUser\\Root) so `signtool verify /pa`
-    can succeed against it -- a self-signed cert is otherwise never part of
-    any trust chain, and `/pa` (the default Authenticode policy) always
-    rejects an untrusted signer regardless of how the file was signed. The
-    caller is responsible for removing the returned thumbprint from Root
-    once verification is done; this is CI-only and never installed on a
-    machine that would treat it as a real trust anchor.
+    Deliberately does NOT install the ephemeral cert into any trust store:
+    `X509Store.Add` on `Root`/`TrustedPublisher` can require an interactive
+    Windows security confirmation that never resolves on a headless CI
+    runner, hanging the job indefinitely (observed in practice). An
+    untrusted self-signed cert reports Status `NotTrusted` or
+    `UnknownError`, not `Valid` -- both are accepted here as proof the
+    signature mechanics worked; anything else (missing/mismatched/corrupt
+    signature) is a real failure.
     """
+    script = f"""
+$ErrorActionPreference = "Stop"
+$sig = Get-AuthenticodeSignature -FilePath "{exe_path.as_posix()}"
+if ($null -eq $sig.SignerCertificate) {{ throw "No Authenticode signature found." }}
+if ($sig.SignerCertificate.Thumbprint -ne "{expected_thumbprint}") {{
+    throw "Signer thumbprint mismatch: expected {expected_thumbprint}, got $($sig.SignerCertificate.Thumbprint)"
+}}
+if ($sig.Status -notin @("Valid", "NotTrusted", "UnknownError")) {{
+    throw "Unexpected signature status: $($sig.Status) ($($sig.StatusMessage))"
+}}
+Write-Output "Status=$($sig.Status); SignerThumbprint=$($sig.SignerCertificate.Thumbprint); StatusMessage=$($sig.StatusMessage)"
+"""
+    completed = subprocess.run(
+        ["pwsh", "-NoProfile", "-Command", script], check=True, capture_output=True, text=True
+    )
+    return completed.stdout.strip()
+
+
+def make_ephemeral_test_cert(work_dir: Path) -> tuple[Path, str, str]:
+    """Generate a throwaway self-signed codesign cert via PowerShell, export to PFX."""
     pfx_path = work_dir / "ephemeral-test-cert.pfx"
     password = "ephemeral-test-only"
     script = f"""
 $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=Omarchy VM Test (ephemeral, not for production)" -KeyUsage DigitalSignature -FriendlyName "Omarchy VM Test" -CertStoreLocation Cert:\\CurrentUser\\My -NotAfter (Get-Date).AddDays(1)
 $securePw = ConvertTo-SecureString -String "{password}" -Force -AsPlainText
 Export-PfxCertificate -Cert $cert -FilePath "{pfx_path.as_posix()}" -Password $securePw | Out-Null
-$rootStore = Get-Item Cert:\\CurrentUser\\Root
-$rootStore.Open("ReadWrite")
-$rootStore.Add($cert)
-$rootStore.Close()
 Remove-Item "Cert:\\CurrentUser\\My\\$($cert.Thumbprint)"
 Write-Output $cert.Thumbprint
 """
@@ -96,16 +120,6 @@ Write-Output $cert.Thumbprint
     )
     thumbprint = completed.stdout.strip().splitlines()[-1]
     return pfx_path, password, thumbprint
-
-
-def untrust_ephemeral_test_cert(thumbprint: str) -> None:
-    subprocess.run(
-        [
-            "pwsh", "-NoProfile", "-Command",
-            f'Remove-Item "Cert:\\CurrentUser\\Root\\{thumbprint}" -ErrorAction SilentlyContinue',
-        ],
-        check=False,
-    )
 
 
 def main() -> int:
@@ -173,7 +187,7 @@ def main() -> int:
             pfx_path, ephemeral_password, thumbprint = make_ephemeral_test_cert(tmp_path)
             try:
                 sign_with_pfx(args.exe, pfx_path, ephemeral_password, timestamp_url, signtool)
-                verification = verify_signature(args.exe, signtool)
+                verification = verify_ephemeral_signature(args.exe, thumbprint)
                 evidence.update(
                     production_signing=False,
                     signed=True,
@@ -182,7 +196,6 @@ def main() -> int:
                 )
             finally:
                 pfx_path.unlink(missing_ok=True)
-                untrust_ephemeral_test_cert(thumbprint)
         else:
             evidence["note"] = (
                 "No managed Authenticode credential configured; EXE left unsigned. "
