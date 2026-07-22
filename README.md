@@ -1,10 +1,14 @@
 # OmarchyInstaller
 
 > [!CAUTION]
-> Current releases are **not approved for real hardware**. The installer has
-> unresolved destructive-operation and end-to-end validation findings. Use only
-> mocked backends or disposable VMs until `docs/release-readiness.md` says every
-> release gate passed.
+> All 61 audit findings are resolved and the automated release gate runs green
+> end-to-end (real disposable-VM install, post-reboot LUKS unlock, Windows-EFI
+> preservation, and recovery rehearsal — GitHub Actions run `29886048248`).
+> Even so, current releases are **not approved for real hardware**: publishing a
+> downloadable EXE still needs a production Authenticode certificate, and running
+> against a real machine's real disks is a deliberate destructive-operation
+> decision this project does not grant automatically. Use only disposable VMs
+> until `docs/release-readiness.md` records those operational sign-offs.
 
 OmarchyInstaller is being remediated into one Python-only dual-boot installer:
 

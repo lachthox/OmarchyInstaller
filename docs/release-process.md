@@ -1,6 +1,8 @@
 # Release process
 
-Status: publication remains blocked by later VM gates and Windows code signing.
+Status: the VM/install/reboot/recovery gates now pass green in CI (run
+`29886048248`); publication of a downloadable release remains gated only on
+provisioning a production Windows code-signing certificate.
 
 The VM job also requires a console-automation driver configured as
 `OMARCHY_ISOLATED_VM_DRIVER`. A real implementation of this contract,

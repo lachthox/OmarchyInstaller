@@ -406,28 +406,45 @@ platform-gated off on Windows and was previously only a CI-only claim.
 Transcript saved at
 `rebuild/dist/vm-gate-evidence/first-login-pty-transcript.log`.
 
-### What is genuinely NOT resolved: post-reboot LUKS unlock
+### Post-reboot LUKS unlock: root cause found and fixed
 
-The one sub-claim that could not be closed: booting the *installed* disk
-(ISO detached) and unlocking its LUKS2 volume through the automation
-console. Six independent fix attempts were made — varying the line-ending
-sent to the passphrase prompt (`\r`, `\n`, `\r\n`), slowing down every send
-during the install phase, switching QEMU's disk cache mode from
-`cache=unsafe` to `cache=writeback` (so guest flush/FUA requests are
-actually honored across separate QEMU process invocations of the same
-image), and building a 12-attempt retry loop that waits only for `login:`
-rather than misfiring on the ambient "passphrase for" text that persists in
-scrollback. Every attempt produced the same symptom: the console echoes the
-correct number of dots for the passphrase, then re-displays the identical
-prompt, consistent with `systemd-ask-password` in the initramfs not
-receiving the input as expected input over this particular
-serial-console/PTY plumbing. This is an automation/tooling gap in driving
-`systemd-ask-password` over a raw serial console, not evidence of an
-incorrect installed system — the pre-reboot remount inspection above
-independently confirms `/etc/crypttab.initramfs`, `mkinitcpio`'s
-`sd-encrypt` hook, and the LUKS header are all present and correctly
-configured. **No reboot/login pass is claimed.** CRIT-03, CRIT-05,
-HIGH-32, and MED-15 remain `Verification blocked` for exactly this reason.
+The last sub-claim to close was booting the *installed* disk (ISO detached)
+and unlocking its LUKS2 volume through the automation console. Earlier
+attempts chased the wrong hypothesis — they varied what was *sent* to the
+passphrase prompt (line-endings `\r`/`\n`/`\r\n`, send pacing, QEMU disk
+cache mode, a retry loop waiting only for `login:`) — on the assumption
+that `systemd-ask-password` was mis-receiving input over the serial/PTY
+plumbing. It was not. The real defect was on the *write* side, in
+production code:
+
+`rebuild/installer/platforms/linux_live/install.py` piped
+`encryption_passphrase + "\n"` to `cryptsetup luksFormat`/`open` through
+`--key-file -`. That flag reads stdin as **raw key material up to EOF with
+no line-ending stripping** — unlike an interactive terminal prompt, which
+never includes the terminating Enter keystroke in the value it submits. So
+the trailing `\n` was silently baked into the actual on-disk LUKS key. No
+value a human could type at the unlock prompt, and no value the automation
+could send, would ever match it, because the correct key literally
+contained a byte no interactive prompt can reproduce. The symptom (dots
+accepted, identical prompt redisplayed) was exactly what a *correct*
+passphrase against a *newline-poisoned* key looks like.
+
+The fix removes the `+ "\n"` (the interactive prompt supplies no newline,
+so neither should the automated write path), and a matching
+`echo` → `printf '%s'` fix was applied to the driver's own diagnostic
+remount-unlock helpers, which had the same trailing-newline flaw. This was
+a genuine production bug that would have broken **every** real-world install
+using this code path — not merely VM testing; any user rebooting after a
+real install would have been unable to unlock their own disk.
+
+Proof of the fix (GitHub Actions run `29886048248`,
+`vm-install-reboot` job): the installed disk booted with the ISO detached,
+and `serial-console-reboot.log` captures the real firmware handoff to
+Limine, the real `Please enter passphrase for disk omarchy-linux
+(omarchy-cryptroot)` prompt being answered, and the guest reaching
+`Arch Linux ... (ttyS0)` / `login:`. `vm-evidence.json` records
+`reboot_completed: true` and `windows_efi_preserved: true`. CRIT-03,
+CRIT-05, HIGH-32, and MED-15 are therefore **Resolved**.
 
 ### CI graph changes
 
@@ -441,7 +458,30 @@ GitHub-hosted Linux runners on public repositories expose `/dev/kvm`, which
 is the only real hardware requirement these jobs have, and the repository
 is public. Package installation (`qemu-system-x86`, `qemu-utils`, `ovmf`,
 `gdisk`, `dosfstools`, `ntfs-3g`) was added to each job since a hosted
-runner is not pre-provisioned the way a dedicated self-hosted box would be.
-This has not yet been observed running green in GitHub's own infrastructure
-at the time of writing — see `docs/release-readiness.md` for exactly what
-that leaves open.
+runner is not pre-provisioned the way a dedicated self-hosted box would be,
+and each privileged step (`losetup`/`mount`/`sgdisk`/`mkfs`, and the gate
+itself) runs under `sudo -E env "PATH=$PATH"`. Because those `sudo` steps
+write their evidence files owned by root, a `chown` handback step precedes
+each `actions/upload-artifact` so the unprivileged `runner` user can read
+and upload the evidence.
+
+The full graph has now been observed running **green end-to-end** in
+GitHub's own infrastructure: run `29886048248` on commit `30839d2`, with
+every job succeeding — `detect-arch-release`, `quality`, `shell`,
+`contracts`, `build-windows-exe`, `build-iso`, `first-login-pty`,
+`offline-iso-boot`, `vm-install-reboot`, and `recovery-rehearsal`;
+`publish-release` was correctly skipped only because the manual dispatch set
+`publish=false`. This was reached after a real debugging trail (a dozen
+dispatched runs) in which each failure was diagnosed from real logs and
+artifacts and fixed at its actual root cause — including the LUKS-key bug
+above, a stale first-login `Path` comparison, four stale Bats assertions, an
+ephemeral-cert trust-store step that hung the runner (replaced with
+`Get-AuthenticodeSignature`), a console-echo false positive in the
+dependency probe, a ~30-minute sparse-disk artifact upload (scoped to
+JSON/logs), and the root-owned-evidence upload permission error above. One
+run also failed on transient upstream flakiness against
+`archive.archlinux.org` during a real `pacstrap` download; that is an
+operational characteristic of the real Arch mirrors, not a code defect, and
+a re-dispatch cleared it. See `docs/release-readiness.md` for the two
+operational sign-offs (production signing cert, real-hardware go/no-go) that
+remain outside the audit-findings scope.

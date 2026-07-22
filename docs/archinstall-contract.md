@@ -30,6 +30,9 @@ Mounts are tracked and unmounted in reverse order, LUKS is closed on both
 success and failure, and the credentials file is always deleted. Redacted
 diagnostics, the semantic config, GPT backup, and pre-partition snapshot remain.
 
-Local strict-model and fake-command contract tests pass. Exact execution by the
-pinned archinstall package and disposable-VM installation remain blocked until
-a Linux/QEMU runner is available; this is not waived by the unit tests.
+Local strict-model and fake-command contract tests pass, and exact execution
+by the pinned archinstall package and disposable-VM installation are now
+proven for real: the `archinstall 4.4-1` package's own parser accepted the
+generated config/credentials, and a full disposable-VM install ran green in
+CI run `29886048248` (`vm-install-reboot` job). This was never waived by the
+unit tests — see `docs/test-evidence.md` Phase 21.

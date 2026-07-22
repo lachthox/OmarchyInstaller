@@ -6,19 +6,26 @@ Baseline: `08737764721d915921af4fa8a82015d3ea975fbd`
 
 ## Decision
 
-The repository has one Python implementation and one gated release graph, but
-release remains **blocked**. A disposable, KVM-accelerated Linux environment
-was provisioned specifically to close the environment gap the prior phase
-left open: the real ISO now builds and boots for real, the real production
+The repository has one Python implementation and one gated release graph, and
+**all 61 audit findings are now resolved**. A disposable, KVM-accelerated
+Linux environment was provisioned to close the environment gap the prior
+phase left open: the real ISO builds and boots for real, the real production
 TUI drives a real disposable UEFI install through to completion (real GPT,
 LUKS2, Btrfs, archinstall 4.4-1, Limine, and target finalization), Windows
 EFI preservation is verified byte-for-byte, and the backup/restore recovery
-rehearsal passes for real. What remains genuinely unresolved is narrower and
-more specific than before: unlocking the LUKS2 volume on the *installed*
-disk through serial-console automation after reboot has not succeeded after
-six independent attempts, and a green run of the CI VM jobs (now retargeted
-at GitHub-hosted, KVM-capable runners) has not yet been observed. No
-real-hardware use is approved until both close.
+rehearsal passes for real. The final gap — unlocking the LUKS2 volume on the
+*installed* disk after reboot — was traced to a real production bug (a
+trailing newline baked into the on-disk LUKS key via `cryptsetup --key-file
+-`) and fixed; the full CI VM graph now runs **green end-to-end** on
+GitHub-hosted KVM runners (run `29886048248`), including a real post-reboot
+LUKS unlock and the recovery rehearsal.
+
+Two operational sign-offs remain, neither of which is an unresolved audit
+finding: a production Authenticode signing certificate must be provisioned
+before publishing a downloadable EXE (the CI path uses a clearly-labeled
+ephemeral test cert), and running the installer against a real machine's
+real disks is a deliberate destructive-operation go/no-go decision that this
+work does not grant automatically. **No real-hardware use is authorized here.**
 
 ## Before and after
 
@@ -70,29 +77,38 @@ and fail-closed publication gates cover the supported path.
   production TUI with verified Windows EFI preservation, a real non-root PTY
   first-login run, and a real backup/damage/restore recovery rehearsal. It
   also retargeted the CI VM jobs from an unregistered self-hosted runner label
-  onto GitHub-hosted runners that can actually execute them, and pushed this
-  branch to trigger a real run.
+  onto GitHub-hosted runners that can actually execute them, then drove the
+  full graph to a green run (`29886048248`) — fixing the production LUKS-key
+  trailing-newline bug and a series of real CI failures at their root causes
+  along the way.
 
 ## Finding result
 
-The ledger contains all 61 audit IDs: 57 resolved and 4 verification-blocked
-(`CRIT-03`, `CRIT-05`, `HIGH-32`, `MED-15` — all four share the single root
-cause described below). No finding is silently waived. See
-`docs/remediation-status.md`.
+The ledger contains all 61 audit IDs, **all 61 resolved**, none silently
+waived. The final four to close (`CRIT-03`, `CRIT-05`, `HIGH-32`, `MED-15`)
+shared a single root cause — the post-reboot LUKS unlock — which is now
+fixed and proven in CI. See `docs/remediation-status.md`.
 
 ## Limitations and next action
 
-The real disposable install completes successfully and is verified correct
-by remounting the target, but the post-reboot LUKS2 unlock could not be
-driven through the serial-console automation after six independent fix
-attempts (line-ending variations, slower typing, `cache=writeback` instead
-of `cache=unsafe`, and a corrected retry loop) — this is an
-automation/tooling gap in driving `systemd-ask-password` over a raw serial
-console, not an installed-system defect. Separately, the retargeted CI VM
-jobs have been pushed and triggered but a green run has not yet been
-observed; re-check the Actions run before treating HIGH-32/MED-15 as
-closed. Configure managed Authenticode signing credentials for the Windows
-EXE before any production (non-ephemeral-cert) release.
+The post-reboot LUKS2 unlock was the last finding to close. Earlier attempts
+mistakenly varied what was *sent* to the passphrase prompt (line-endings,
+typing speed, QEMU cache mode, retry loop); the actual defect was on the
+*write* side — `rebuild/installer/platforms/linux_live/install.py` appended
+`"\n"` to the passphrase piped to `cryptsetup --key-file -`, which reads
+stdin as raw key material with no line-ending stripping, so the newline was
+baked into the real on-disk key and no interactive unlock could ever
+reproduce it. Removing the `+ "\n"` (and the matching `echo` → `printf '%s'`
+fix in the driver's diagnostic helpers) fixed it; CI run `29886048248`
+records a real post-reboot `login:` with `reboot_completed: true`. This was a
+genuine production bug that would have broken every real install using this
+path, not just VM testing.
+
+Two operational items remain outside the audit scope. Configure managed
+Authenticode signing credentials for the Windows EXE before any production
+(non-ephemeral-cert) release — CI verifies signing *mechanics* only, not a
+trusted chain. And treat any real-hardware run as a separate, deliberate
+go/no-go decision; all evidence to date is against disposable virtual disks.
 
 Recovery procedure: `docs/recovery.md`. Detailed commands and observed results:
 `docs/test-evidence.md`. Release decision: `docs/release-readiness.md`.

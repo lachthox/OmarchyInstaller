@@ -42,5 +42,6 @@ importable from `/`, and these commands exist: `cryptsetup`, `mkfs.btrfs`,
 
 The build trap unmounts tracked bind/proc/sys/tmpfs mounts in reverse order
 before removing its temporary tree. Static and dry-run tests run on Windows;
-OVMF boot and offline-startup acceptance remain blocked until a QEMU-capable
-Linux runner is available.
+OVMF boot and offline-startup acceptance now run for real on GitHub-hosted
+`ubuntu-latest` runners (which expose `/dev/kvm` on this public repository)
+and passed green in CI run `29886048248` (`offline-iso-boot` job).

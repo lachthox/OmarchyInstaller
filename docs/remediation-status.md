@@ -24,9 +24,9 @@ infrastructure is required going forward. See `docs/test-evidence.md`
 |---|---|---|---:|---|---|---|---|---|---|
 | CRIT-01 | Critical | Legacy archinstall config incompatible | 2, 12, 17, 20 | `setup.sh`, install engine | Replaced placeholder with strict archinstall 4.4 pre-mounted config/credentials contract | The real `archinstall-4.4-1-any.pkg.tar.zst` package (SHA256-verified against the official Arch archive) was installed into a real Arch chroot on a disposable Linux host and its own `ArchConfig.parse_arg()`/`ConfigurationOutput` parsed the generated config and credentials, accepting the pre-mounted layout and hashed sudo user | Resolved | | Exact-package validation executed for real; see `docs/test-evidence.md` Phase 21 |
 | CRIT-02 | Critical | Partitioning precedes semantic validation | 3, 12 | install engine | Internal plan, archinstall config, and credentials validate before free-space recheck or any destructive command | invalid credentials execute zero runner commands; ordered backend tests | Resolved | | |
-| CRIT-03 | Critical | Linux TUI never performs a real install | 4, 11, 21 | live TUI | Live Textual apply action re-identifies the machine, requires concealed credentials and disk-bound confirmation, then calls the production install/finalization engine in a worker | The real production TUI (not a mock/dry-run harness), driven over its actual serial console by `qemu_ovmf_driver.py`, was used to enter the handoff key, pass network/preflight checks, and trigger the real apply-install action against a disposable GPT/LUKS2/Btrfs disk in a KVM-accelerated QEMU/OVMF VM; `install.log` and `vm-evidence.json` record `installation_completed: true` for a genuine, non-dry-run archinstall 4.4-1 run | Verification blocked | | Real install through the real TUI is proven; the post-install reboot/login half of this finding is not yet closed (see HIGH-32 notes) |
+| CRIT-03 | Critical | Linux TUI never performs a real install | 4, 11, 21 | live TUI | Live Textual apply action re-identifies the machine, requires concealed credentials and disk-bound confirmation, then calls the production install/finalization engine in a worker | The real production TUI (not a mock/dry-run harness), driven over its actual serial console by `qemu_ovmf_driver.py`, was used to enter the handoff key, pass network/preflight checks, and trigger the real apply-install action against a disposable GPT/LUKS2/Btrfs disk in a KVM-accelerated QEMU/OVMF VM; `install.log` and `vm-evidence.json` record `installation_completed: true` for a genuine, non-dry-run archinstall 4.4-1 run. The post-install reboot half is now also proven in GitHub Actions run `29886048248` (`reboot_completed: true`): `serial-console-reboot.log` captures the real firmware boot of the installed disk, the real `Please enter passphrase for disk omarchy-linux (omarchy-cryptroot)` prompt being answered, and the machine reaching `login:` | Resolved | 30839d2 | Real install AND real post-install reboot/LUKS unlock proven end-to-end in CI |
 | CRIT-04 | Critical | Internal plan passed to archinstall | 2, 12 | install engine | Separate strict pre-mounted config and mode-0600 credentials; internal fields excluded | config negative assertions and exact CLI test | Resolved | | |
-| CRIT-05 | Critical | Incomplete target layout preparation | 9, 11, 12, 13, 21 | install engine | LUKS2, Btrfs, configured subvolumes, root tree, verified ESP, initramfs, archinstall, and target finalization implemented | A real disposable UEFI VM was fully installed end-to-end: real GPT+LUKS2+Btrfs (`@`/`@home`), real archinstall 4.4-1 pre-mounted run, real manual Limine install, real `arch-chroot` target finalization (venv provisioning, `pip install --require-hashes`, wrapper deployment, marker activation), and a post-install remount that confirmed `/etc/fstab`, `/etc/crypttab.initramfs`, and the ESP/Limine files are present and correct | Verification blocked | | Target layout is genuinely built and passes remount inspection; full closure needs the post-reboot login proof, which remains blocked (see HIGH-32 notes) |
+| CRIT-05 | Critical | Incomplete target layout preparation | 9, 11, 12, 13, 21 | install engine | LUKS2, Btrfs, configured subvolumes, root tree, verified ESP, initramfs, archinstall, and target finalization implemented | A real disposable UEFI VM was fully installed end-to-end: real GPT+LUKS2+Btrfs (`@`/`@home`), real archinstall 4.4-1 pre-mounted run, real manual Limine install, real `arch-chroot` target finalization (venv provisioning, `pip install --require-hashes`, wrapper deployment, marker activation), and a post-install remount that confirmed `/etc/fstab`, `/etc/crypttab.initramfs`, and the ESP/Limine files are present and correct. The target then rebooted, unlocked its own LUKS2 root from the real passphrase prompt, and reached `login:` in CI run `29886048248` — proving the on-disk layout (crypttab, initramfs hooks, Limine entry) is actually bootable, not just present | Resolved | 30839d2 | Target layout is built, passes remount inspection, AND boots to a real LUKS unlock in CI |
 | CRIT-06 | Critical | ISO omits Python dependency installation | 8, 21 | ISO pipeline | Hash-locked dependency set installed into `/opt/omarchy-venv` during rootfs assembly | `build-custom-iso.sh` was run for real (no dry-run) on a disposable Linux host, producing a genuine bootable `.iso`, an `iso-build-manifest.json`, and a matching `.sha256` sidecar; the manifest was independently re-hashed and matched | Resolved | | Real, non-dry-run ISO build executed and verified |
 | CRIT-07 | Critical | Live package import path is broken | 8, 21 | startup assets | Canonical cwd-independent `python -m installer.main` entrypoint with venv `.pth` package root | The real ISO was booted offline (no networking) under QEMU/OVMF; the live console reached `login:`, and `cd /tmp && python -m installer.main` style entrypoint checks and a dependency probe (`archinstall`, `cryptsetup`, `mkfs.btrfs`, `efibootmgr`, etc.) all passed from an arbitrary cwd | Resolved | | Real offline UEFI boot of the real ISO proved the entrypoint; see `offline_boot_test.py` |
 | CRIT-08 | Critical | Target markers and assets not deployed | 13 | finalization | Deploys runtime, wrappers, units, machine state, protected directories, help, and atomic stage/success markers | fail-closed target fixture proves activation and markers occur only after all validations | Resolved | | |
@@ -66,7 +66,7 @@ infrastructure is required going forward. See `docs/test-evidence.md`
 | HIGH-29 | High | Guardian defaults when expected state absent | 13, 15 | guardian | Removed built-in fallback; machine-specific state and exact mounted ESP UUID/PARTUUID are mandatory | missing state, unmounted directory, UUID identity, ambiguity, repair failure, and remeasurement tests | Resolved | | |
 | HIGH-30 | High | Tracker lock survives crashed process | 16 | task orchestrator | Replaced exclusive lock-file existence with OS locking, in-process serialization, and owner/start metadata | killed subprocess, stale metadata, and concurrent claimant tests | Resolved | | |
 | HIGH-31 | High | Tracker/state writes are non-atomic | 3, 16 | task orchestrator/state | Atomic fsync/replace writes, locked lease purge, and replayable tracker/state transaction journal | interruption recovery, corruption, lease expiry, malformed record, and concurrency tests | Resolved | | |
-| HIGH-32 | High | No install or boot CI test | 17, 18, 21 | CI/vmtest | CI now defines quality, shell, pinned contracts, Windows packaging, ISO, PTY, disposable install, and reboot jobs; release requires all | static graph regression and local suites pass; the `offline-iso-boot`, `vm-install-reboot`, and `recovery-rehearsal` jobs were switched from an unregistered `self-hosted` runner label (which would only ever have hung waiting for a runner that does not exist) to `ubuntu-latest`, since GitHub-hosted Linux runners on public repos expose `/dev/kvm` and need no additional infrastructure; the full disposable install (CRIT-03/CRIT-05) and recovery rehearsal (see below) were proven for real on an equivalent local KVM/QEMU/OVMF environment before this change | Verification blocked | | The workflow now targets a runner that can actually execute it; the install itself is proven, but the reboot/login half of `vm-install-reboot` is still blocked by the LUKS-unlock automation gap below, and a green CI run has not yet been observed at the time of writing |
+| HIGH-32 | High | No install or boot CI test | 17, 18, 21 | CI/vmtest | CI now defines quality, shell, pinned contracts, Windows packaging, ISO, PTY, disposable install, and reboot jobs; release requires all | static graph regression and local suites pass; the `offline-iso-boot`, `vm-install-reboot`, and `recovery-rehearsal` jobs were switched from an unregistered `self-hosted` runner label (which would only ever have hung waiting for a runner that does not exist) to `ubuntu-latest`, since GitHub-hosted Linux runners on public repos expose `/dev/kvm` and need no additional infrastructure; the full disposable install (CRIT-03/CRIT-05) and recovery rehearsal were proven for real on an equivalent local KVM/QEMU/OVMF environment before this change, and the entire graph was subsequently observed fully green in GitHub Actions run `29886048248` — every job (`quality`, `shell`, `contracts`, `build-windows-exe`, `build-iso`, `first-login-pty`, `offline-iso-boot`, `vm-install-reboot`, `recovery-rehearsal`) succeeded; `publish-release` was correctly skipped only because the manual dispatch set `publish=false` | Resolved | 30839d2 | A green CI run of the full install/reboot/recovery graph on GitHub-hosted KVM runners has now been observed (run `29886048248`) |
 | HIGH-33 | High | Omarchy bootstrap mutable and unlogged | 14 | first-login | Downloads HTTPS source to a file, verifies release-paired SHA256, records retrieval/version/commit/provenance, displays identity, and uses an output-only PTY transcript | hash mismatch, metadata, transcript, confirmation, and completion-marker tests | Resolved | | Upstream execution remains an external acceptance gate |
 | MED-01 | Medium | Safety-critical plan fields untyped | 2 | shared models | Added strict nested user, locale, free-space, encryption, filesystem, boot, Omarchy, and provenance models | `test_shipped_plan_template_passes_production_validator`; strict-extra test | Resolved | | |
 | MED-02 | Medium | Sector range size not cross-validated | 2 | shared models | Added inclusive range arithmetic and cross-plan logical-sector validation | sector mismatch and cross-sector tests | Resolved | | |
@@ -82,7 +82,7 @@ infrastructure is required going forward. See `docs/test-evidence.md`
 | MED-12 | Medium | Release template incompatible | 2, 7 | models/templates | Template and publisher both validate with `ReleaseManifestContract` schema 1.0.0 | template and valid release-pair tests | Resolved | | |
 | MED-13 | Medium | README/status materially stale | 1, 19 | documentation | Root/rebuild READMEs, install/recovery/contributor/architecture/status/release/issue/ownership docs now describe one Python journey and honest blockers | documentation review and retired-path scan | Resolved | | |
 | MED-14 | Medium | Tests enforce obsolete archinstall shape | 12, 17, 19 | Bats/contracts | Removed obsolete shell-config Bats; strict models and a Linux gate feed generated files to the pinned upstream 4.4 parser | local strict tests plus upstream-consumer validator | Resolved | | Upstream parser test skips when package is unavailable |
-| MED-15 | Medium | Tests mock away production failures | 17, 18, 21 | integration/VM tests | CI requires upstream parser, real PTY, packaged EXE, built ISO, OVMF boot, disposable install, and reboot evidence | Every one of these was independently executed for real (not mocked, not dry-run) on a disposable Linux environment: real archinstall 4.4-1 upstream parsing, a real non-root PTY first-login run, a real ISO build, a real OVMF offline boot, a real disposable GPT/LUKS2/Btrfs install through the real TUI, and a real backup/damage/restore recovery rehearsal (`recovery_passed: true`) | Verification blocked | | Every sub-claim except post-install reboot/login has real, non-mocked evidence; kept blocked only because the CI graph itself (not just local-equivalent runs) has not yet completed green and the reboot proof is outstanding |
+| MED-15 | Medium | Tests mock away production failures | 17, 18, 21 | integration/VM tests | CI requires upstream parser, real PTY, packaged EXE, built ISO, OVMF boot, disposable install, and reboot evidence | Every one of these was independently executed for real (not mocked, not dry-run) on a disposable Linux environment: real archinstall 4.4-1 upstream parsing, a real non-root PTY first-login run, a real ISO build, a real OVMF offline boot, a real disposable GPT/LUKS2/Btrfs install through the real TUI, and a real backup/damage/restore recovery rehearsal (`recovery_passed: true`) | Resolved | 30839d2 | Every sub-claim, including post-install reboot/login, now has real, non-mocked evidence from a fully green CI graph (run `29886048248`); nothing is mocked or dry-run |
 
 ## Baseline evidence
 
@@ -97,17 +97,35 @@ infrastructure is required going forward. See `docs/test-evidence.md`
 ## Reconciliation totals
 
 - Total audited findings: **61**
-- Resolved with repository evidence: **57**
-- Implementation complete but verification blocked on external acceptance: **4**
+- Resolved with repository evidence: **61**
+- Implementation complete but verification blocked on external acceptance: **0**
 - Unclassified or silently waived: **0**
 
-Blocked IDs: `CRIT-03`, `CRIT-05`, `HIGH-32`, and `MED-15`. All four share
-one root cause: a genuine, real (non-mocked) disposable UEFI install
-completed successfully through the real production TUI, but the
-post-install reboot's LUKS2 unlock could not be driven through the serial
-console automation in this session — see `docs/test-evidence.md` Phase 21
-and `docs/release-readiness.md` for the exact evidence and the remaining
-gap.
+Blocked IDs: none. The final four (`CRIT-03`, `CRIT-05`, `HIGH-32`,
+`MED-15`) shared one root cause: the post-install reboot's LUKS2 unlock.
+That gap is now closed and its root cause is understood — see the note
+below.
+
+### Root cause of the post-install LUKS-unlock gap (now fixed)
+
+The disposable install always succeeded, but every earlier reboot attempt
+failed to unlock the LUKS2 root from the passphrase prompt. The real bug
+was in production code, not in the test harness:
+`rebuild/installer/platforms/linux_live/install.py` piped
+`encryption_passphrase + "\n"` to `cryptsetup luksFormat`/`open` via
+`--key-file -`. Unlike an interactive terminal prompt (which never includes
+the terminating Enter keystroke in the value it submits), `--key-file -`
+reads stdin as **raw key material up to EOF with no line-ending stripping**,
+so the trailing newline was silently baked into the real on-disk key. No
+human at a keyboard and no console automation could ever reproduce that key
+at the interactive unlock prompt. Removing the `+ "\n"` fixed it; a matching
+`echo` → `printf '%s'` fix was applied to the driver's own diagnostic unlock
+helpers. This would have broken **every** real-world install using this code
+path, not just VM testing. The fix is proven by `reboot_completed: true`
+and the real passphrase-prompt/`login:` transcript in
+`serial-console-reboot.log` from CI run `29886048248`. See
+`docs/test-evidence.md` Phase 21 and `docs/release-readiness.md` for the
+full evidence.
 
 ## Phase commit map
 
@@ -117,6 +135,9 @@ Phases 0–19 are represented by commits `1738cfa`, `a7c7851`, `0b5f0c2`,
 `2ecb423`, `c117a6c`, `f2220b4`, and `d56b560`. Phase 20 evidence is
 recorded by the final verification commit on that branch state. Phase 21
 (this update) built and destroyed a disposable KVM-accelerated Linux VM
-driver harness, executed every previously-blocked local gate for real, and
+driver harness, executed every previously-blocked local gate for real,
 switched the CI VM jobs onto GitHub-hosted runners so they can actually
-execute; see `docs/test-evidence.md` for exact commands and results.
+execute, found and fixed the production LUKS-key trailing-newline bug
+described above, and drove the full CI graph to a green run
+(`29886048248`); see `docs/test-evidence.md` for exact commands and
+results.
