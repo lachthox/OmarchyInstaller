@@ -227,6 +227,12 @@ jobs:
       # The disk fixture and driver need root (losetup/mount/sgdisk/mkfs); the
       # job otherwise runs as the unprivileged `runner` user.
       - run: sudo -E env "PATH=$PATH" python -m rebuild.tools.vm_install_test --iso-glob 'rebuild/dist/vm-input/*-omarchy-auto.iso' --work-dir rebuild/dist/vm-gate --require-install --require-reboot
+      # The gate runs under sudo, so its evidence files land owned by root. The
+      # upload step below runs as the unprivileged `runner` user and can't read
+      # root-owned files, so hand ownership back before uploading.
+      - name: Make the root-written evidence readable by the runner
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" rebuild/dist/vm-gate
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -257,6 +263,11 @@ jobs:
       - name: Damage the disposable GPT/EFI state and rehearse the documented recovery
         # Also needs root for losetup/mount/sgdisk, same as vm-install-reboot.
         run: sudo -E env "PATH=$PATH" python -m rebuild.tools.vm_drivers.recovery_rehearsal --work-dir rebuild/dist/vm-gate --output rebuild/dist/vm-gate/recovery-test.json
+      # Same as vm-install-reboot: the rehearsal writes evidence as root; hand
+      # ownership back so the unprivileged upload step can read it.
+      - name: Make the root-written evidence readable by the runner
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" rebuild/dist/vm-gate
       - uses: actions/upload-artifact@v7
         if: always()
         with: {name: recovery-rehearsal-evidence, path: rebuild/dist/vm-gate/recovery-test.json, if-no-files-found: error}
