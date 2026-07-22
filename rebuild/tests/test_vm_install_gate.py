@@ -23,7 +23,7 @@ def test_vm_gate_rejects_dry_run_iso(tmp_path: Path) -> None:
         validate_iso_provenance(iso)
 
 
-def test_vm_gate_requires_install_reboot_recovery_and_matching_iso(tmp_path: Path) -> None:
+def test_vm_gate_requires_install_reboot_and_matching_iso(tmp_path: Path) -> None:
     iso = tmp_path / "test.iso"
     iso.write_bytes(b"real iso")
     evidence = {
@@ -35,13 +35,17 @@ def test_vm_gate_requires_install_reboot_recovery_and_matching_iso(tmp_path: Pat
         "installation_completed": True,
         "reboot_completed": True,
         "windows_efi_preserved": True,
-        "normal_user_first_login_reached": True,
-        "recovery_restore_tested": True,
+        # This single-driver session never drives a first-login flow or a
+        # recovery rehearsal itself -- those are proven by the separate
+        # first-login-pty and recovery-rehearsal CI jobs -- so they're
+        # correctly False here and validate_evidence must not require them.
+        "normal_user_first_login_reached": False,
+        "recovery_restore_tested": False,
     }
     path = tmp_path / "evidence.json"
     path.write_text(json.dumps(evidence), encoding="utf-8")
     assert validate_evidence(path, iso=iso, require_install=True, require_reboot=True) == evidence
-    evidence["recovery_restore_tested"] = False
+    evidence["reboot_completed"] = False
     path.write_text(json.dumps(evidence), encoding="utf-8")
-    with pytest.raises(RuntimeError, match="recovery_restore_tested"):
+    with pytest.raises(RuntimeError, match="reboot_completed"):
         validate_evidence(path, iso=iso, require_install=True, require_reboot=True)
