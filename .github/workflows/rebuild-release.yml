@@ -284,7 +284,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
-        with: {python-version: "3.12"}
+        with: {python-version: "3.12", cache: pip}
+      # publish_release imports rebuild.installer.shared.models, which uses
+      # pydantic; without the runtime deps the metadata-validation step fails
+      # with ModuleNotFoundError. Every other job installs requirements; this
+      # one must too.
+      - run: python -m pip install -r rebuild/requirements.txt
       - uses: actions/download-artifact@v8
         with: {name: release-iso-output, path: rebuild/dist/release-inputs/iso}
       - uses: actions/download-artifact@v8
