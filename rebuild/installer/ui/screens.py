@@ -664,32 +664,35 @@ class LiveInstallerApp(App[int]):
         self.notify("Refreshing runtime state…", severity="information")
         self._refresh_worker()
 
-    @work(thread=True, exclusive=True, group="live-network")
-    def _network_worker(self) -> None:
-        try:
-            result = resolve_network_connectivity(retry_attempts=2, allow_nmtui=True)
-            error = "" if result.connected and not result.requires_abort else result.hint
-            self.call_from_thread(self._apply_network_result, result, error)
-        except Exception as exc:
-            self.call_from_thread(self._apply_network_result, None, str(exc))
-
-    def _apply_network_result(
-        self, result: NetworkResolutionResult | None, error: str
-    ) -> None:
-        self._snapshot = replace(
-            self._snapshot,
-            network_result=result,
-            network_error=error,
-        )
-        self._render()
-        self.notify(
-            "Network readiness passed." if result and not error else "Network readiness blocked.",
-            severity="information" if result and not error else "error",
-        )
-
     def action_connect_network(self) -> None:
-        self.notify("Starting interactive NetworkManager fallback.")
-        self._network_worker()
+        if self._refreshing or self._installing:
+            self.notify("Please wait for the current check to finish.", severity="warning")
+            return
+        if not self._preflight_ready():
+            self.notify("The installer USB must be ready before Wi-Fi setup.", severity="warning")
+            return
+
+        executable = shutil.which("nmtui-connect") or shutil.which("nmtui")
+        if executable is None:
+            self.notify(
+                "Wi-Fi setup is unavailable. Connect ethernet or phone USB tethering.",
+                severity="error",
+            )
+            return
+
+        self.notify("Opening Wi-Fi setup. Choose your network, then return here.")
+        try:
+            # Textual must completely release the terminal while NetworkManager's
+            # full-screen selector is active. Running this in a worker corrupts
+            # both interfaces because they concurrently redraw the same terminal.
+            with self.suspend():
+                subprocess.run([executable], check=False)
+        except OSError as exc:
+            self.notify(f"Wi-Fi setup could not open: {exc}", severity="error")
+            return
+
+        self.refresh(layout=True)
+        self.action_refresh_runtime()
 
     def _start_install(self) -> None:
         snapshot = self._snapshot

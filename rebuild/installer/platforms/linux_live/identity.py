@@ -67,18 +67,30 @@ class IdentityMatchResult:
 class LsblkProbe:
     """Default block-device probe backed by lsblk JSON output."""
 
+    @staticmethod
+    def _run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        try:
+            return subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=6,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise MachineIdentityError(
+                f"{command[0]} timed out after 6 seconds while checking the target disk."
+            ) from exc
+
     def collect_block_devices(self) -> dict[str, Any]:
-        completed = subprocess.run(
+        completed = self._run(
             [
                 "lsblk",
                 "-b",
                 "-J",
                 "-o",
                 "NAME,PATH,TYPE,SIZE,MODEL,SERIAL,PTUUID,PARTUUID,UUID,FSTYPE,START,LOG-SEC",
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
+            ]
         )
         if completed.returncode != 0:
             message = completed.stderr.strip() or completed.stdout.strip() or "lsblk command failed"
@@ -93,9 +105,7 @@ class LsblkProbe:
             if not isinstance(record, dict) or str(record.get("type", "")).lower() != "disk":
                 continue
             path = str(record.get("path") or record.get("name") or "")
-            completed = subprocess.run(
-                ["sgdisk", "--print", path], capture_output=True, text=True, check=False
-            )
+            completed = self._run(["sgdisk", "--print", path])
             if completed.returncode != 0:
                 raise MachineIdentityError(
                     completed.stderr.strip() or f"sgdisk failed for {path}"

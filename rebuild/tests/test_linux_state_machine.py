@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import threading
 import asyncio
+import subprocess
 from contextlib import contextmanager
 from types import SimpleNamespace
 
@@ -245,6 +246,107 @@ def test_linux_tui_defaults_to_beginner_wizard_at_80x24(
             assert app.query_one("#advanced").display is True
 
     asyncio.run(scenario())
+
+
+def test_linux_tui_suspends_before_opening_wifi_selector(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from rebuild.installer.ui import screens
+
+    plan = payload_to_plan(plan_payload())
+    ready_without_network = screens.LiveRuntimeSnapshot(
+        generated_at_utc="2026-07-21T00:00:00Z",
+        dependencies_ok=True,
+        missing_dependencies=tuple(),
+        handoff_sources=("/mnt/ventoy",),
+        handoff_result=SimpleNamespace(plan=plan, plan_path="/mnt/ventoy/omarchy/plan.json"),  # type: ignore[arg-type]
+        handoff_error="",
+        network_result=SimpleNamespace(connected=False, requires_abort=True),  # type: ignore[arg-type]
+        network_error="Connect to the internet.",
+        install_result=None,
+        install_error="not started",
+        boot_policy_result=None,
+        boot_policy_error="not run",
+        identity_result=SimpleNamespace(disk=SimpleNamespace(path="/dev/vda")),  # type: ignore[arg-type]
+    )
+    monkeypatch.setattr(
+        screens, "collect_live_runtime_snapshot", lambda **kwargs: ready_without_network
+    )
+    monkeypatch.setattr(
+        screens.shutil,
+        "which",
+        lambda command: "/usr/bin/nmtui-connect" if command == "nmtui-connect" else None,
+    )
+    terminal_events: list[str] = []
+
+    @contextmanager
+    def suspended_terminal():
+        terminal_events.append("suspended")
+        yield
+        terminal_events.append("resumed")
+
+    def run_selector(command, **kwargs):
+        assert terminal_events == ["suspended"]
+        terminal_events.append(f"ran:{command[0]}")
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(screens.subprocess, "run", run_selector)
+
+    async def scenario() -> None:
+        app = screens.LiveInstallerApp()
+        async with app.run_test(size=Size(80, 24)):
+            await app.workers.wait_for_complete()
+            refreshed: list[bool] = []
+            monkeypatch.setattr(app, "suspend", suspended_terminal)
+            monkeypatch.setattr(app, "action_refresh_runtime", lambda: refreshed.append(True))
+            app.action_connect_network()
+            assert terminal_events == [
+                "suspended",
+                "ran:/usr/bin/nmtui-connect",
+                "resumed",
+            ]
+            assert refreshed == [True]
+
+    asyncio.run(scenario())
+
+
+def test_linux_tui_does_not_open_wifi_while_usb_check_is_running(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from rebuild.installer.ui import screens
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_snapshot(**kwargs):
+        started.set()
+        release.wait(timeout=5)
+        raise RuntimeError("released test worker")
+
+    monkeypatch.setattr(screens, "collect_live_runtime_snapshot", slow_snapshot)
+    selector_calls: list[list[str]] = []
+    monkeypatch.setattr(
+        screens.subprocess,
+        "run",
+        lambda command, **kwargs: selector_calls.append(command),
+    )
+
+    async def scenario() -> None:
+        app = screens.LiveInstallerApp()
+        async with app.run_test(size=Size(80, 24)):
+            for _ in range(100):
+                if started.is_set():
+                    break
+                await asyncio.sleep(0.01)
+            app.action_connect_network()
+            assert selector_calls == []
+            release.set()
+            await app.workers.wait_for_complete()
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        release.set()
 
 
 def test_live_handoff_discovery_retries_transient_usb_failure(

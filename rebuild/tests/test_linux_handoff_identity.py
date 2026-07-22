@@ -11,11 +11,13 @@ import pytest
 from rebuild.installer.platforms.linux_live.discovery import (
     HandoffDiscoveryError,
     HandoffValidationContext,
+    SubprocessMountRunner,
     discover_and_validate_handoff_plan,
     discover_handoff_sources,
     open_validated_handoff,
 )
 from rebuild.installer.platforms.linux_live.identity import (
+    LsblkProbe,
     MachineIdentityError,
     match_machine_identity,
 )
@@ -131,6 +133,35 @@ def test_controlled_read_only_mount_is_always_unmounted(tmp_path: Path) -> None:
     mount_command = next(command for command in runner.commands if command[0] == "mount")
     assert mount_command[0:3] == ["mount", "-o", "ro,nosuid,nodev,noexec"]
     assert mount_command[3] == "/dev/mapper/sdz1"
+    assert ["udevadm", "trigger", "--subsystem-match=block"] in runner.commands
+    assert ["udevadm", "settle", "--timeout=3"] in runner.commands
+
+
+def test_mount_commands_fail_closed_instead_of_hanging(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    command = ["udevadm", "settle", "--timeout=3"]
+
+    def timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(command, 6)
+
+    monkeypatch.setattr(subprocess, "run", timeout)
+    result = SubprocessMountRunner().run(command)
+
+    assert result.returncode == 124
+    assert "timed out after 6 seconds" in result.stderr
+
+
+def test_identity_probe_timeout_becomes_a_visible_preflight_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(["lsblk"], 6)
+
+    monkeypatch.setattr(subprocess, "run", timeout)
+
+    with pytest.raises(MachineIdentityError, match="timed out after 6 seconds"):
+        LsblkProbe().collect_block_devices()
 
 
 def test_existing_ventoy_mount_is_reused_without_remount(tmp_path: Path) -> None:

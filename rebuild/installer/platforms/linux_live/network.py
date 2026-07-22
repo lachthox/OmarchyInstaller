@@ -31,12 +31,19 @@ class SubprocessCommandRunner:
     """Default runner backed by subprocess."""
 
     def run(self, command: list[str]) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        try:
+            return subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=8,
+            )
+        except subprocess.TimeoutExpired as exc:
+            stdout = exc.stdout if isinstance(exc.stdout, str) else ""
+            stderr = exc.stderr if isinstance(exc.stderr, str) else ""
+            detail = stderr.strip() or f"{command[0]} timed out after 8 seconds"
+            return subprocess.CompletedProcess(command, 124, stdout, detail)
 
     def run_interactive(self, command: list[str]) -> subprocess.CompletedProcess[str]:
         return subprocess.run(command, check=False, text=True)
@@ -249,11 +256,15 @@ class NetworkManagerClient:
         return True, completed.stdout.strip() or "Connected via nmcli."
 
     def run_nmtui(self) -> tuple[bool, str]:
-        completed = self._run_interactive(["nmtui"])
+        completed = self._run_interactive(["nmtui-connect"])
         if completed.returncode != 0:
-            message = completed.stderr.strip() or completed.stdout.strip() or "nmtui exited with non-zero status"
+            message = (
+                completed.stderr.strip()
+                or completed.stdout.strip()
+                or "nmtui-connect exited with non-zero status"
+            )
             return False, message
-        return True, "nmtui completed successfully."
+        return True, "Wi-Fi setup completed successfully."
 
 
 def _step(steps: list[NetworkStepResult], step: str, status: str, detail: str) -> None:

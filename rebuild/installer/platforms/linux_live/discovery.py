@@ -319,7 +319,19 @@ class MountRunner(Protocol):
 
 class SubprocessMountRunner:
     def run(self, command: list[str]) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(command, capture_output=True, text=True, check=False)
+        try:
+            return subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=6,
+            )
+        except subprocess.TimeoutExpired as exc:
+            stdout = exc.stdout if isinstance(exc.stdout, str) else ""
+            stderr = exc.stderr if isinstance(exc.stderr, str) else ""
+            detail = stderr.strip() or f"{command[0]} timed out after 6 seconds"
+            return subprocess.CompletedProcess(command, 124, stdout, detail)
 
 
 def _existing_mountpoints(device: str, runner: MountRunner) -> tuple[Path, ...]:
@@ -394,10 +406,14 @@ def open_validated_handoff(
     partition = candidates[0]
     mapper = f"/dev/mapper/{Path(partition).name}"
     # Ventoy holds the original ISO partition busy while booting an ISO stored
-    # on it. Its supported remount path is /dev/mapper/<partition>. Trigger
-    # udev first so the friendly mapper symlink is present on real hardware.
-    active.run(["udevadm", "trigger"])
-    active.run(["udevadm", "settle"])
+    # on it. Its supported remount path is /dev/mapper/<partition>. Ventoy
+    # normally creates that mapper before userspace starts, so do not trigger
+    # every udev rule on the machine when it is already available. If startup
+    # is still settling, restrict the trigger to block devices and bound the
+    # wait so a bad device can never freeze the installer UI indefinitely.
+    if not Path(mapper).exists():
+        active.run(["udevadm", "trigger", "--subsystem-match=block"])
+        active.run(["udevadm", "settle", "--timeout=3"])
     mount_sources = (mapper, partition)
 
     # Reuse an existing mount when the boot environment already exposed it.

@@ -126,8 +126,8 @@ def test_wifi_password_never_enters_argv_and_interactive_tools_inherit_terminal(
     assert ok
     assert runner.interactive[-1] == ["nmcli", "--ask", "device", "wifi", "connect", "Home"]
     client.run_nmtui()
-    assert runner.interactive[-1] == ["nmtui"]
-    assert ["nmtui"] not in runner.captured
+    assert runner.interactive[-1] == ["nmtui-connect"]
+    assert ["nmtui-connect"] not in runner.captured
 
 
 def test_removable_media_wifi_profile_is_rejected_without_execution() -> None:
