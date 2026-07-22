@@ -131,7 +131,13 @@ def test_existing_release_tag_is_immutable(monkeypatch: pytest.MonkeyPatch, tmp_
     monkeypatch.setattr(publisher, "run_command", lambda command, cwd=None: calls.append(command))
 
     with pytest.raises(RuntimeError, match="immutable"):
-        publisher.publish_release_assets("owner/repo", TAG, [tmp_path / "asset"], dry_run=False)
+        publisher.publish_release_assets(
+            "owner/repo",
+            TAG,
+            [tmp_path / "asset"],
+            dry_run=False,
+            target_commit=COMMIT,
+        )
     assert len(calls) == 1
 
 
@@ -185,7 +191,15 @@ def test_new_release_upload_never_uses_clobber(monkeypatch: pytest.MonkeyPatch, 
             raise subprocess.CalledProcessError(1, command)
 
     monkeypatch.setattr(publisher, "run_command", run)
-    publisher.publish_release_assets("owner/repo", TAG, [tmp_path / "asset"], dry_run=False)
+    publisher.publish_release_assets(
+        "owner/repo",
+        TAG,
+        [tmp_path / "asset"],
+        dry_run=False,
+        target_commit=COMMIT,
+    )
 
     assert len(calls) == 3
+    assert "--target" in calls[1]
+    assert calls[1][calls[1].index("--target") + 1] == COMMIT
     assert "--clobber" not in calls[-1]

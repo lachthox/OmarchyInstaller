@@ -270,7 +270,14 @@ def enforce_signing_gate(signing_evidence_path: Path, allow_unsigned: bool) -> d
     )
 
 
-def publish_release_assets(repo: str, tag: str, assets: list[Path], dry_run: bool) -> None:
+def publish_release_assets(
+    repo: str,
+    tag: str,
+    assets: list[Path],
+    dry_run: bool,
+    *,
+    target_commit: str,
+) -> None:
     if dry_run:
         return
     try:
@@ -284,6 +291,8 @@ def publish_release_assets(repo: str, tag: str, assets: list[Path], dry_run: boo
                 tag,
                 "--repo",
                 repo,
+                "--target",
+                target_commit,
                 "--title",
                 f"OmarchyInstaller {tag}",
                 "--notes",
@@ -341,6 +350,16 @@ def run_pipeline(args: argparse.Namespace) -> int:
         repo = args.repo or os.environ.get("GITHUB_REPOSITORY", "")
         if not repo:
             raise RuntimeError("Repository not provided. Set --repo or GITHUB_REPOSITORY.")
+        release_manifest = ReleaseManifestContract.model_validate(
+            read_json(bundle["release_manifest"])
+        )
+        target_commit = release_manifest.build.git_commit
+        checkout_commit = detect_git_commit(workspace)
+        if target_commit != checkout_commit:
+            raise RuntimeError(
+                "Release manifest commit does not match the publishing checkout; "
+                "refusing to create a tag for the wrong source revision."
+            )
         publish_release_assets(
             repo=repo,
             tag=tag,
@@ -352,6 +371,7 @@ def run_pipeline(args: argparse.Namespace) -> int:
                 bundle["compatibility_manifest"],
             ],
             dry_run=args.dry_run,
+            target_commit=target_commit,
         )
     return 0
 
