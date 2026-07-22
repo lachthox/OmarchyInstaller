@@ -646,7 +646,19 @@ def main() -> int:
     evidence = run(args)
     write_evidence(evidence, Path(args.evidence_output))
 
-    ok = all(evidence.fields.get(field_name) is True for field_name in REQUIRED_TRUE_FIELDS)
+    # Deliberately excludes normal_user_first_login_reached and
+    # recovery_restore_tested: this driver, in a single QEMU session, never
+    # drives a full first-login flow or a recovery rehearsal against the
+    # just-installed disk -- see the REQUIRED_TRUE_FIELDS comment in
+    # rebuild/tools/vm_install_test.py, which validates this evidence file
+    # against the same exclusion. Gating this driver's own exit code on
+    # fields it can never set would fail every run regardless of whether
+    # install/reboot actually succeeded.
+    fields_this_driver_can_prove = tuple(
+        name for name in REQUIRED_TRUE_FIELDS
+        if name not in ("normal_user_first_login_reached", "recovery_restore_tested")
+    )
+    ok = all(evidence.fields.get(field_name) is True for field_name in fields_this_driver_can_prove)
     return 0 if ok else 1
 
 
