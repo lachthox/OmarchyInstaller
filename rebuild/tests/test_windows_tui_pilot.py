@@ -218,13 +218,15 @@ def test_wizard_disk_picker_selects_and_prepares_a_second_disk(
             assert app._current_step_index() == 2
             # Both disks are offered; the Windows disk is the default target.
             assert len(app._target_choices()) == 2
-            assert app._selected_target()["kind"] == "windows"
+            selected = app._selected_target()
+            assert selected is not None and selected["kind"] == "windows"
             body = str(app.query_one("#wiz-body").render())
             assert "Install Linux to:" in body
             # Choose the spare disk and confirm the display switches to it.
             await pilot.press("down")
-            assert app._selected_target()["kind"] == "separate"
-            assert app._selected_target()["disk_number"] == spare_num
+            selected = app._selected_target()
+            assert selected is not None and selected["kind"] == "separate"
+            assert selected["disk_number"] == spare_num
             body = str(app.query_one("#wiz-body").render())
             assert "whole disk" in body
             # Enter now prepares the target disk (no Windows shrink).

@@ -68,6 +68,7 @@ def test_separate_disk_puts_root_on_target_but_esp_on_windows_disk() -> None:
     payload = with_target(base_plan(), install_gib=200)
     plan = validate_plan_contract(payload)
     esp_part = plan.efi_identity.partition_number
+    assert plan.linux_install_target is not None
     install_start = plan.linux_install_target.install_range.start_sector
 
     commands = _commands(
@@ -108,6 +109,7 @@ def test_resolve_target_disk_matches_by_guid_and_excludes_windows() -> None:
     payload["linux_install_target"]["disk_identity"]["disk_serial"] = "OMARCHYSPARE"
     plan = validate_plan_contract(payload)
     win_guid = plan.disk_identity.gpt_disk_guid
+    assert plan.linux_install_target is not None
     target_guid = plan.linux_install_target.disk_identity.gpt_disk_guid
     probe = FakeBlockProbe(
         [
