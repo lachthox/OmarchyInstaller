@@ -60,8 +60,44 @@ class DiskGeometry:
     free_size_bytes: int
 
 
+@dataclass(frozen=True, slots=True)
+class SpareDiskGeometry:
+    """A separate, GPT-initialised, empty target disk for the Linux root."""
+
+    gpt_disk_guid: str
+    disk_serial: str
+    disk_model: str
+    disk_size_bytes: int
+    logical_sector_size: int
+    install_start_sector: int
+    install_end_sector: int
+    install_size_bytes: int
+
+
 def _placeholder_sha256(seed: str) -> str:
     return hashlib.sha256(seed.encode("utf-8")).hexdigest()
+
+
+def _linux_install_target_block(spare: SpareDiskGeometry) -> dict[str, Any]:
+    return {
+        "disk_identity": {
+            "gpt_disk_guid": spare.gpt_disk_guid,
+            "disk_size_bytes": spare.disk_size_bytes,
+            "logical_sector_size": spare.logical_sector_size,
+            "disk_model": spare.disk_model,
+            "disk_serial": spare.disk_serial,
+            "runtime_disk_number": 1,
+            "partition_style": "GPT",
+        },
+        "install_range": {
+            "start_sector": spare.install_start_sector,
+            "end_sector": spare.install_end_sector,
+            "logical_sector_size": spare.logical_sector_size,
+            "size_bytes": spare.install_size_bytes,
+        },
+        "mode": "whole_disk",
+        "erases_existing_data": False,
+    }
 
 
 def build_plan_payload(
@@ -76,10 +112,11 @@ def build_plan_payload(
     bootstrap_url: str,
     bootstrap_sha256: str,
     bootstrap_upstream_version: str,
+    spare: SpareDiskGeometry | None = None,
 ) -> dict[str, Any]:
     plan_id = uuid.uuid4().hex
     generated_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-    return {
+    payload: dict[str, Any] = {
         "meta": {
             "schema_version": "1.0.0",
             "plan_id": plan_id,
@@ -188,6 +225,9 @@ def build_plan_payload(
             "ventoy_handoff_path": "omarchy/plan.json",
         },
     }
+    if spare is not None:
+        payload["linux_install_target"] = _linux_install_target_block(spare)
+    return payload
 
 
 def validated_plan(payload: dict[str, Any]) -> PlanContract:
@@ -241,6 +281,7 @@ def write_plan_and_manifest(
     bootstrap_url: str,
     bootstrap_sha256: str,
     bootstrap_upstream_version: str,
+    spare: SpareDiskGeometry | None = None,
 ) -> tuple[bytes, dict[str, Any]]:
     """Write omarchy/plan.json + omarchy/handoff-manifest.json under ventoy_root.
 
@@ -260,6 +301,7 @@ def write_plan_and_manifest(
         bootstrap_url=bootstrap_url,
         bootstrap_sha256=bootstrap_sha256,
         bootstrap_upstream_version=bootstrap_upstream_version,
+        spare=spare,
     )
     plan = validated_plan(payload)
     plan_path = omarchy_dir / "plan.json"
@@ -280,6 +322,7 @@ def write_plan_and_manifest(
 
 __all__ = [
     "DiskGeometry",
+    "SpareDiskGeometry",
     "build_plan_payload",
     "validated_plan",
     "build_manifest",

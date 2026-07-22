@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -197,6 +198,7 @@ def generate_handoff(
     iso_on_ventoy: Path,
     manifest: dict[str, Any],
     geo: disk_fixture.DiskGeometry,
+    spare: plan_fixture.SpareDiskGeometry | None = None,
 ) -> tuple[bytes, dict[str, Any]]:
     return plan_fixture.write_plan_and_manifest(
         ventoy_root=ventoy_root,
@@ -213,6 +215,7 @@ def generate_handoff(
             "https://raw.githubusercontent.com/octocat/Hello-World/7fd1a60b01f91b314f59955a4e4d4e80d8edf11/README"
         ),
         bootstrap_upstream_version="pinned-test-fixture",
+        spare=spare,
     )
 
 
@@ -479,6 +482,15 @@ def run(args: argparse.Namespace) -> Evidence:
 
     disk_img = work_dir / "disposable-disk.img"
     ventoy_img = work_dir / "ventoy-handoff.img"
+    spare_img = work_dir / "disposable-spare-disk.img"
+
+    # "separate-disk" installs Linux onto a distinct empty disk (ESP + Limine
+    # stay on the Windows disk); default installs into the Windows disk's free
+    # space. Selected by CI via OMARCHY_VM_TARGET_MODE.
+    target_mode = os.environ.get("OMARCHY_VM_TARGET_MODE", "windows-disk").strip().lower()
+    separate_disk = target_mode == "separate-disk"
+    evidence.set("target_mode", target_mode)
+    evidence.set("separate_disk_install", separate_disk)
 
     evidence.note("building disposable dual-boot GPT disk fixture")
     geo = disk_fixture.build_main_disk(disk_img)
@@ -488,6 +500,12 @@ def run(args: argparse.Namespace) -> Evidence:
     evidence.set("linux_partition_guid", "assigned-at-install-time")
     original_efi_hash = hashlib.sha256(disk_fixture.SYNTHETIC_WINDOWS_EFI_CONTENT).hexdigest()
     evidence.set("windows_efi_original_sha256", original_efi_hash)
+
+    spare_geo: plan_fixture.SpareDiskGeometry | None = None
+    if separate_disk:
+        evidence.note("building disposable spare target disk (empty GPT) for a separate-disk install")
+        spare_geo = disk_fixture.build_spare_disk(spare_img)
+        evidence.set("spare_disk_guid", spare_geo.gpt_disk_guid)
 
     evidence.note("building Ventoy handoff USB fixture (copying ISO onto it)")
     disk_fixture.build_ventoy_disk(ventoy_img, iso_path=iso_path)
@@ -499,7 +517,7 @@ def run(args: argparse.Namespace) -> Evidence:
     def _write_handoff(mount_point: Path, iso_on_ventoy: Path) -> None:
         nonlocal integrity_key, plan_payload
         integrity_key, plan_payload = generate_handoff(
-            ventoy_root=mount_point, iso_on_ventoy=iso_on_ventoy, manifest=manifest, geo=geo
+            ventoy_root=mount_point, iso_on_ventoy=iso_on_ventoy, manifest=manifest, geo=geo, spare=spare_geo
         )
 
     disk_fixture.write_plan_files_onto_ventoy(ventoy_img, _write_handoff)
@@ -520,6 +538,13 @@ def run(args: argparse.Namespace) -> Evidence:
         "-netdev", "user,id=net0",
         "-device", "virtio-net-pci,netdev=net0",
     ]
+    if separate_disk:
+        # Attach the empty spare disk as a second virtio-blk device with a
+        # stable serial so the live installer can resolve it as the target.
+        qemu_args += [
+            "-drive", f"file={spare_img},format=raw,if=none,id=spare,cache=writeback",
+            "-device", f"virtio-blk-pci,drive=spare,serial={disk_fixture.SPARE_DISK_SERIAL}",
+        ]
 
     console = SerialConsole("127.0.0.1", SERIAL_PORT, columns=200, rows=50)
     qemu = QemuProcess(qemu_args)

@@ -14,10 +14,18 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from .plan_fixture import DiskGeometry
+from .plan_fixture import DiskGeometry, SpareDiskGeometry
 
 
 LOGICAL_SECTOR_SIZE = 512
+
+# Separate Linux-target ("spare") disk: an empty GPT disk, distinct from the
+# Windows disk, used to validate the whole-disk separate-disk install path.
+SPARE_DISK_SIZE_BYTES = 64 * 1024**3
+SPARE_DISK_GUID = "00000000-0000-4000-8000-000000000020"
+SPARE_DISK_SERIAL = "OMARCHYSPARE0"
+SPARE_DISK_MODEL = "OMARCHY-SPARE"
+SPARE_INSTALL_START_SECTOR = 2048
 DISK_SIZE_BYTES = 512 * 1024**3  # 549755813888, matches the shipped plan template
 GPT_DISK_GUID = "00000000-0000-4000-8000-000000000010"
 ESP_PARTITION_GUID = "00000000-0000-4000-8000-000000000011"
@@ -170,6 +178,39 @@ def build_main_disk(disk_path: Path) -> DiskGeometry:
         _detach_loop(handle)
 
     return geo
+
+
+def build_spare_disk(spare_path: Path) -> SpareDiskGeometry:
+    """Create an empty, GPT-initialised spare disk to be the Linux install target.
+
+    It has a GPT header (so a stable disk GUID exists for identity matching) but
+    no partitions; the installer creates the whole-disk Linux partition on it.
+    """
+    total_sectors = SPARE_DISK_SIZE_BYTES // LOGICAL_SECTOR_SIZE
+    # Reserve a conservative 1 MiB tail so the planned extent stays inside the
+    # GPT usable range that sgdisk will report at install time.
+    install_end_sector = total_sectors - SPARE_INSTALL_START_SECTOR - 1
+    install_size_bytes = (install_end_sector - SPARE_INSTALL_START_SECTOR + 1) * LOGICAL_SECTOR_SIZE
+
+    _run(["qemu-img", "create", "-f", "raw", str(spare_path), str(SPARE_DISK_SIZE_BYTES)])
+    handle = _attach_loop(spare_path)
+    try:
+        # Initialise an empty GPT with a known disk GUID (no partitions).
+        _run(["sgdisk", "--clear", f"--disk-guid={SPARE_DISK_GUID}", handle.device])
+        _run(["sgdisk", "--print", handle.device])
+    finally:
+        _detach_loop(handle)
+
+    return SpareDiskGeometry(
+        gpt_disk_guid=SPARE_DISK_GUID,
+        disk_serial=SPARE_DISK_SERIAL,
+        disk_model=SPARE_DISK_MODEL,
+        disk_size_bytes=SPARE_DISK_SIZE_BYTES,
+        logical_sector_size=LOGICAL_SECTOR_SIZE,
+        install_start_sector=SPARE_INSTALL_START_SECTOR,
+        install_end_sector=install_end_sector,
+        install_size_bytes=install_size_bytes,
+    )
 
 
 def build_ventoy_disk(
